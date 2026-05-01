@@ -1,7 +1,6 @@
 package org.hdhmc.saki.presentation.library
 
 import android.util.LruCache
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
@@ -131,6 +130,7 @@ import androidx.compose.ui.unit.sp
 import androidx.palette.graphics.Palette
 import org.hdhmc.saki.R
 import org.hdhmc.saki.presentation.EndpointProbeInfo
+import org.hdhmc.saki.presentation.predictiveBackMotion
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.PlaybackProgressState
 import org.hdhmc.saki.domain.model.PlaybackRuntimeInfo
@@ -423,10 +423,11 @@ fun NowPlayingOverlay(
         }
     }
 
-    BackHandler(enabled = visible) {
-        onDismiss()
-    }
     val latestOnDismiss by rememberUpdatedState(onDismiss)
+    val predictiveBackModifier = Modifier.predictiveBackMotion(
+        enabled = visible,
+        onBack = { latestOnDismiss() },
+    )
 
     // Reset lyrics overlay when Now Playing is dismissed
     LaunchedEffect(visible) {
@@ -527,6 +528,7 @@ fun NowPlayingOverlay(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
+                .then(predictiveBackModifier)
                 .background(background)
                 .statusBarsPadding()
                 .navigationBarsPadding()
