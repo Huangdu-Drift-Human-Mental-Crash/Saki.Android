@@ -1,7 +1,11 @@
 package org.hdhmc.saki.presentation
 
 import android.content.Intent
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -274,9 +278,10 @@ private fun RootShell(
     var capsuleHeightPx by remember { mutableIntStateOf(defaultCapsuleHeightPx) }
     val capsuleOverlayPadding = with(density) { capsuleHeightPx.toDp() }
 
-    BackHandler(enabled = showSettings) {
-        onShowSettingsChange(false)
-    }
+    val settingsBackModifier = Modifier.predictiveBackMotion(
+        enabled = showSettings,
+        onBack = { onShowSettingsChange(false) },
+    )
 
     Box(
         modifier = Modifier
@@ -285,72 +290,78 @@ private fun RootShell(
     ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
             Box(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
-                if (showSettings) {
-                    SettingsScreen(
-                        uiState = uiState,
-                        contentPadding = PaddingValues(),
-                        bottomOverlayPadding = capsuleOverlayPadding,
-                        onManageServers = onManageServers,
-                        onSelectServer = onSelectServer,
-                        onUpdateStreamQuality = onUpdateStreamQuality,
-                        onUpdateDownloadQuality = onUpdateDownloadQuality,
-                        onUpdateAdaptiveQuality = onUpdateAdaptiveQuality,
-                        onUpdateWifiStreamQuality = onUpdateWifiStreamQuality,
-                        onUpdateMobileStreamQuality = onUpdateMobileStreamQuality,
-                        onUpdateSoundBalancing = onUpdateSoundBalancing,
-                        onUpdateStreamCacheSizeMb = onUpdateStreamCacheSizeMb,
-                        onClearStreamCache = onClearStreamCache,
-                        onUpdateImageCacheSizeMb = onUpdateImageCacheSizeMb,
-                        onClearImageCache = onClearImageCache,
-                        onUpdateSongMetadata = onUpdateSongMetadata,
-                        onUpdateTextScale = onUpdateTextScale,
-                        onUpdateLanguage = onUpdateLanguage,
-                        onUpdateThemeMode = onUpdateThemeMode,
-                        onUpdateDefaultBrowseTab = onUpdateDefaultBrowseTab,
-                        onUpdateDefaultAlbumFeed = onUpdateDefaultAlbumFeed,
-                        onUpdateBluetoothLyrics = onUpdateBluetoothLyrics,
-                        onUpdateBufferStrategy = onUpdateBufferStrategy,
-                        onUpdateCustomBufferSeconds = onUpdateCustomBufferSeconds,
-                        onExportConfig = onExportConfig,
-                        onImportConfig = onImportConfig,
-                        onPlayCachedSong = onPlayCachedSong,
-                        onPlayCachedQueue = onPlayCachedQueue,
-                        onDeleteCachedSong = onDeleteCachedSong,
-                        onClearCachedSongs = onClearCachedSongs,
-                    )
-                } else {
-                    BrowseScreen(
-                        uiState = uiState,
-                        isOfflineDegraded = endpointStatus.isOfflineDegraded,
-                        contentPadding = PaddingValues(),
-                        bottomOverlayPadding = capsuleOverlayPadding,
-                        onManageServers = onManageServers,
-                        onSelectBrowseSection = onSelectBrowseSection,
-                        onSetSearchActive = onSetSearchActive,
-                        onUpdateSearchQuery = onUpdateSearchQuery,
-                        onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
-                        onClearRecentSearchQueries = onClearRecentSearchQueries,
-                        onRefreshCurrentTab = onRefreshCurrentTab,
-                        onSelectAlbumFeed = onSelectAlbumFeed,
-                        onLoadMoreAlbums = onLoadMoreAlbums,
-                        onLoadPreviousSongs = onLoadPreviousSongs,
-                        onLoadMoreSongs = onLoadMoreSongs,
-                        onUpdateAlbumViewMode = onUpdateAlbumViewMode,
-                        onOpenArtist = onOpenArtist,
-                        onCloseArtist = onCloseArtist,
-                        onOpenAlbum = onOpenAlbum,
-                        onCloseAlbum = onCloseAlbum,
-                        onOpenPlaylist = onOpenPlaylist,
-                        onClosePlaylist = onClosePlaylist,
-                        onPlaySongs = onPlaySongs,
-                        onPlayLibrarySongs = onPlayLibrarySongs,
-                        onQueueSong = onQueueSong,
-                        onPlaySongNext = onPlaySongNext,
-                        onOfflineSongUnavailable = onOfflineSongUnavailable,
-                        onToggleSongDownload = onToggleSongDownload,
-                        onOpenSettings = { onShowSettingsChange(true) },
-                        onImportConfig = onImportConfig,
-                    )
+                BrowseScreen(
+                    uiState = uiState,
+                    isOfflineDegraded = endpointStatus.isOfflineDegraded,
+                    contentPadding = PaddingValues(),
+                    bottomOverlayPadding = capsuleOverlayPadding,
+                    onManageServers = onManageServers,
+                    onSelectBrowseSection = onSelectBrowseSection,
+                    onSetSearchActive = onSetSearchActive,
+                    onUpdateSearchQuery = onUpdateSearchQuery,
+                    onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
+                    onClearRecentSearchQueries = onClearRecentSearchQueries,
+                    onRefreshCurrentTab = onRefreshCurrentTab,
+                    onSelectAlbumFeed = onSelectAlbumFeed,
+                    onLoadMoreAlbums = onLoadMoreAlbums,
+                    onLoadPreviousSongs = onLoadPreviousSongs,
+                    onLoadMoreSongs = onLoadMoreSongs,
+                    onUpdateAlbumViewMode = onUpdateAlbumViewMode,
+                    onOpenArtist = onOpenArtist,
+                    onCloseArtist = onCloseArtist,
+                    onOpenAlbum = onOpenAlbum,
+                    onCloseAlbum = onCloseAlbum,
+                    onOpenPlaylist = onOpenPlaylist,
+                    onClosePlaylist = onClosePlaylist,
+                    onPlaySongs = onPlaySongs,
+                    onPlayLibrarySongs = onPlayLibrarySongs,
+                    onQueueSong = onQueueSong,
+                    onPlaySongNext = onPlaySongNext,
+                    onOfflineSongUnavailable = onOfflineSongUnavailable,
+                    onToggleSongDownload = onToggleSongDownload,
+                    onOpenSettings = { onShowSettingsChange(true) },
+                    onImportConfig = onImportConfig,
+                )
+
+                AnimatedVisibility(
+                    visible = showSettings,
+                    enter = fadeIn(spring(stiffness = Spring.StiffnessMediumLow)),
+                    exit = fadeOut(spring(stiffness = Spring.StiffnessMediumLow)),
+                ) {
+                    Box(modifier = Modifier.fillMaxSize().then(settingsBackModifier)) {
+                        SettingsScreen(
+                            uiState = uiState,
+                            contentPadding = PaddingValues(),
+                            bottomOverlayPadding = capsuleOverlayPadding,
+                            onManageServers = onManageServers,
+                            onSelectServer = onSelectServer,
+                            onUpdateStreamQuality = onUpdateStreamQuality,
+                            onUpdateDownloadQuality = onUpdateDownloadQuality,
+                            onUpdateAdaptiveQuality = onUpdateAdaptiveQuality,
+                            onUpdateWifiStreamQuality = onUpdateWifiStreamQuality,
+                            onUpdateMobileStreamQuality = onUpdateMobileStreamQuality,
+                            onUpdateSoundBalancing = onUpdateSoundBalancing,
+                            onUpdateStreamCacheSizeMb = onUpdateStreamCacheSizeMb,
+                            onClearStreamCache = onClearStreamCache,
+                            onUpdateImageCacheSizeMb = onUpdateImageCacheSizeMb,
+                            onClearImageCache = onClearImageCache,
+                            onUpdateSongMetadata = onUpdateSongMetadata,
+                            onUpdateTextScale = onUpdateTextScale,
+                            onUpdateLanguage = onUpdateLanguage,
+                            onUpdateThemeMode = onUpdateThemeMode,
+                            onUpdateDefaultBrowseTab = onUpdateDefaultBrowseTab,
+                            onUpdateDefaultAlbumFeed = onUpdateDefaultAlbumFeed,
+                            onUpdateBluetoothLyrics = onUpdateBluetoothLyrics,
+                            onUpdateBufferStrategy = onUpdateBufferStrategy,
+                            onUpdateCustomBufferSeconds = onUpdateCustomBufferSeconds,
+                            onExportConfig = onExportConfig,
+                            onImportConfig = onImportConfig,
+                            onPlayCachedSong = onPlayCachedSong,
+                            onPlayCachedQueue = onPlayCachedQueue,
+                            onDeleteCachedSong = onDeleteCachedSong,
+                            onClearCachedSongs = onClearCachedSongs,
+                        )
+                    }
                 }
 
                 SnackbarHost(
