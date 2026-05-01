@@ -5,6 +5,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
+import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSource
+import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
 import org.hdhmc.saki.domain.model.Song
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -68,6 +70,52 @@ class FileLocalPlayQueueRepositoryTest {
     }
 
     @Test
+    fun `save and get round trip snapshot source`() = runTest {
+        val repository = createRepository()
+        val source = LocalPlayQueueSnapshotSource(
+            type = LocalPlayQueueSnapshotSourceType.LIBRARY_SONGS,
+            currentIndex = 42,
+            windowOffset = 20,
+        )
+        val snapshot = snapshot(
+            serverId = 1L,
+            songs = listOf(song("song-1"), song("song-2")),
+            currentSongId = "song-2",
+            positionMs = 42_000L,
+            source = source,
+        )
+
+        repository.save(snapshot)
+
+        assertEquals(source, repository.get(1L)?.source)
+    }
+
+    @Test
+    fun `get ignores unknown snapshot source type`() = runTest {
+        val directory = temporaryFolder.newFolder()
+        val repository = createRepository(directory)
+        val snapshot = snapshot(
+            serverId = 1L,
+            songs = listOf(song("song-1")),
+            currentSongId = "song-1",
+            positionMs = 1_000L,
+            source = LocalPlayQueueSnapshotSource(
+                type = LocalPlayQueueSnapshotSourceType.LIBRARY_SONGS,
+                currentIndex = 12,
+                windowOffset = 0,
+            ),
+        )
+
+        repository.save(snapshot)
+        val target = File(directory, "server_1.json")
+        target.writeText(target.readText().replace("library_songs", "future_source"))
+
+        val restored = repository.get(1L)
+        assertEquals("song-1", restored?.currentSongId)
+        assertNull(restored?.source)
+    }
+
+    @Test
     fun `get can recover backup when target is missing`() = runTest {
         val directory = temporaryFolder.newFolder()
         val repository = createRepository(directory)
@@ -99,12 +147,14 @@ class FileLocalPlayQueueRepositoryTest {
         songs: List<Song>,
         currentSongId: String?,
         positionMs: Long,
+        source: LocalPlayQueueSnapshotSource? = null,
     ) = LocalPlayQueueSnapshot(
         serverId = serverId,
         songs = songs,
         currentSongId = currentSongId,
         positionMs = positionMs,
         updatedAt = 123_456L,
+        source = source,
     )
 
     private fun song(id: String) = Song(

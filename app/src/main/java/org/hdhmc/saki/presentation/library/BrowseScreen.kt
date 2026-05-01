@@ -1435,9 +1435,9 @@ private fun SongsPage(
         }
         wasLoadingPrevious = isLoadingPrevious
     }
-    LaunchedEffect(listState, hasPrevious, isLoading, isLoadingPrevious, songsOffset, songs.size) {
+    LaunchedEffect(listState, hasPrevious, isLoading, isLoadingPrevious, isLoadingMore, songsOffset, songs.size) {
         snapshotFlow {
-            if (!hasPrevious || isLoading || isLoadingPrevious || songs.isEmpty()) {
+            if (!hasPrevious || isLoading || isLoadingPrevious || isLoadingMore || songs.isEmpty()) {
                 false
             } else {
                 val firstVisibleIndex = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: 0
@@ -1448,9 +1448,9 @@ private fun SongsPage(
             .filter { shouldLoad -> shouldLoad }
             .collect { onLoadPrevious() }
     }
-    LaunchedEffect(listState, hasMore, isLoading, isLoadingMore, songsOffset, songs.size) {
+    LaunchedEffect(listState, hasMore, isLoading, isLoadingPrevious, isLoadingMore, songsOffset, songs.size) {
         snapshotFlow {
-            if (!hasMore || isLoading || isLoadingMore || songs.isEmpty()) {
+            if (!hasMore || isLoading || isLoadingPrevious || isLoadingMore || songs.isEmpty()) {
                 false
             } else {
                 val layoutInfo = listState.layoutInfo

@@ -153,7 +153,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
             startOrder = safeOffset,
             endOrder = safeEnd,
         )
-        if (orderedPage.isNotEmpty() || dao.countOrderedSongMetadata(serverId, LIBRARY_ORDER_UNSET) > 0) {
+        if (orderedPage.isNotEmpty() || dao.hasOrderedSongMetadata(serverId, LIBRARY_ORDER_UNSET)) {
             return@withContext orderedPage.map { it.toDomain() }
         }
 
