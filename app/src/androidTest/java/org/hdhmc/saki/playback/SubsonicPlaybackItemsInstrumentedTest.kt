@@ -54,6 +54,8 @@ class SubsonicPlaybackItemsInstrumentedTest {
         assertEquals(320, request.bitRate)
         assertEquals(320, request.sourceBitRate)
         assertEquals(44_100, request.sampleRate)
+        assertNull(request.queueSource)
+        assertNull(request.libraryIndex)
 
         val transcoded = requireNotNull(
             song.toPlaybackRequestMediaItem(
@@ -65,6 +67,18 @@ class SubsonicPlaybackItemsInstrumentedTest {
         )
         assertEquals(128, transcoded.bitRate)
         assertEquals(320, transcoded.sourceBitRate)
+
+        val virtualQueueRequest = requireNotNull(
+            song.toPlaybackRequestMediaItem(
+                serverId = 42L,
+                qualityLabel = "Original",
+                streamCacheKey = "42:song-1:original",
+                queueSource = PLAYBACK_QUEUE_SOURCE_LIBRARY_SONGS,
+                libraryIndex = 321,
+            ).toPlaybackRequestOrNull(),
+        )
+        assertEquals(PLAYBACK_QUEUE_SOURCE_LIBRARY_SONGS, virtualQueueRequest.queueSource)
+        assertEquals(321, virtualQueueRequest.libraryIndex)
     }
 
     @Test
@@ -94,6 +108,8 @@ class SubsonicPlaybackItemsInstrumentedTest {
             bitRate = 320,
             sourceBitRate = 320,
             sampleRate = 44_100,
+            queueSource = null,
+            libraryIndex = null,
         )
         val streamRequest = SubsonicStreamRequest(
             songId = "song-2",
