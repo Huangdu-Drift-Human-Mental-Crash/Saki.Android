@@ -306,14 +306,14 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    BufferStrategy.AGGRESSIVE -> Text(
-                        text = stringResource(R.string.settings_buffer_strategy_aggressive_body),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                     BufferStrategy.CUSTOM -> {
                         Text(
-                            text = stringResource(R.string.settings_buffer_ahead_seconds, bufferSliderValue.toBufferSeconds()),
+                            text = stringResource(R.string.settings_buffer_strategy_custom_body),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = stringResource(R.string.settings_buffer_ahead_duration, formatBufferDuration(bufferSliderValue.toBufferSeconds())),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Slider(
@@ -334,12 +334,12 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = stringResource(R.string.settings_seconds_short, MIN_CUSTOM_BUFFER_SECONDS),
+                                text = formatBufferDuration(MIN_CUSTOM_BUFFER_SECONDS),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                text = stringResource(R.string.settings_seconds_short, MAX_CUSTOM_BUFFER_SECONDS),
+                                text = formatBufferDuration(MAX_CUSTOM_BUFFER_SECONDS),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1028,6 +1028,17 @@ private fun Float.toBufferSeconds(): Int {
     val stepsFromMin = ((this - MIN_CUSTOM_BUFFER_SECONDS) / CUSTOM_BUFFER_STEP_SECONDS).roundToInt()
     return (MIN_CUSTOM_BUFFER_SECONDS + (stepsFromMin * CUSTOM_BUFFER_STEP_SECONDS))
         .coerceIn(MIN_CUSTOM_BUFFER_SECONDS, MAX_CUSTOM_BUFFER_SECONDS)
+}
+
+@Composable
+private fun formatBufferDuration(totalSeconds: Int): String {
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return when {
+        minutes == 0 -> stringResource(R.string.settings_seconds_short, seconds)
+        seconds == 0 -> stringResource(R.string.settings_minutes_short, minutes)
+        else -> stringResource(R.string.settings_minutes_seconds_short, minutes, seconds)
+    }
 }
 
 private fun Float.toImageCacheSizeMb(): Int {

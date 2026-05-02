@@ -14,11 +14,13 @@
     <string name="settings_sound_balancing_title">音量均衡</string>
     <string name="settings_sound_balancing_body">利用 Android 音频会话效果减少曲目间的音量跳变。效果因设备而异。</string>
     <string name="settings_buffer_strategy_title">缓冲策略</string>
-    <string name="settings_buffer_strategy_body">控制播放时预缓冲当前曲目的量。</string>
+    <string name="settings_buffer_strategy_body">控制播放时预缓冲当前曲目的量。更大的缓冲区可降低拖动延迟，但会占用更多内存并可能预加载队列中的后续曲目。</string>
     <string name="settings_buffer_strategy_normal_body">默认缓冲（约 50 秒）。平衡内存占用与播放可靠性。</string>
-    <string name="settings_buffer_strategy_aggressive_body">缓冲整首曲目。适合稳定 WiFi 环境，可即时拖动。</string>
-    <string name="settings_buffer_ahead_seconds">预缓冲 %1$d 秒</string>
+    <string name="settings_buffer_strategy_custom_body">按所选时长预缓冲（总缓冲数据最多 256 MB）。时长越长越适合稳定 WiFi 环境，低内存设备不建议使用较长时长。</string>
+    <string name="settings_buffer_ahead_duration">预缓冲 %1$s</string>
     <string name="settings_seconds_short">%1$d 秒</string>
+    <string name="settings_minutes_short">%1$d 分钟</string>
+    <string name="settings_minutes_seconds_short">%1$d 分 %2$d 秒</string>
     <string name="settings_restart_required">更改将在重启应用后生效。</string>
     <string name="settings_text_size_title">字体大小</string>
     <string name="settings_text_size_body">调整应用内字体大小，不影响系统其他界面。</string>
@@ -70,7 +72,6 @@
     <string name="sound_balancing_medium">中</string>
     <string name="sound_balancing_high">高</string>
     <string name="buffer_strategy_normal">标准</string>
-    <string name="buffer_strategy_aggressive">激进</string>
     <string name="buffer_strategy_custom">自定义</string>
     <string name="text_scale_extra_small">极小</string>
     <string name="text_scale_small">小</string>

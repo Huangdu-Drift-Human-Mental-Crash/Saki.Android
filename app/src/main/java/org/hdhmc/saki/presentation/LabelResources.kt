@@ -31,7 +31,6 @@ fun SoundBalancingMode.labelRes(): Int = when (this) {
 @StringRes
 fun BufferStrategy.labelRes(): Int = when (this) {
     BufferStrategy.NORMAL -> R.string.buffer_strategy_normal
-    BufferStrategy.AGGRESSIVE -> R.string.buffer_strategy_aggressive
     BufferStrategy.CUSTOM -> R.string.buffer_strategy_custom
 }
 

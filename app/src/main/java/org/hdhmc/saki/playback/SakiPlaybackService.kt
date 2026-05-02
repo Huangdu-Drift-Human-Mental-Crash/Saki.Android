@@ -141,19 +141,19 @@ class SakiPlaybackService : MediaSessionService() {
         cachedPlaybackPrefs = initialPrefs
 
         val maxBufferMs = when (initialPrefs.bufferStrategy) {
-            org.hdhmc.saki.domain.model.BufferStrategy.AGGRESSIVE -> Int.MAX_VALUE
             org.hdhmc.saki.domain.model.BufferStrategy.CUSTOM ->
                 initialPrefs.customBufferSeconds * 1_000
             else -> DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
         }
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, maxBufferMs),
-                maxBufferMs,
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+        val loadControl = SakiLoadControl(
+            lenientBufferBytes = initialPrefs.bufferStrategy !=
+                org.hdhmc.saki.domain.model.BufferStrategy.NORMAL,
+            minBufferMs = minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, maxBufferMs),
+            maxBufferMs = maxBufferMs,
+            bufferForPlaybackMs = DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+            bufferForPlaybackAfterRebufferMs =
                 DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
-            )
-            .build()
+        )
 
         val exoPlayer = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
