@@ -118,7 +118,6 @@ enum class BufferStrategy(
     val label: String,
 ) {
     NORMAL("normal", "Normal"),
-    AGGRESSIVE("aggressive", "Aggressive"),
     CUSTOM("custom", "Custom"),
     ;
 
@@ -128,10 +127,10 @@ enum class BufferStrategy(
     }
 }
 
-const val DEFAULT_CUSTOM_BUFFER_SECONDS = 45
-const val MIN_CUSTOM_BUFFER_SECONDS = 15
-const val MAX_CUSTOM_BUFFER_SECONDS = 600
-const val CUSTOM_BUFFER_STEP_SECONDS = 15
+const val DEFAULT_CUSTOM_BUFFER_SECONDS = 60
+const val MIN_CUSTOM_BUFFER_SECONDS = 30
+const val MAX_CUSTOM_BUFFER_SECONDS = 1800
+const val CUSTOM_BUFFER_STEP_SECONDS = 30
 
 fun normalizeCustomBufferSeconds(seconds: Int): Int {
     val clamped = seconds.coerceIn(MIN_CUSTOM_BUFFER_SECONDS, MAX_CUSTOM_BUFFER_SECONDS)

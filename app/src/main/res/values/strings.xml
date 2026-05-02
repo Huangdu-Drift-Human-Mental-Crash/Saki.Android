@@ -16,11 +16,13 @@
     <string name="settings_sound_balancing_title">Sound balancing</string>
     <string name="settings_sound_balancing_body">Reduces perceived volume jumps across tracks using Android\'s audio session effects. Device support and results vary.</string>
     <string name="settings_buffer_strategy_title">Buffer strategy</string>
-    <string name="settings_buffer_strategy_body">Control how much of the current track is buffered ahead during playback.</string>
+    <string name="settings_buffer_strategy_body">Control how much of the current track is buffered ahead during playback. Larger buffers reduce seek latency but use more memory and may preload more items from the queue.</string>
     <string name="settings_buffer_strategy_normal_body">Default buffering (~50 s ahead). Balances memory use and playback reliability.</string>
-    <string name="settings_buffer_strategy_aggressive_body">Buffers the entire current track. Best on stable WiFi for instant seeking.</string>
-    <string name="settings_buffer_ahead_seconds">Buffer %1$d s ahead</string>
+    <string name="settings_buffer_strategy_custom_body">Buffer up to the chosen duration (total buffered data capped at 256 MB). Longer durations are best on stable WiFi; not recommended for low-RAM devices.</string>
+    <string name="settings_buffer_ahead_duration">Buffer %1$s ahead</string>
     <string name="settings_seconds_short">%1$d s</string>
+    <string name="settings_minutes_short">%1$d min</string>
+    <string name="settings_minutes_seconds_short">%1$d min %2$d s</string>
     <string name="settings_restart_required">Changes take effect after restarting the app.</string>
     <string name="settings_text_size_title">Text size</string>
     <string name="settings_text_size_body">Scale the app typography without changing the rest of the system UI.</string>
@@ -78,7 +80,6 @@
     <string name="sound_balancing_medium">Medium</string>
     <string name="sound_balancing_high">High</string>
     <string name="buffer_strategy_normal">Normal</string>
-    <string name="buffer_strategy_aggressive">Aggressive</string>
     <string name="buffer_strategy_custom">Custom</string>
     <string name="text_scale_extra_small">Extra small</string>
     <string name="text_scale_small">Small</string>
