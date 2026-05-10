@@ -68,7 +68,10 @@ import org.hdhmc.saki.domain.model.MAX_IMAGE_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.IMAGE_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.MIN_IMAGE_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_CUSTOM_BUFFER_SECONDS
+import org.hdhmc.saki.domain.model.MAX_SONGS_PAGE_SIZE
+import org.hdhmc.saki.domain.model.MIN_SONGS_PAGE_SIZE
 import org.hdhmc.saki.domain.model.ServerConfig
+import org.hdhmc.saki.domain.model.SONGS_PAGE_SIZE_STEP
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.StreamQuality
@@ -105,6 +108,7 @@ fun SettingsScreen(
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateDefaultBrowseTab: (DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (AlbumListType) -> Unit,
+    onUpdateSongsPageSize: (Int) -> Unit,
     onUpdateBluetoothLyrics: (Boolean) -> Unit,
     onUpdateBufferStrategy: (BufferStrategy) -> Unit,
     onUpdateCustomBufferSeconds: (Int) -> Unit,
@@ -129,6 +133,10 @@ fun SettingsScreen(
     val configuredImageCacheSizeMb = uiState.playbackState.preferences.imageCacheSizeMb
     var imageCacheSliderValue by remember(configuredImageCacheSizeMb) {
         mutableFloatStateOf(configuredImageCacheSizeMb.toFloat())
+    }
+    val configuredSongsPageSize = uiState.appPreferences.songsPageSize
+    var songsPageSizeSliderValue by remember(configuredSongsPageSize) {
+        mutableFloatStateOf(configuredSongsPageSize.toFloat())
     }
 
     LazyColumn(
@@ -477,6 +485,50 @@ fun SettingsScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        item {
+            SettingsSectionCard(
+                title = stringResource(R.string.settings_songs_page_size_title),
+                body = stringResource(R.string.settings_songs_page_size_body),
+                action = null,
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.settings_songs_page_size_value,
+                        songsPageSizeSliderValue.toSongsPageSize(),
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Slider(
+                    value = songsPageSizeSliderValue,
+                    onValueChange = { songsPageSizeSliderValue = it },
+                    valueRange = MIN_SONGS_PAGE_SIZE.toFloat()..MAX_SONGS_PAGE_SIZE.toFloat(),
+                    steps = SONGS_PAGE_SIZE_SLIDER_STEPS,
+                    onValueChangeFinished = {
+                        val newPageSize = songsPageSizeSliderValue.toSongsPageSize()
+                        songsPageSizeSliderValue = newPageSize.toFloat()
+                        if (newPageSize != configuredSongsPageSize) {
+                            onUpdateSongsPageSize(newPageSize)
+                        }
+                    },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_songs_page_size_value, MIN_SONGS_PAGE_SIZE),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_songs_page_size_value, MAX_SONGS_PAGE_SIZE),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -1018,10 +1070,19 @@ private fun formatStorageSize(bytes: Long): String {
 private const val STREAM_CACHE_SLIDER_STEPS =
     ((MAX_STREAM_CACHE_SIZE_MB - MIN_STREAM_CACHE_SIZE_MB) / STREAM_CACHE_SIZE_STEP_MB) - 1
 
+private const val SONGS_PAGE_SIZE_SLIDER_STEPS =
+    ((MAX_SONGS_PAGE_SIZE - MIN_SONGS_PAGE_SIZE) / SONGS_PAGE_SIZE_STEP) - 1
+
 private fun Float.toStreamCacheSizeMb(): Int {
     val stepsFromMin = ((this - MIN_STREAM_CACHE_SIZE_MB) / STREAM_CACHE_SIZE_STEP_MB).roundToInt()
     return (MIN_STREAM_CACHE_SIZE_MB + (stepsFromMin * STREAM_CACHE_SIZE_STEP_MB))
         .coerceIn(MIN_STREAM_CACHE_SIZE_MB, MAX_STREAM_CACHE_SIZE_MB)
+}
+
+private fun Float.toSongsPageSize(): Int {
+    val stepsFromMin = ((this - MIN_SONGS_PAGE_SIZE) / SONGS_PAGE_SIZE_STEP).roundToInt()
+    return (MIN_SONGS_PAGE_SIZE + (stepsFromMin * SONGS_PAGE_SIZE_STEP))
+        .coerceIn(MIN_SONGS_PAGE_SIZE, MAX_SONGS_PAGE_SIZE)
 }
 
 private fun Float.toBufferSeconds(): Int {
