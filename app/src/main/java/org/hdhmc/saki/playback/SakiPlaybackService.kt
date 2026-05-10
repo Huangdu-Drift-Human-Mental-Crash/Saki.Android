@@ -3,18 +3,20 @@ package org.hdhmc.saki.playback
 import android.app.PendingIntent
 import android.content.Intent
 import android.media.audiofx.LoudnessEnhancer
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import android.net.Uri
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -30,10 +32,12 @@ import androidx.media3.session.SessionResult
 import org.hdhmc.saki.MainActivity
 import org.hdhmc.saki.R
 import org.hdhmc.saki.data.remote.HTTP_USER_AGENT
+import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.LyricLine
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSource
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
+import org.hdhmc.saki.domain.model.PlaybackPreferences
 import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
@@ -43,6 +47,7 @@ import org.hdhmc.saki.domain.repository.SubsonicRepository
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import dagger.hilt.android.AndroidEntryPoint
+import java.io.InterruptedIOException
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -52,16 +57,23 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import okhttp3.OkHttpClient
+
+private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
+private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
 
 @AndroidEntryPoint
 @UnstableApi
@@ -113,6 +125,11 @@ class SakiPlaybackService : MediaSessionService() {
     private var soundBalancingMode = SoundBalancingMode.OFF
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var loudnessEnhancerSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+    private lateinit var streamCacheDataSourceFactory: CacheDataSource.Factory
+    private var streamPrefetchJob: Job? = null
+    private var activeStreamPrefetchKey: String? = null
+    @Volatile
+    private var activeStreamCacheWriter: CacheWriter? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -131,6 +148,7 @@ class SakiPlaybackService : MediaSessionService() {
             .setCache(streamCache)
             .setUpstreamDataSourceFactory(upstreamDataSourceFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        streamCacheDataSourceFactory = cacheFactory
         val dataSourceFactory = ResolvingDataSource.Factory(cacheFactory) { dataSpec ->
             resolveStreamDataSpec(dataSpec)
         }
@@ -141,19 +159,30 @@ class SakiPlaybackService : MediaSessionService() {
         cachedPlaybackPrefs = initialPrefs
 
         val maxBufferMs = when (initialPrefs.bufferStrategy) {
-            org.hdhmc.saki.domain.model.BufferStrategy.CUSTOM ->
-                initialPrefs.customBufferSeconds * 1_000
+            BufferStrategy.CUSTOM ->
+                minOf(initialPrefs.customBufferSeconds * 1_000, CUSTOM_PLAYER_MAX_BUFFER_MS)
             else -> DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
         }
-        val loadControl = SakiLoadControl(
-            lenientBufferBytes = initialPrefs.bufferStrategy !=
-                org.hdhmc.saki.domain.model.BufferStrategy.NORMAL,
-            minBufferMs = minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, maxBufferMs),
-            maxBufferMs = maxBufferMs,
-            bufferForPlaybackMs = DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-            bufferForPlaybackAfterRebufferMs =
-                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
-        )
+        val usesCustomBuffer = initialPrefs.bufferStrategy == BufferStrategy.CUSTOM
+        val loadControl = if (usesCustomBuffer) {
+            SakiLoadControl(
+                minBufferMs = minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, maxBufferMs),
+                maxBufferMs = maxBufferMs,
+                bufferForPlaybackMs = DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                bufferForPlaybackAfterRebufferMs =
+                    DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+                targetBufferBytes = SakiLoadControl.customTargetBufferBytes(),
+                prioritizeTimeOverSizeThresholds = false,
+            )
+        } else {
+            SakiLoadControl(
+                minBufferMs = minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, maxBufferMs),
+                maxBufferMs = maxBufferMs,
+                bufferForPlaybackMs = DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                bufferForPlaybackAfterRebufferMs =
+                    DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+            )
+        }
 
         val exoPlayer = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
@@ -168,6 +197,7 @@ class SakiPlaybackService : MediaSessionService() {
                 addListener(PlaybackRecoveryListener())
                 addListener(PlayQueueSaveListener())
                 addListener(NotificationMediaButtonListener())
+                addListener(StreamPrefetchListener())
                 addListener(object : Player.Listener {
                     override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
                         val pending = pendingShuffleOrder ?: return
@@ -210,7 +240,17 @@ class SakiPlaybackService : MediaSessionService() {
 
         // Keep playback prefs in memory for the non-suspend ResolvingDataSource resolver
         playerScope.launch {
-            playbackPreferencesRepository.observePreferences().collect { cachedPlaybackPrefs = it }
+            playbackPreferencesRepository.observePreferences().collect {
+                cachedPlaybackPrefs = it
+                syncCurrentStreamPrefetch()
+            }
+        }
+
+        playerScope.launch {
+            networkTypeProvider.networkType
+                .collect {
+                    syncCurrentStreamPrefetch()
+                }
         }
 
         playerScope.launch {
@@ -359,14 +399,145 @@ class SakiPlaybackService : MediaSessionService() {
 
     /** Latest playback preferences, kept in memory to avoid blocking reads in the resolver. */
     @Volatile
-    private var cachedPlaybackPrefs: org.hdhmc.saki.domain.model.PlaybackPreferences? = null
+    private var cachedPlaybackPrefs: PlaybackPreferences? = null
+
+    private fun syncCurrentStreamPrefetch() {
+        val activePlayer = player ?: run {
+            cancelStreamPrefetch()
+            return
+        }
+        val prefs = cachedPlaybackPrefs ?: return
+        val mediaItem = activePlayer.currentMediaItem
+        val request = mediaItem?.toPlaybackRequestOrNull()
+        if (
+            prefs.bufferStrategy != BufferStrategy.CUSTOM ||
+            prefs.customBufferSeconds * 1_000 <= CUSTOM_PLAYER_MAX_BUFFER_MS ||
+            activePlayer.playbackState == Player.STATE_IDLE ||
+            activePlayer.playbackState == Player.STATE_ENDED ||
+            request == null ||
+            request.isCached ||
+            request.localPath != null ||
+            request.durationMs?.let { it <= CUSTOM_PLAYER_MAX_BUFFER_MS } == true ||
+            endpointSelector.isOfflineDegraded(request.serverId)
+        ) {
+            cancelStreamPrefetch()
+            return
+        }
+
+        val requestedQuality = request.requestedStreamQuality(prefs)
+        val prefetchKey = buildString {
+            append(request.serverId)
+            append('|')
+            append(request.songId)
+            append('|')
+            append(requestedQuality.storageKey)
+            append('|')
+            append(request.format.orEmpty())
+            append('|')
+            append(prefs.customBufferSeconds)
+        }
+        if (activeStreamPrefetchKey == prefetchKey && streamPrefetchJob?.isActive == true) {
+            return
+        }
+
+        if (streamCacheRepository.findCachedQualityKey(request.serverId, request.songId, requestedQuality) != null) {
+            cancelStreamPrefetch()
+            return
+        }
+
+        cancelStreamPrefetch()
+        activeStreamPrefetchKey = prefetchKey
+        streamPrefetchJob = serviceScope.launch(Dispatchers.IO) {
+            runCatching {
+                prefetchStreamToDisk(request)
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) {
+                    throw throwable
+                }
+                if (throwable is InterruptedIOException) {
+                    return@onFailure
+                }
+                Log.w(STREAM_PREFETCH_LOG_TAG, "Failed to prefetch stream cache", throwable)
+            }
+        }
+    }
+
+    private fun cancelStreamPrefetch() {
+        activeStreamPrefetchKey = null
+        activeStreamCacheWriter?.cancel()
+        activeStreamCacheWriter = null
+        streamPrefetchJob?.cancel()
+        streamPrefetchJob = null
+    }
+
+    private fun PlaybackRequest.requestedStreamQuality(prefs: PlaybackPreferences): StreamQuality {
+        return if (prefs.adaptiveQualityEnabled) {
+            when (networkTypeProvider.networkType.value) {
+                org.hdhmc.saki.data.remote.NetworkType.WIFI -> prefs.wifiStreamQuality
+                org.hdhmc.saki.data.remote.NetworkType.MOBILE -> prefs.mobileStreamQuality
+            }
+        } else {
+            StreamQuality.entries.find { it.maxBitRate == maxBitRate } ?: StreamQuality.ORIGINAL
+        }
+    }
+
+    private fun PlaybackRequest.toStreamPlaceholderUri(): Uri {
+        return Uri.Builder()
+            .scheme("saki")
+            .authority("stream")
+            .appendQueryParameter("serverId", serverId.toString())
+            .appendQueryParameter("songId", songId)
+            .apply {
+                maxBitRate?.let { appendQueryParameter("maxBitRate", it.toString()) }
+                format?.let { appendQueryParameter("format", it) }
+            }
+            .build()
+    }
+
+    private fun PlaybackRequest.toStreamPlaceholderDataSpec(): DataSpec {
+        return DataSpec.Builder()
+            .setUri(toStreamPlaceholderUri())
+            .build()
+    }
+
+    private suspend fun prefetchStreamToDisk(request: PlaybackRequest) {
+        currentCoroutineContext().ensureActive()
+        val resolvedSpec = resolveStreamDataSpec(
+            dataSpec = request.toStreamPlaceholderDataSpec(),
+            allowCachedResource = false,
+        )
+        currentCoroutineContext().ensureActive()
+        if (resolvedSpec.uri.scheme == "saki-cache" || resolvedSpec.key.isNullOrBlank()) {
+            return
+        }
+
+        val writer = CacheWriter(
+            streamCacheDataSourceFactory.createDataSource(),
+            resolvedSpec,
+            null,
+            null,
+        )
+        activeStreamCacheWriter = writer
+        try {
+            runInterruptible(Dispatchers.IO) {
+                writer.cache()
+            }
+        } finally {
+            if (activeStreamCacheWriter === writer) {
+                activeStreamCacheWriter = null
+            }
+        }
+    }
 
     /**
      * Resolves placeholder `saki://stream` URIs to real Subsonic stream URLs at the moment
      * ExoPlayer actually opens the data source. This ensures the quality and endpoint are
      * determined by the current network state, not the queue build time.
      */
-    private fun resolveStreamDataSpec(dataSpec: DataSpec): DataSpec {
+    private fun resolveStreamDataSpec(
+        dataSpec: DataSpec,
+        allowCachedResource: Boolean = true,
+    ): DataSpec {
         val uri = dataSpec.uri
         if (uri.scheme != "saki" || uri.host != "stream") return dataSpec
 
@@ -393,7 +564,7 @@ class SakiPlaybackService : MediaSessionService() {
         val cachedResourceKey = cachedQuality?.let { quality ->
             streamCacheRepository.buildCacheKey(serverId, songId, quality)
         }
-        if (preferLocalCache && cachedResourceKey != null) {
+        if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
             return dataSpec.buildUpon()
                 .setUri(cachedStreamUri(cachedResourceKey))
                 .setKey(cachedResourceKey)
@@ -463,6 +634,7 @@ class SakiPlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         savePlayQueue(immediate = true)
+        cancelStreamPrefetch()
         releaseSoundBalancingEffect()
 
         mediaSession?.release()
@@ -666,16 +838,7 @@ class SakiPlaybackService : MediaSessionService() {
             }
 
             // Build placeholder URI — real stream URL resolved at play time by ResolvingDataSource
-            val placeholderUri = Uri.Builder()
-                .scheme("saki")
-                .authority("stream")
-                .appendQueryParameter("serverId", request.serverId.toString())
-                .appendQueryParameter("songId", request.songId)
-                .apply {
-                    request.maxBitRate?.let { appendQueryParameter("maxBitRate", it.toString()) }
-                    request.format?.let { appendQueryParameter("format", it) }
-                }
-                .build()
+            val placeholderUri = request.toStreamPlaceholderUri()
 
             // Resolve artwork URL using canonical endpoint (first by order) so
             // CoverArtEndpointInterceptor can rewrite it to the current best endpoint at load time
@@ -708,6 +871,20 @@ class SakiPlaybackService : MediaSessionService() {
                         .build(),
                 )
                 .build()
+        }
+    }
+
+    private inner class StreamPrefetchListener : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            syncCurrentStreamPrefetch()
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            syncCurrentStreamPrefetch()
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            syncCurrentStreamPrefetch()
         }
     }
 
