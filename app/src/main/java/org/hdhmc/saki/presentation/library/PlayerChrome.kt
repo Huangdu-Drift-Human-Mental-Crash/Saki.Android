@@ -558,11 +558,11 @@ fun NowPlayingOverlay(
             val titleStyle = when {
                 track.title.length >= 34 -> MaterialTheme.typography.titleLarge.copy(
                     fontSize = 20.sp,
-                    lineHeight = 24.sp,
+                    lineHeight = 28.sp,
                 )
                 denseTitle || shortScreen -> MaterialTheme.typography.titleLarge.copy(
                     fontSize = 22.sp,
-                    lineHeight = 26.sp,
+                    lineHeight = 28.sp,
                 )
                 else -> MaterialTheme.typography.headlineMedium.copy(
                     fontSize = 24.sp,
@@ -571,7 +571,7 @@ fun NowPlayingOverlay(
             }
             val metadataStyle = MaterialTheme.typography.bodyLarge.copy(
                 fontSize = if (denseMetadata || shortScreen) 16.sp else 17.sp,
-                lineHeight = if (denseMetadata || shortScreen) 20.sp else 22.sp,
+                lineHeight = 22.sp,
             )
             val horizontalPadding = if (shortScreen) 16.dp else 20.dp
             val verticalSpacing = if (shortScreen) 8.dp else 12.dp
