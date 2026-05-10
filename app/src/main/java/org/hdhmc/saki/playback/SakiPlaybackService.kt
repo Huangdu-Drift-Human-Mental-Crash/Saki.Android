@@ -11,6 +11,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
@@ -74,6 +75,10 @@ import okhttp3.OkHttpClient
 
 private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
 private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
+
+private fun Long.coerceKnownDuration(): Long? {
+    return takeIf { it != C.TIME_UNSET && it > 0L }
+}
 
 @AndroidEntryPoint
 @UnstableApi
@@ -407,50 +412,28 @@ class SakiPlaybackService : MediaSessionService() {
             return
         }
         val prefs = cachedPlaybackPrefs ?: return
-        val mediaItem = activePlayer.currentMediaItem
-        val request = mediaItem?.toPlaybackRequestOrNull()
-        if (
-            prefs.bufferStrategy != BufferStrategy.CUSTOM ||
-            prefs.customBufferSeconds * 1_000 <= CUSTOM_PLAYER_MAX_BUFFER_MS ||
-            activePlayer.playbackState == Player.STATE_IDLE ||
-            activePlayer.playbackState == Player.STATE_ENDED ||
-            request == null ||
-            request.isCached ||
-            request.localPath != null ||
-            request.durationMs?.let { it <= CUSTOM_PLAYER_MAX_BUFFER_MS } == true ||
-            endpointSelector.isOfflineDegraded(request.serverId)
-        ) {
+        val plan = activePlayer.buildStreamPrefetchPlan(prefs)
+        if (plan == null) {
             cancelStreamPrefetch()
             return
         }
 
-        val requestedQuality = request.requestedStreamQuality(prefs)
-        val prefetchKey = buildString {
-            append(request.serverId)
-            append('|')
-            append(request.songId)
-            append('|')
-            append(requestedQuality.storageKey)
-            append('|')
-            append(request.format.orEmpty())
-            append('|')
-            append(prefs.customBufferSeconds)
-        }
-        if (activeStreamPrefetchKey == prefetchKey && streamPrefetchJob?.isActive == true) {
+        if (activeStreamPrefetchKey == plan.key && streamPrefetchJob?.isActive == true) {
             return
         }
 
-        if (streamCacheRepository.findCachedQualityKey(request.serverId, request.songId, requestedQuality) != null) {
+        if (plan.targets.isEmpty()) {
             cancelStreamPrefetch()
             return
         }
 
         cancelStreamPrefetch()
-        activeStreamPrefetchKey = prefetchKey
+        activeStreamPrefetchKey = plan.key
         streamPrefetchJob = serviceScope.launch(Dispatchers.IO) {
-            runCatching {
-                prefetchStreamToDisk(request)
-            }.onFailure { throwable ->
+            val result = runCatching {
+                prefetchTimelineToDisk(plan)
+            }
+            result.onFailure { throwable ->
                 if (throwable is CancellationException) {
                     throw throwable
                 }
@@ -458,6 +441,12 @@ class SakiPlaybackService : MediaSessionService() {
                     return@onFailure
                 }
                 Log.w(STREAM_PREFETCH_LOG_TAG, "Failed to prefetch stream cache", throwable)
+            }
+            if (activeStreamPrefetchKey == plan.key) {
+                activeStreamPrefetchKey = null
+                if (result.isSuccess) {
+                    playerScope.launch { syncCurrentStreamPrefetch() }
+                }
             }
         }
     }
@@ -481,6 +470,16 @@ class SakiPlaybackService : MediaSessionService() {
         }
     }
 
+    private fun PlaybackRequest.withStreamQuality(quality: StreamQuality): PlaybackRequest {
+        return copy(
+            qualityLabel = quality.label,
+            streamCacheKey = streamCacheRepository.buildCacheKey(serverId, songId, quality),
+            maxBitRate = quality.maxBitRate,
+            format = quality.format,
+            bitRate = estimatedPlaybackBitRateKbps(sourceBitRate, quality.maxBitRate),
+        )
+    }
+
     private fun PlaybackRequest.toStreamPlaceholderUri(): Uri {
         return Uri.Builder()
             .scheme("saki")
@@ -498,6 +497,90 @@ class SakiPlaybackService : MediaSessionService() {
         return DataSpec.Builder()
             .setUri(toStreamPlaceholderUri())
             .build()
+    }
+
+    private fun ExoPlayer.buildStreamPrefetchPlan(prefs: PlaybackPreferences): StreamPrefetchPlan? {
+        val customBufferMs = prefs.customBufferSeconds * 1_000L
+        val currentIndex = currentMediaItemIndex
+        if (
+            prefs.bufferStrategy != BufferStrategy.CUSTOM ||
+            customBufferMs <= CUSTOM_PLAYER_MAX_BUFFER_MS ||
+            playbackState == Player.STATE_IDLE ||
+            playbackState == Player.STATE_ENDED ||
+            currentIndex == C.INDEX_UNSET ||
+            mediaItemCount <= 0 ||
+            currentTimeline.windowCount == 0
+        ) {
+            return null
+        }
+
+        var remainingBudgetMs = customBufferMs
+        var index = currentIndex
+        var visited = 0
+        val targets = mutableListOf<StreamPrefetchTarget>()
+        val keyParts = mutableListOf<String>()
+        while (remainingBudgetMs > 0L && index != C.INDEX_UNSET && visited < mediaItemCount) {
+            val mediaItem = getMediaItemAt(index)
+            val request = mediaItem.toPlaybackRequestOrNull() ?: break
+            val durationMs = mediaItem.durationForPrefetchMs(index == currentIndex)
+            val positionMs = if (index == currentIndex) currentPosition.coerceAtLeast(0L) else 0L
+            val remainingTrackMs = durationMs
+                ?.minus(positionMs)
+                ?.coerceAtLeast(0L)
+            if (request.isCached || request.localPath != null || endpointSelector.isOfflineDegraded(request.serverId)) {
+                remainingTrackMs?.let { remainingBudgetMs -= it } ?: break
+            } else {
+                val quality = request.requestedStreamQuality(prefs)
+                val prefetchRequest = request.withStreamQuality(quality)
+                keyParts +=
+                    "$index:${request.serverId}:${request.songId}:${quality.storageKey}:${quality.format.orEmpty()}"
+                if (streamCacheRepository.findCachedQualityKey(request.serverId, request.songId, quality) == null) {
+                    targets += StreamPrefetchTarget(
+                        request = prefetchRequest,
+                        quality = quality,
+                        queueIndex = index,
+                    )
+                }
+                remainingTrackMs?.let { remainingBudgetMs -= it } ?: break
+            }
+
+            if (repeatMode == Player.REPEAT_MODE_ONE) break
+            val nextIndex = currentTimeline.getNextWindowIndex(index, repeatMode, shuffleModeEnabled)
+            if (nextIndex == C.INDEX_UNSET || nextIndex == index) break
+            index = nextIndex
+            visited++
+        }
+
+        if (keyParts.isEmpty()) return null
+        return StreamPrefetchPlan(
+            key = keyParts.joinToString(separator = "|", prefix = "$customBufferMs:$repeatMode:$shuffleModeEnabled:"),
+            targets = targets,
+        )
+    }
+
+    private fun MediaItem.durationForPrefetchMs(isCurrent: Boolean): Long? {
+        val playerDuration = if (isCurrent) {
+            player?.duration?.coerceKnownDuration()
+        } else {
+            null
+        }
+        return playerDuration ?: metadataDurationMs()
+    }
+
+    private suspend fun prefetchTimelineToDisk(plan: StreamPrefetchPlan) {
+        plan.targets.forEach { target ->
+            currentCoroutineContext().ensureActive()
+            if (
+                streamCacheRepository.findCachedQualityKey(
+                    target.request.serverId,
+                    target.request.songId,
+                    target.quality,
+                ) != null
+            ) {
+                return@forEach
+            }
+            prefetchStreamToDisk(target.request)
+        }
     }
 
     private suspend fun prefetchStreamToDisk(request: PlaybackRequest) {
@@ -528,6 +611,17 @@ class SakiPlaybackService : MediaSessionService() {
             }
         }
     }
+
+    private data class StreamPrefetchPlan(
+        val key: String,
+        val targets: List<StreamPrefetchTarget>,
+    )
+
+    private data class StreamPrefetchTarget(
+        val request: PlaybackRequest,
+        val quality: StreamQuality,
+        val queueIndex: Int,
+    )
 
     /**
      * Resolves placeholder `saki://stream` URIs to real Subsonic stream URLs at the moment
@@ -875,6 +969,10 @@ class SakiPlaybackService : MediaSessionService() {
     }
 
     private inner class StreamPrefetchListener : Player.Listener {
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            syncCurrentStreamPrefetch()
+        }
+
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             syncCurrentStreamPrefetch()
         }
@@ -884,6 +982,14 @@ class SakiPlaybackService : MediaSessionService() {
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            syncCurrentStreamPrefetch()
+        }
+
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            syncCurrentStreamPrefetch()
+        }
+
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
             syncCurrentStreamPrefetch()
         }
     }
