@@ -65,6 +65,9 @@
     <string name="settings_default_browse_title">Default Browse tab</string>
     <string name="settings_default_browse_body">Choose the Browse tab shown when the app starts.</string>
     <string name="settings_default_album_feed">Default album feed</string>
+    <string name="settings_songs_page_size_title">Songs page size</string>
+    <string name="settings_songs_page_size_body">Choose how many songs the Songs tab loads per page. Larger pages reduce paging frequency but take longer to fetch and render.</string>
+    <string name="settings_songs_page_size_value">%1$d songs</string>
     <string name="settings_play_from_here">Play from here</string>
     <string name="settings_remove_download">Remove download</string>
 

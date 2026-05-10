@@ -4,15 +4,18 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.AppPreferences
+import org.hdhmc.saki.domain.model.DEFAULT_SONGS_PAGE_SIZE
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.normalizeSongsPageSize
 import org.hdhmc.saki.domain.repository.AppPreferencesRepository
 import java.io.IOException
 import javax.inject.Inject
@@ -63,6 +66,10 @@ class DataStoreAppPreferencesRepository @Inject constructor(
 
     override suspend fun updateDefaultAlbumFeed(feed: AlbumListType) {
         dataStore.edit { it[KEY_DEFAULT_ALBUM_FEED] = feed.apiValue }
+    }
+
+    override suspend fun updateSongsPageSize(pageSize: Int) {
+        dataStore.edit { it[KEY_SONGS_PAGE_SIZE] = pageSize.normalizeSongsPageSize() }
     }
 
     override suspend fun updateLastSelectedServerId(serverId: Long?) {
@@ -117,6 +124,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val KEY_ALBUM_VIEW_MODE = stringPreferencesKey("album_view_mode")
         val KEY_DEFAULT_BROWSE_TAB = stringPreferencesKey("default_browse_tab")
         val KEY_DEFAULT_ALBUM_FEED = stringPreferencesKey("default_album_feed")
+        val KEY_SONGS_PAGE_SIZE = intPreferencesKey("songs_page_size")
         val KEY_LAST_SELECTED_SERVER_ID = longPreferencesKey("last_selected_server_id")
         val KEY_RECENT_SEARCH_QUERIES = stringPreferencesKey("recent_search_queries")
     }
@@ -131,6 +139,8 @@ private fun Preferences.toAppPreferences() = AppPreferences(
     defaultAlbumFeed = AlbumListType.fromApiValue(
         this[DataStoreAppPreferencesRepository.KEY_DEFAULT_ALBUM_FEED],
     )?.takeIf { it in AlbumListType.defaultBrowseFeeds } ?: AlbumListType.NEWEST,
+    songsPageSize = (this[DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE] ?: DEFAULT_SONGS_PAGE_SIZE)
+        .normalizeSongsPageSize(),
     lastSelectedServerId = this[DataStoreAppPreferencesRepository.KEY_LAST_SELECTED_SERVER_ID],
     recentSearchQueries = this[DataStoreAppPreferencesRepository.KEY_RECENT_SEARCH_QUERIES]
         .decodeRecentSearchQueries(),

@@ -45,9 +45,23 @@ data class AppPreferences(
     val albumViewMode: AlbumViewMode = AlbumViewMode.GRID,
     val defaultBrowseTab: DefaultBrowseTab = DefaultBrowseTab.ARTISTS,
     val defaultAlbumFeed: AlbumListType = AlbumListType.NEWEST,
+    val songsPageSize: Int = DEFAULT_SONGS_PAGE_SIZE,
     val lastSelectedServerId: Long? = null,
     val recentSearchQueries: List<String> = emptyList(),
 )
+
+const val MIN_SONGS_PAGE_SIZE = 250
+const val MAX_SONGS_PAGE_SIZE = 3_000
+const val SONGS_PAGE_SIZE_STEP = 250
+const val DEFAULT_SONGS_PAGE_SIZE = 500
+
+fun Int.normalizeSongsPageSize(): Int {
+    val clamped = coerceIn(MIN_SONGS_PAGE_SIZE, MAX_SONGS_PAGE_SIZE)
+    val stepsFromMin = ((clamped - MIN_SONGS_PAGE_SIZE) / SONGS_PAGE_SIZE_STEP.toDouble()).toInt()
+    val lower = MIN_SONGS_PAGE_SIZE + (stepsFromMin * SONGS_PAGE_SIZE_STEP)
+    val upper = (lower + SONGS_PAGE_SIZE_STEP).coerceAtMost(MAX_SONGS_PAGE_SIZE)
+    return if (clamped - lower <= upper - clamped) lower else upper
+}
 
 enum class DefaultBrowseTab(val storageKey: String) {
     ARTISTS("artists"),

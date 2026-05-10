@@ -144,6 +144,10 @@ class ConfigBackupManager @Inject constructor(
                         DataStoreAppPreferencesRepository.KEY_DEFAULT_ALBUM_FEED.name -> {
                             ds[DataStoreAppPreferencesRepository.KEY_DEFAULT_ALBUM_FEED] = value; settingsApplied = true
                         }
+                        DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE.name -> {
+                            ds[DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE] = value.toIntOrNull() ?: return@forEach
+                            settingsApplied = true
+                        }
                         DataStorePlaybackPreferencesRepository.KEY_STREAM_QUALITY.name -> {
                             ds[DataStorePlaybackPreferencesRepository.KEY_STREAM_QUALITY] = value; settingsApplied = true
                         }

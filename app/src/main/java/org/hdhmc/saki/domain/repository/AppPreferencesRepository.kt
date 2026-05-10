@@ -26,6 +26,8 @@ interface AppPreferencesRepository {
 
     suspend fun updateDefaultAlbumFeed(feed: AlbumListType)
 
+    suspend fun updateSongsPageSize(pageSize: Int)
+
     suspend fun updateLastSelectedServerId(serverId: Long?)
 
     suspend fun addRecentSearchQuery(query: String)

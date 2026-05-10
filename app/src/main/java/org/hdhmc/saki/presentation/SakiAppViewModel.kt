@@ -19,6 +19,7 @@ import org.hdhmc.saki.domain.model.ArtistSummary
 import org.hdhmc.saki.domain.model.CacheStorageSummary
 import org.hdhmc.saki.domain.model.CachedArtistDetail
 import org.hdhmc.saki.domain.model.CachedSong
+import org.hdhmc.saki.domain.model.DEFAULT_SONGS_PAGE_SIZE
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.LibraryIndexes
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
@@ -68,7 +69,7 @@ import kotlinx.coroutines.launch
 private const val ALBUMS_PAGE_SIZE = 36
 private const val PLAYLIST_DETAIL_PREFETCH_LIMIT = 12
 private const val PLAYLIST_DETAIL_PREFETCH_MAX_SONGS = 500
-private const val SONGS_PAGE_SIZE = 500
+private const val SONG_METADATA_SYNC_PAGE_SIZE = DEFAULT_SONGS_PAGE_SIZE
 private const val SONGS_DISPLAY_WINDOW_SIZE = 5_000
 
 @HiltViewModel
@@ -366,6 +367,12 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
+    fun updateSongsPageSize(pageSize: Int) {
+        viewModelScope.launch {
+            appPreferencesRepository.updateSongsPageSize(pageSize)
+        }
+    }
+
     fun openArtistFromPlayback(
         serverId: Long?,
         artistId: String?,
@@ -527,6 +534,7 @@ class SakiAppViewModel @Inject constructor(
         ) {
             return
         }
+        val pageSize = state.appPreferences.songsPageSize
         val offset = state.songsOffset + state.songs.size
 
         viewModelScope.launch {
@@ -536,16 +544,16 @@ class SakiAppViewModel @Inject constructor(
             try {
                 var loadedFromNetwork = false
                 val page = if (endpointStatus.value.isOfflineDegraded) {
-                    loadCachedSongsPage(serverId, offset)
+                    loadCachedSongsPage(serverId, offset, pageSize)
                 } else {
                     try {
-                        fetchSongsPage(serverId, offset, cachedAt).also {
+                        fetchSongsPage(serverId, offset, cachedAt, pageSize).also {
                             loadedFromNetwork = true
                         }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (networkError: Throwable) {
-                        val cachedPage = loadCachedSongsPage(serverId, offset)
+                        val cachedPage = loadCachedSongsPage(serverId, offset, pageSize)
                         if (cachedPage.songs.isEmpty()) throw networkError
                         cachedPage
                     }
@@ -595,7 +603,8 @@ class SakiAppViewModel @Inject constructor(
         ) {
             return
         }
-        val loadSize = minOf(SONGS_PAGE_SIZE, state.songsOffset)
+        val pageSize = state.appPreferences.songsPageSize
+        val loadSize = minOf(pageSize, state.songsOffset)
         if (loadSize <= 0) return
         val offset = state.songsOffset - loadSize
 
@@ -1591,14 +1600,15 @@ class SakiAppViewModel @Inject constructor(
             if (!playlists.isNullOrEmpty() && uiState.value.selectedServerId == serverId) {
                 mutableUiState.update { it.copy(playlists = playlists) }
             }
-            val songs = loadCachedOrNull { libraryCacheRepository.getSongsPage(serverId, SONGS_PAGE_SIZE, 0) }
+            val songsPageSize = uiState.value.appPreferences.songsPageSize
+            val songs = loadCachedOrNull { libraryCacheRepository.getSongsPage(serverId, songsPageSize, 0) }
             if (!songs.isNullOrEmpty() && uiState.value.selectedServerId == serverId) {
                 mutableUiState.update {
                     it.copy(
                         songs = songs,
                         songsOffset = 0,
                         hasPreviousSongs = false,
-                        hasMoreSongs = songs.size >= SONGS_PAGE_SIZE,
+                        hasMoreSongs = songs.size >= songsPageSize,
                     )
                 }
             }
@@ -1827,15 +1837,16 @@ class SakiAppViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            val songsPageSize = uiState.value.appPreferences.songsPageSize
             if (!forceRefresh || endpointStatus.value.isOfflineDegraded) {
-                val cached = runCatching { libraryCacheRepository.getSongsPage(serverId, SONGS_PAGE_SIZE, 0) }.getOrNull()
+                val cached = runCatching { libraryCacheRepository.getSongsPage(serverId, songsPageSize, 0) }.getOrNull()
                 if (!cached.isNullOrEmpty() && uiState.value.selectedServerId == serverId) {
                     mutableUiState.update {
                         it.copy(
                             songs = cached,
                             songsOffset = 0,
                             hasPreviousSongs = false,
-                            hasMoreSongs = cached.size >= SONGS_PAGE_SIZE,
+                            hasMoreSongs = cached.size >= songsPageSize,
                         )
                     }
                 }
@@ -1868,7 +1879,7 @@ class SakiAppViewModel @Inject constructor(
 
             try {
                 val cachedAt = System.currentTimeMillis()
-                val result = fetchSongsPage(serverId, offset = 0, cachedAt = cachedAt)
+                val result = fetchSongsPage(serverId, offset = 0, cachedAt = cachedAt, limit = songsPageSize)
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update {
                         it.copy(
@@ -1897,14 +1908,14 @@ class SakiAppViewModel @Inject constructor(
                 throw e
             } catch (throwable: Throwable) {
                 if (uiState.value.selectedServerId == serverId) {
-                    val cached = runCatching { libraryCacheRepository.getSongsPage(serverId, SONGS_PAGE_SIZE, 0) }.getOrNull()
+                    val cached = runCatching { libraryCacheRepository.getSongsPage(serverId, songsPageSize, 0) }.getOrNull()
                     mutableUiState.update {
                         if (!cached.isNullOrEmpty()) {
                             it.copy(
                                 songs = cached,
                                 songsOffset = 0,
                                 hasPreviousSongs = false,
-                                hasMoreSongs = cached.size >= SONGS_PAGE_SIZE,
+                                hasMoreSongs = cached.size >= songsPageSize,
                                 hasLoadedSongsFromNetwork = false,
                                 isSongsLoading = false,
                                 isSongsLoadingPrevious = false,
@@ -1928,7 +1939,7 @@ class SakiAppViewModel @Inject constructor(
     private suspend fun loadCachedSongsPage(
         serverId: Long,
         offset: Int,
-        limit: Int = SONGS_PAGE_SIZE,
+        limit: Int = DEFAULT_SONGS_PAGE_SIZE,
     ): SongsPageResult {
         val songs = libraryCacheRepository.getSongsPage(serverId, limit, offset)
         return SongsPageResult(
@@ -1943,7 +1954,7 @@ class SakiAppViewModel @Inject constructor(
         serverId: Long,
         offset: Int,
         cachedAt: Long,
-        limit: Int = SONGS_PAGE_SIZE,
+        limit: Int = DEFAULT_SONGS_PAGE_SIZE,
     ): SongsPageResult = withContext(Dispatchers.IO) {
         val songs = subsonicRepository.search(
             serverId = serverId,
@@ -1973,7 +1984,7 @@ class SakiAppViewModel @Inject constructor(
                 query = "",
                 artistCount = 0,
                 albumCount = 0,
-                songCount = SONGS_PAGE_SIZE,
+                songCount = SONG_METADATA_SYNC_PAGE_SIZE,
                 songOffset = offset,
             ).data.songs
             if (songs.isEmpty()) break
@@ -1985,7 +1996,7 @@ class SakiAppViewModel @Inject constructor(
             if (uiState.value.selectedServerId == serverId) {
                 mutableUiState.update { it.copy(songMetadataSyncCount = syncedCount) }
             }
-            if (songs.size < SONGS_PAGE_SIZE) break
+            if (songs.size < SONG_METADATA_SYNC_PAGE_SIZE) break
             offset += songs.size
         }
         if (syncedCount > 0) {
