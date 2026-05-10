@@ -210,6 +210,11 @@ data class StreamCacheSummary(
     val bytes: Long = 0,
 )
 
+data class StreamCacheProgress(
+    val cachedPrefixBytes: Long,
+    val contentLengthBytes: Long,
+)
+
 data class PlaybackQueueItem(
     val mediaId: String,
     val songId: String,

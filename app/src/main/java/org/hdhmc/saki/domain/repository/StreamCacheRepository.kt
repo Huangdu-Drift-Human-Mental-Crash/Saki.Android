@@ -1,5 +1,6 @@
 package org.hdhmc.saki.domain.repository
 
+import org.hdhmc.saki.domain.model.StreamCacheProgress
 import org.hdhmc.saki.domain.model.StreamCacheSummary
 import org.hdhmc.saki.domain.model.StreamQuality
 import kotlinx.coroutines.flow.Flow
@@ -23,6 +24,8 @@ interface StreamCacheRepository {
      * or a higher quality if available, or null if not cached at all.
      */
     fun findCachedQualityKey(serverId: Long, songId: String, preferredQuality: StreamQuality): String?
+
+    fun getStreamCacheProgress(serverId: Long, songId: String, quality: StreamQuality): StreamCacheProgress?
 
     suspend fun clearStreamCache(serverId: Long? = null): Int
 }

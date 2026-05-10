@@ -5,6 +5,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.SimpleCache
 import org.hdhmc.saki.di.IoDispatcher
+import org.hdhmc.saki.domain.model.StreamCacheProgress
 import org.hdhmc.saki.domain.model.StreamCacheSummary
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
@@ -81,6 +82,25 @@ class DefaultStreamCacheRepository @Inject constructor(
             if (byQuality[key]?.contains(songId) == true) return key
         }
         return null
+    }
+
+    override fun getStreamCacheProgress(
+        serverId: Long,
+        songId: String,
+        quality: StreamQuality,
+    ): StreamCacheProgress? {
+        val cacheKey = buildStreamCacheKey(serverId, songId, quality)
+        val contentLength = ContentMetadata.getContentLength(streamCache.getContentMetadata(cacheKey))
+            .takeIf { length -> length != C.LENGTH_UNSET.toLong() && length > 0L }
+            ?: return null
+        val cachedPrefixBytes = streamCache.getCachedLength(cacheKey, 0L, contentLength)
+            .takeIf { length -> length > 0L }
+            ?.coerceAtMost(contentLength)
+            ?: return null
+        return StreamCacheProgress(
+            cachedPrefixBytes = cachedPrefixBytes,
+            contentLengthBytes = contentLength,
+        )
     }
 
     override suspend fun getStreamCacheSummary(

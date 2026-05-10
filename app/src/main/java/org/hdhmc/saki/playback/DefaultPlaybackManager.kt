@@ -1316,7 +1316,7 @@ class DefaultPlaybackManager @Inject constructor(
             )
         } else null
         val streamCached = cachedQualityKey != null
-        val progress = player.toProgressState()
+        val progress = toProgressState(player, currentRequest, cachedQualityKey)
         mutablePlaybackProgress.value = progress
 
         mutablePlaybackState.update { state ->
@@ -1358,7 +1358,17 @@ class DefaultPlaybackManager @Inject constructor(
     }
 
     private fun syncProgress(player: Player) {
-        mutablePlaybackProgress.value = player.toProgressState()
+        val currentRequest = player.currentMediaItem?.toPlaybackRequestOrNull()
+        val cachedQualityKey = currentRequest
+            ?.takeIf { request -> !request.isCached && cacheReady }
+            ?.let { request ->
+                streamCacheRepository.findCachedQualityKey(
+                    request.serverId,
+                    request.songId,
+                    playbackQuality(request.serverId),
+                )
+            }
+        mutablePlaybackProgress.value = toProgressState(player, currentRequest, cachedQualityKey)
     }
 
     private fun syncExternalShuffleState(player: Player): Boolean {
@@ -1402,6 +1412,43 @@ class DefaultPlaybackManager @Inject constructor(
         return playbackPreferencesRepository.getShuffleState()
     }
 
+    private fun cacheBufferedPositionMs(
+        request: PlaybackRequest?,
+        cachedQualityKey: String?,
+        durationMs: Long,
+    ): Long {
+        if (request == null || request.isCached || durationMs <= 0L) return 0L
+        val quality = cachedQualityKey
+            ?.let(StreamQuality::fromStorageKey)
+            ?: playbackQuality(request.serverId)
+        val cacheProgress = streamCacheRepository.getStreamCacheProgress(
+            serverId = request.serverId,
+            songId = request.songId,
+            quality = quality,
+        ) ?: return 0L
+        val cachedRatio = cacheProgress.cachedPrefixBytes.toDouble() / cacheProgress.contentLengthBytes.toDouble()
+        return (cachedRatio * durationMs)
+            .toLong()
+            .coerceIn(0L, durationMs)
+    }
+
+    private fun toProgressState(
+        player: Player,
+        request: PlaybackRequest?,
+        cachedQualityKey: String? = null,
+    ): PlaybackProgressState {
+        val durationMs = player.duration.coerceKnownTime().takeIf { it > 0 }
+            ?: player.currentMediaItem?.metadataDurationMs()
+            ?: 0L
+        val playerBufferedPositionMs = player.bufferedPosition.coerceKnownTime()
+        val cacheBufferedPositionMs = cacheBufferedPositionMs(request, cachedQualityKey, durationMs)
+        return PlaybackProgressState(
+            positionMs = player.currentPosition.coerceKnownTime(),
+            durationMs = durationMs,
+            bufferedPositionMs = maxOf(playerBufferedPositionMs, cacheBufferedPositionMs),
+        )
+    }
+
     private companion object {
         const val VIRTUAL_QUEUE_KEEP_BEFORE = 40
         const val VIRTUAL_QUEUE_KEEP_AFTER = 80
@@ -1436,16 +1483,6 @@ private suspend fun ListenableFuture<MediaController>.await(
 
 private fun Long.coerceKnownTime(): Long {
     return if (this == C.TIME_UNSET || this < 0L) 0L else this
-}
-
-private fun Player.toProgressState(): PlaybackProgressState {
-    return PlaybackProgressState(
-        positionMs = currentPosition.coerceKnownTime(),
-        durationMs = duration.coerceKnownTime().takeIf { it > 0 }
-            ?: currentMediaItem?.metadataDurationMs()
-            ?: 0L,
-        bufferedPositionMs = bufferedPosition.coerceKnownTime(),
-    )
 }
 
 private fun Int.toRepeatModeSetting(): RepeatModeSetting {
