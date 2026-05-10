@@ -69,7 +69,7 @@ import kotlinx.coroutines.launch
 private const val ALBUMS_PAGE_SIZE = 36
 private const val PLAYLIST_DETAIL_PREFETCH_LIMIT = 12
 private const val PLAYLIST_DETAIL_PREFETCH_MAX_SONGS = 500
-private const val SONG_METADATA_SYNC_PAGE_SIZE = DEFAULT_SONGS_PAGE_SIZE
+private const val SONG_METADATA_SYNC_PAGE_SIZE = 500
 private const val SONGS_DISPLAY_WINDOW_SIZE = 5_000
 
 @HiltViewModel

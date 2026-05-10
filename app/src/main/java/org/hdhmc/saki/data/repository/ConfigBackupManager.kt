@@ -8,6 +8,7 @@ import org.hdhmc.saki.domain.model.DEFAULT_SUBSONIC_API_VERSION
 import org.hdhmc.saki.domain.model.DEFAULT_SUBSONIC_CLIENT
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
+import org.hdhmc.saki.domain.model.normalizeSongsPageSize
 import org.hdhmc.saki.domain.repository.ServerConfigRepository
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
@@ -145,7 +146,8 @@ class ConfigBackupManager @Inject constructor(
                             ds[DataStoreAppPreferencesRepository.KEY_DEFAULT_ALBUM_FEED] = value; settingsApplied = true
                         }
                         DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE.name -> {
-                            ds[DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE] = value.toIntOrNull() ?: return@forEach
+                            ds[DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE] =
+                                value.toIntOrNull()?.normalizeSongsPageSize() ?: return@forEach
                             settingsApplied = true
                         }
                         DataStorePlaybackPreferencesRepository.KEY_STREAM_QUALITY.name -> {
