@@ -60,13 +60,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import okhttp3.OkHttpClient
 
 private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
@@ -422,11 +425,6 @@ class SakiPlaybackService : MediaSessionService() {
         }
 
         val requestedQuality = request.requestedStreamQuality(prefs)
-        if (streamCacheRepository.findCachedQualityKey(request.serverId, request.songId, requestedQuality) != null) {
-            cancelStreamPrefetch()
-            return
-        }
-
         val prefetchKey = buildString {
             append(request.serverId)
             append('|')
@@ -439,6 +437,11 @@ class SakiPlaybackService : MediaSessionService() {
             append(prefs.customBufferSeconds)
         }
         if (activeStreamPrefetchKey == prefetchKey && streamPrefetchJob?.isActive == true) {
+            return
+        }
+
+        if (streamCacheRepository.findCachedQualityKey(request.serverId, request.songId, requestedQuality) != null) {
+            cancelStreamPrefetch()
             return
         }
 
@@ -497,11 +500,13 @@ class SakiPlaybackService : MediaSessionService() {
             .build()
     }
 
-    private fun prefetchStreamToDisk(request: PlaybackRequest) {
+    private suspend fun prefetchStreamToDisk(request: PlaybackRequest) {
+        currentCoroutineContext().ensureActive()
         val resolvedSpec = resolveStreamDataSpec(
             dataSpec = request.toStreamPlaceholderDataSpec(),
             allowCachedResource = false,
         )
+        currentCoroutineContext().ensureActive()
         if (resolvedSpec.uri.scheme == "saki-cache" || resolvedSpec.key.isNullOrBlank()) {
             return
         }
@@ -514,7 +519,9 @@ class SakiPlaybackService : MediaSessionService() {
         )
         activeStreamCacheWriter = writer
         try {
-            writer.cache()
+            runInterruptible(Dispatchers.IO) {
+                writer.cache()
+            }
         } finally {
             if (activeStreamCacheWriter === writer) {
                 activeStreamCacheWriter = null
