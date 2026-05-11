@@ -136,7 +136,7 @@ class SakiPlaybackService : MediaSessionService() {
     private var streamPrefetchJob: Job? = null
     private var streamPrefetchReevaluationJob: Job? = null
     private var activeStreamPrefetchKey: String? = null
-    private val completedStreamPrefetchKeys = ConcurrentHashMap.newKeySet<String>()
+    private val completedStreamPrefetchKeysByTarget = ConcurrentHashMap<StreamPrefetchTargetKey, String>()
     @Volatile
     private var activeStreamCacheWriter: CacheWriter? = null
 
@@ -560,13 +560,20 @@ class SakiPlaybackService : MediaSessionService() {
             if (!request.isCached && request.localPath == null && !endpointSelector.isOfflineDegraded(request.serverId)) {
                 val quality = request.requestedStreamQuality(prefs)
                 val prefetchRequest = request.withStreamQuality(quality)
+                val targetKey = StreamPrefetchTargetKey(
+                    serverId = request.serverId,
+                    songId = request.songId,
+                    qualityKey = quality.storageKey,
+                )
+                val isSatisfied = isStreamPrefetchSatisfied(request.serverId, request.songId, quality)
                 keyParts +=
-                    "$index:${request.serverId}:${request.songId}:${quality.storageKey}:${quality.format.orEmpty()}"
-                if (!isStreamPrefetchSatisfied(request.serverId, request.songId, quality)) {
+                    "$index:${targetKey.planKey()}:${if (isSatisfied) "done" else "pending"}"
+                if (!isSatisfied) {
                     targets += StreamPrefetchTarget(
                         request = prefetchRequest,
                         quality = quality,
                         queueIndex = index,
+                        targetKey = targetKey,
                     )
                 }
             }
@@ -612,33 +619,33 @@ class SakiPlaybackService : MediaSessionService() {
         if (streamCacheRepository.findCachedQualityKey(serverId, songId, preferredQuality) != null) {
             return true
         }
-        return findCompletedStreamPrefetchKey(serverId, songId, preferredQuality) != null
+        return findCompletedStreamPrefetchCacheKey(serverId, songId, preferredQuality) != null
     }
 
-    private fun findCompletedStreamPrefetchKey(
+    private fun findCompletedStreamPrefetchCacheKey(
         serverId: Long,
         songId: String,
         preferredQuality: StreamQuality,
     ): String? {
-        val exactKey = streamCacheRepository.buildCacheKey(serverId, songId, preferredQuality)
-        if (isCompletedStreamPrefetchKey(exactKey)) return exactKey
+        val exactTargetKey = StreamPrefetchTargetKey(serverId, songId, preferredQuality.storageKey)
+        isCompletedStreamPrefetchCacheKey(exactTargetKey)?.let { return it }
 
         val preferredIndex = StreamQuality.entries.indexOf(preferredQuality)
         if (preferredIndex < 0) return null
         for (index in 0..preferredIndex) {
             val quality = StreamQuality.entries[index]
             if (quality == preferredQuality) continue
-            val cacheKey = streamCacheRepository.buildCacheKey(serverId, songId, quality)
-            if (isCompletedStreamPrefetchKey(cacheKey)) return cacheKey
+            val targetKey = StreamPrefetchTargetKey(serverId, songId, quality.storageKey)
+            isCompletedStreamPrefetchCacheKey(targetKey)?.let { return it }
         }
         return null
     }
 
-    private fun isCompletedStreamPrefetchKey(cacheKey: String): Boolean {
-        if (!completedStreamPrefetchKeys.contains(cacheKey)) return false
-        if (streamCache.getCachedSpans(cacheKey).any { span -> span.length > 0L }) return true
-        completedStreamPrefetchKeys.remove(cacheKey)
-        return false
+    private fun isCompletedStreamPrefetchCacheKey(targetKey: StreamPrefetchTargetKey): String? {
+        val cacheKey = completedStreamPrefetchKeysByTarget[targetKey] ?: return null
+        if (streamCache.getCachedSpans(cacheKey).any { span -> span.length > 0L }) return cacheKey
+        completedStreamPrefetchKeysByTarget.remove(targetKey, cacheKey)
+        return null
     }
 
     private suspend fun prefetchTimelineToDisk(plan: StreamPrefetchPlan) {
@@ -648,7 +655,7 @@ class SakiPlaybackService : MediaSessionService() {
                 return@forEach
             }
             val cacheKey = prefetchStreamToDisk(target.request) ?: return@forEach
-            completedStreamPrefetchKeys.add(cacheKey)
+            completedStreamPrefetchKeysByTarget[target.targetKey] = cacheKey
         }
     }
 
@@ -692,7 +699,16 @@ class SakiPlaybackService : MediaSessionService() {
         val request: PlaybackRequest,
         val quality: StreamQuality,
         val queueIndex: Int,
+        val targetKey: StreamPrefetchTargetKey,
     )
+
+    private data class StreamPrefetchTargetKey(
+        val serverId: Long,
+        val songId: String,
+        val qualityKey: String,
+    ) {
+        fun planKey(): String = "$serverId:$songId:$qualityKey"
+    }
 
     /**
      * Resolves placeholder `saki://stream` URIs to real Subsonic stream URLs at the moment
