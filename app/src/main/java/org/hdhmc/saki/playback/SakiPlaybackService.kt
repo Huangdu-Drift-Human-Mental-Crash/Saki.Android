@@ -137,6 +137,7 @@ class SakiPlaybackService : MediaSessionService() {
     private var streamPrefetchReevaluationJob: Job? = null
     private var activeStreamPrefetchKey: String? = null
     private val completedStreamPrefetchKeysByTarget = ConcurrentHashMap<StreamPrefetchTargetKey, String>()
+    private val blockedStreamPrefetchTargets = ConcurrentHashMap.newKeySet<StreamPrefetchTargetKey>()
     @Volatile
     private var activeStreamCacheWriter: CacheWriter? = null
 
@@ -544,6 +545,7 @@ class SakiPlaybackService : MediaSessionService() {
         val targets = mutableListOf<StreamPrefetchTarget>()
         val keyParts = mutableListOf<String>()
         val window = Timeline.Window()
+        var distanceFromCurrentMs = 0L
         while (remainingBudgetMs > 0L && index != C.INDEX_UNSET && visited < mediaItemCount) {
             val mediaItem = getMediaItemAt(index)
             val request = mediaItem.toPlaybackRequestOrNull() ?: break
@@ -566,9 +568,17 @@ class SakiPlaybackService : MediaSessionService() {
                     qualityKey = quality.storageKey,
                 )
                 val isSatisfied = isStreamPrefetchSatisfied(request.serverId, request.songId, quality)
+                val isBlocked = blockedStreamPrefetchTargets.contains(targetKey)
+                val isHandledByPlayerBuffer = distanceFromCurrentMs <= CUSTOM_PLAYER_MAX_BUFFER_MS
+                val targetState = when {
+                    isSatisfied -> "done"
+                    isBlocked -> "blocked"
+                    isHandledByPlayerBuffer -> "player"
+                    else -> "pending"
+                }
                 keyParts +=
-                    "$index:${targetKey.planKey()}:${if (isSatisfied) "done" else "pending"}"
-                if (!isSatisfied) {
+                    "$index:${targetKey.planKey()}:$targetState"
+                if (targetState == "pending") {
                     targets += StreamPrefetchTarget(
                         request = prefetchRequest,
                         quality = quality,
@@ -578,7 +588,10 @@ class SakiPlaybackService : MediaSessionService() {
                 }
             }
 
-            remainingTrackMs?.let { remainingBudgetMs -= it } ?: break
+            remainingTrackMs?.let {
+                remainingBudgetMs -= it
+                distanceFromCurrentMs += it
+            } ?: break
             if (repeatMode == Player.REPEAT_MODE_ONE) break
             val nextIndex = currentTimeline.getNextWindowIndex(index, repeatMode, shuffleModeEnabled)
             if (nextIndex == C.INDEX_UNSET || nextIndex == index) break
@@ -654,12 +667,16 @@ class SakiPlaybackService : MediaSessionService() {
             if (isStreamPrefetchSatisfied(target.request.serverId, target.request.songId, target.quality)) {
                 return@forEach
             }
-            val cacheKey = prefetchStreamToDisk(target.request) ?: return@forEach
-            completedStreamPrefetchKeysByTarget[target.targetKey] = cacheKey
+            val result = prefetchStreamToDisk(target.request) ?: return@forEach
+            if (result.cachedBytes > 0L) {
+                completedStreamPrefetchKeysByTarget[target.targetKey] = result.cacheKey
+            } else {
+                blockedStreamPrefetchTargets.add(target.targetKey)
+            }
         }
     }
 
-    private suspend fun prefetchStreamToDisk(request: PlaybackRequest): String? {
+    private suspend fun prefetchStreamToDisk(request: PlaybackRequest): StreamPrefetchResult? {
         currentCoroutineContext().ensureActive()
         val resolvedSpec = resolveStreamDataSpec(
             dataSpec = request.toStreamPlaceholderDataSpec(),
@@ -668,12 +685,15 @@ class SakiPlaybackService : MediaSessionService() {
         currentCoroutineContext().ensureActive()
         val cacheKey = resolvedSpec.key?.takeIf { key -> key.isNotBlank() } ?: return null
         if (resolvedSpec.uri.scheme == "saki-cache") {
-            return cacheKey
+            return StreamPrefetchResult(cacheKey = cacheKey, cachedBytes = cachedBytes(cacheKey))
         }
+        val prefetchSpec = resolvedSpec.buildUpon()
+            .setFlags(resolvedSpec.flags or DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
+            .build()
 
         val writer = CacheWriter(
             streamCacheDataSourceFactory.createDataSource(),
-            resolvedSpec,
+            prefetchSpec,
             null,
             null,
         )
@@ -687,12 +707,21 @@ class SakiPlaybackService : MediaSessionService() {
                 activeStreamCacheWriter = null
             }
         }
-        return cacheKey
+        return StreamPrefetchResult(cacheKey = cacheKey, cachedBytes = cachedBytes(cacheKey))
+    }
+
+    private fun cachedBytes(cacheKey: String): Long {
+        return streamCache.getCachedSpans(cacheKey).sumOf { span -> span.length }
     }
 
     private data class StreamPrefetchPlan(
         val key: String,
         val targets: List<StreamPrefetchTarget>,
+    )
+
+    private data class StreamPrefetchResult(
+        val cacheKey: String,
+        val cachedBytes: Long,
     )
 
     private data class StreamPrefetchTarget(
