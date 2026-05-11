@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -77,6 +78,7 @@ import okhttp3.OkHttpClient
 private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
 private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
 private const val STREAM_PREFETCH_REEVALUATION_MS = 30_000L
+private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
 
 private fun Long.coerceKnownDuration(): Long? {
     return takeIf { it != C.TIME_UNSET && it > 0L }
@@ -137,7 +139,7 @@ class SakiPlaybackService : MediaSessionService() {
     private var streamPrefetchReevaluationJob: Job? = null
     private var activeStreamPrefetchKey: String? = null
     private val completedStreamPrefetchKeysByTarget = ConcurrentHashMap<StreamPrefetchTargetKey, String>()
-    private val blockedStreamPrefetchTargets = ConcurrentHashMap.newKeySet<StreamPrefetchTargetKey>()
+    private val deferredStreamPrefetchTargets = ConcurrentHashMap<StreamPrefetchTargetKey, Long>()
     @Volatile
     private var activeStreamCacheWriter: CacheWriter? = null
 
@@ -545,6 +547,7 @@ class SakiPlaybackService : MediaSessionService() {
         val targets = mutableListOf<StreamPrefetchTarget>()
         val keyParts = mutableListOf<String>()
         val window = Timeline.Window()
+        val nowMs = SystemClock.elapsedRealtime()
         var distanceFromCurrentMs = 0L
         while (remainingBudgetMs > 0L && index != C.INDEX_UNSET && visited < mediaItemCount) {
             val mediaItem = getMediaItemAt(index)
@@ -568,11 +571,13 @@ class SakiPlaybackService : MediaSessionService() {
                     qualityKey = quality.storageKey,
                 )
                 val isSatisfied = isStreamPrefetchSatisfied(request.serverId, request.songId, quality)
-                val isBlocked = blockedStreamPrefetchTargets.contains(targetKey)
-                val isHandledByPlayerBuffer = distanceFromCurrentMs <= CUSTOM_PLAYER_MAX_BUFFER_MS
+                val isDeferred = isStreamPrefetchDeferred(targetKey, nowMs)
+                val trackEndFromCurrentMs = remainingTrackMs?.let { distanceFromCurrentMs + it }
+                val isHandledByPlayerBuffer = index == currentIndex ||
+                    trackEndFromCurrentMs?.let { it <= CUSTOM_PLAYER_MAX_BUFFER_MS } == true
                 val targetState = when {
                     isSatisfied -> "done"
-                    isBlocked -> "blocked"
+                    isDeferred -> "deferred"
                     isHandledByPlayerBuffer -> "player"
                     else -> "pending"
                 }
@@ -654,6 +659,16 @@ class SakiPlaybackService : MediaSessionService() {
         return null
     }
 
+    private fun isStreamPrefetchDeferred(
+        targetKey: StreamPrefetchTargetKey,
+        nowMs: Long,
+    ): Boolean {
+        val retryAtMs = deferredStreamPrefetchTargets[targetKey] ?: return false
+        if (retryAtMs > nowMs) return true
+        deferredStreamPrefetchTargets.remove(targetKey, retryAtMs)
+        return false
+    }
+
     private fun isCompletedStreamPrefetchCacheKey(targetKey: StreamPrefetchTargetKey): String? {
         val cacheKey = completedStreamPrefetchKeysByTarget[targetKey] ?: return null
         if (streamCache.getCachedSpans(cacheKey).any { span -> span.length > 0L }) return cacheKey
@@ -670,8 +685,10 @@ class SakiPlaybackService : MediaSessionService() {
             val result = prefetchStreamToDisk(target.request) ?: return@forEach
             if (result.cachedBytes > 0L) {
                 completedStreamPrefetchKeysByTarget[target.targetKey] = result.cacheKey
+                deferredStreamPrefetchTargets.remove(target.targetKey)
             } else {
-                blockedStreamPrefetchTargets.add(target.targetKey)
+                deferredStreamPrefetchTargets[target.targetKey] =
+                    SystemClock.elapsedRealtime() + STREAM_PREFETCH_RETRY_DELAY_MS
             }
         }
     }
