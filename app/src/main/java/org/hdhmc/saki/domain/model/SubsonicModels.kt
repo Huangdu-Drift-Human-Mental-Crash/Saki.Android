@@ -37,6 +37,11 @@ data class ArtistSummary(
     val artistImageUrl: String?,
 )
 
+data class ArtistRef(
+    val id: String,
+    val name: String,
+)
+
 data class Artist(
     val id: String,
     val name: String,
@@ -87,6 +92,7 @@ data class AlbumSummary(
     val name: String,
     val artist: String?,
     val artistId: String?,
+    val artists: List<ArtistRef> = emptyList(),
     val coverArtId: String?,
     val songCount: Int?,
     val durationSeconds: Int?,
@@ -100,6 +106,7 @@ data class Album(
     val name: String,
     val artist: String?,
     val artistId: String?,
+    val artists: List<ArtistRef> = emptyList(),
     val coverArtId: String?,
     val songCount: Int?,
     val durationSeconds: Int?,
@@ -117,6 +124,7 @@ data class Song(
     val albumId: String?,
     val artist: String?,
     val artistId: String?,
+    val artists: List<ArtistRef> = emptyList(),
     val coverArtId: String?,
     val durationSeconds: Int?,
     val track: Int?,

@@ -1275,6 +1275,7 @@ private fun PlaybackRequest.toSong(): Song {
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artists = artists,
         coverArtId = coverArtId,
         durationSeconds = durationMs?.div(1_000L)?.toInt(),
         track = track,

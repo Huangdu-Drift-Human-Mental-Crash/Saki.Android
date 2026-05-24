@@ -1,5 +1,9 @@
 package org.hdhmc.saki.data.repository
 
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.JsonClass
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import org.hdhmc.saki.data.local.dao.LibraryCacheDao
 import org.hdhmc.saki.data.local.entity.CachedAlbumDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedAlbumDetailSongEntity
@@ -13,11 +17,14 @@ import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailSongEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistEntity
 import org.hdhmc.saki.data.local.entity.CachedSongMetadataEntity
+import org.hdhmc.saki.data.local.entity.CachedSongArtistEntity
+import org.hdhmc.saki.data.local.entity.CachedSongArtistSummary
 import org.hdhmc.saki.di.IoDispatcher
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
+import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.ArtistSection
 import org.hdhmc.saki.domain.model.ArtistSummary
 import org.hdhmc.saki.domain.model.CachedArtistDetail
@@ -35,24 +42,25 @@ import javax.inject.Singleton
 @Singleton
 class DefaultLibraryCacheRepository @Inject constructor(
     private val dao: LibraryCacheDao,
+    moshi: Moshi,
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : LibraryCacheRepository {
+    private val artistRefsAdapter: JsonAdapter<List<CachedArtistRefJsonDto>> =
+        moshi.adapter(Types.newParameterizedType(List::class.java, CachedArtistRefJsonDto::class.java))
 
     override suspend fun getArtists(serverId: Long): LibraryIndexes? = withContext(ioDispatcher) {
         val entities = dao.getArtists(serverId)
-        if (entities.isEmpty()) return@withContext null
-        // groupBy on an ordered list preserves insertion order (LinkedHashMap)
-        val sections = entities.groupBy(CachedArtistEntity::sectionName).map { (name, artists) ->
-            ArtistSection(
-                name = name,
-                artists = artists.map { it.toDomain() },
-            )
-        }
+        val songArtistSummaries = dao.getSongArtistSummaries(serverId)
+        if (entities.isEmpty() && songArtistSummaries.isEmpty()) return@withContext null
+        val artists = mergeArtistSummaries(
+            serverArtists = entities.map { it.toDomain() },
+            songArtists = songArtistSummaries.map { it.toDomain() },
+        )
         LibraryIndexes(
             lastModified = null,
             ignoredArticles = null,
             shortcuts = emptyList(),
-            sections = sections,
+            sections = listOf(ArtistSection(name = "#", artists = artists)),
         )
     }
 
@@ -86,6 +94,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
                 name = album.name,
                 artist = album.artist,
                 artistId = album.artistId,
+                artistsJson = album.artists.toArtistRefsJson(),
                 coverArtId = album.coverArtId,
                 songCount = album.songCount,
                 durationSeconds = album.durationSeconds,
@@ -168,6 +177,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         val cachedAt = System.currentTimeMillis()
         replaceLibrarySongs(serverId, songs)
         dao.pruneUnreferencedSongMetadata(serverId)
+        dao.pruneOrphanedSongArtists(serverId)
         saveSongMetadataPageInternal(serverId, songs, cachedAt, startOrder = 0)
     }
 
@@ -195,6 +205,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         cachedAt: Long,
     ): Unit = withContext(ioDispatcher) {
         dao.pruneSongMetadataBefore(serverId, cachedAt)
+        dao.pruneOrphanedSongArtists(serverId)
     }
 
     override suspend fun searchCached(
@@ -235,10 +246,23 @@ class DefaultLibraryCacheRepository @Inject constructor(
         if (detail != null) {
             val albums = dao.getArtistDetailAlbums(serverId, artistId).map { it.toDomain() }
             val topSongRefs = dao.getArtistDetailSongs(serverId, artistId)
+            val topSongs = resolveSongs(serverId, topSongRefs.map { it.songId })
+            val relationshipSongs = resolveSongsByArtistId(serverId, artistId)
+            val songArtistSummary = dao.getSongArtistSummaries(serverId)
+                .firstOrNull { it.artistId == artistId }
+            val artist = detail.toDomain(albums).let { cachedArtist ->
+                songArtistSummary?.let { summary ->
+                    cachedArtist.copy(
+                        name = summary.name,
+                        coverArtId = cachedArtist.coverArtId ?: summary.coverArtId,
+                        albumCount = cachedArtist.albumCount ?: summary.albumCount.takeIf { it > 0 },
+                    )
+                } ?: cachedArtist
+            }
             return@withContext CachedArtistDetail(
-                artist = detail.toDomain(albums),
-                songs = resolveSongs(serverId, topSongRefs.map { it.songId }),
-                songsAreTopSongs = true,
+                artist = artist,
+                songs = mergeSongs(topSongs, relationshipSongs),
+                songsAreTopSongs = relationshipSongs.isEmpty(),
             )
         }
         getInferredArtistDetail(serverId, artistId)
@@ -264,6 +288,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
             },
             songMetadata = detail.songs.map { song -> song.toMetadataEntity(serverId, cachedAt) },
         )
+        replaceSongArtists(serverId, detail.songs)
     }
 
     override suspend fun getAlbumDetail(
@@ -295,6 +320,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
             },
             songMetadata = album.songs.map { song -> song.toMetadataEntity(serverId, cachedAt) },
         )
+        replaceSongArtists(serverId, album.songs)
     }
 
     override suspend fun getPlaylistDetail(
@@ -323,6 +349,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
             },
             songMetadata = playlist.songs.map { song -> song.toMetadataEntity(serverId, cachedAt) },
         )
+        replaceSongArtists(serverId, playlist.songs)
     }
 
     private fun CachedArtistEntity.toDomain() = ArtistSummary(
@@ -333,11 +360,29 @@ class DefaultLibraryCacheRepository @Inject constructor(
         artistImageUrl = artistImageUrl,
     )
 
+    private fun CachedSongArtistSummary.toDomain() = ArtistSummary(
+        id = artistId,
+        name = name,
+        albumCount = albumCount,
+        coverArtId = coverArtId,
+        artistImageUrl = null,
+    )
+
+    private fun mergeArtistSummaries(
+        serverArtists: List<ArtistSummary>,
+        songArtists: List<ArtistSummary>,
+    ): List<ArtistSummary> {
+        return (songArtists + serverArtists)
+            .distinctBy(ArtistSummary::id)
+            .sortedBy { it.name.lowercase() }
+    }
+
     private fun CachedAlbumEntity.toDomain() = AlbumSummary(
         id = albumId,
         name = name,
         artist = artist,
         artistId = artistId,
+        artists = artistsJson.toArtistRefs(),
         coverArtId = coverArtId,
         songCount = songCount,
         durationSeconds = durationSeconds,
@@ -366,6 +411,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artists = artistsJson.toArtistRefs(),
         coverArtId = coverArtId,
         durationSeconds = durationSeconds,
         track = track,
@@ -410,6 +456,17 @@ class DefaultLibraryCacheRepository @Inject constructor(
             }
             .chunked(SONG_METADATA_WRITE_CHUNK_SIZE)
             .forEach { chunk -> dao.insertSongMetadata(chunk) }
+        replaceSongArtists(serverId, songs)
+    }
+
+    private suspend fun replaceSongArtists(serverId: Long, songs: List<Song>) {
+        val songIds = songs.map(Song::id).distinct()
+        if (songIds.isEmpty()) return
+        dao.replaceSongArtists(
+            serverId = serverId,
+            songIds = songIds,
+            artists = songs.flatMap { song -> song.toSongArtistEntities(serverId) },
+        )
     }
 
     private fun Song.toLibraryEntity(serverId: Long) = CachedLibrarySongEntity(
@@ -421,6 +478,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artistsJson = artists.toArtistRefsJson(),
         coverArtId = coverArtId,
         durationSeconds = durationSeconds,
         track = track,
@@ -435,6 +493,20 @@ class DefaultLibraryCacheRepository @Inject constructor(
         path = path,
         created = created,
     )
+
+    private fun Song.toSongArtistEntities(serverId: Long): List<CachedSongArtistEntity> {
+        return artists.mapIndexedNotNull { index, artist ->
+            val artistId = artist.id.takeIf(String::isNotBlank) ?: return@mapIndexedNotNull null
+            val name = artist.name.takeIf(String::isNotBlank) ?: return@mapIndexedNotNull null
+            CachedSongArtistEntity(
+                serverId = serverId,
+                songId = id,
+                artistId = artistId,
+                name = name,
+                sortOrder = index,
+            )
+        }
+    }
 
     private suspend fun resolveSongs(serverId: Long, songIds: List<String>): List<Song> {
         if (songIds.isEmpty()) return emptyList()
@@ -461,13 +533,16 @@ class DefaultLibraryCacheRepository @Inject constructor(
         if (albums.isEmpty() && songs.isEmpty()) return null
 
         val summary = dao.getArtistSummary(serverId, artistId)
+        val songArtistSummary = dao.getSongArtistSummaries(serverId)
+            .firstOrNull { it.artistId == artistId }
         val artist = summary?.toDomain(albums) ?: Artist(
             id = artistId,
-            name = songs.firstOrNull()?.artist ?: albums.firstOrNull()?.artist ?: artistId,
-            coverArtId = songs.asSequence().mapNotNull(Song::coverArtId).firstOrNull()
+            name = songArtistSummary?.name ?: songs.firstOrNull()?.artist ?: albums.firstOrNull()?.artist ?: artistId,
+            coverArtId = songArtistSummary?.coverArtId
+                ?: songs.asSequence().mapNotNull(Song::coverArtId).firstOrNull()
                 ?: albums.asSequence().mapNotNull(AlbumSummary::coverArtId).firstOrNull(),
             artistImageUrl = null,
-            albumCount = albums.size.takeIf { it > 0 },
+            albumCount = songArtistSummary?.albumCount?.takeIf { it > 0 } ?: albums.size.takeIf { it > 0 },
             albums = albums,
         )
         return CachedArtistDetail(
@@ -516,6 +591,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = album ?: albumId,
         artist = artist,
         artistId = artistId,
+        artists = artists,
         coverArtId = coverArtId,
         songCount = songs.size,
         durationSeconds = songs.totalDurationSeconds(),
@@ -529,6 +605,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = name,
         artist = artist,
         artistId = artistId,
+        artists = artists,
         coverArtId = coverArtId,
         songCount = songCount ?: songs.size,
         durationSeconds = durationSeconds ?: songs.totalDurationSeconds(),
@@ -543,6 +620,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = album ?: albumId,
         artist = artist,
         artistId = artistId,
+        artists = artists,
         coverArtId = coverArtId,
         songCount = songs.size,
         durationSeconds = songs.totalDurationSeconds(),
@@ -597,6 +675,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = name,
         artist = artist,
         albumArtistId = artistId,
+        artistsJson = artists.toArtistRefsJson(),
         coverArtId = coverArtId,
         songCount = songCount,
         durationSeconds = durationSeconds,
@@ -611,6 +690,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = name,
         artist = artist,
         artistId = albumArtistId,
+        artists = artistsJson.toArtistRefs(),
         coverArtId = coverArtId,
         songCount = songCount,
         durationSeconds = durationSeconds,
@@ -625,6 +705,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = name,
         artist = artist,
         artistId = artistId,
+        artistsJson = artists.toArtistRefsJson(),
         coverArtId = coverArtId,
         songCount = songCount,
         durationSeconds = durationSeconds,
@@ -640,6 +721,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         name = name,
         artist = artist,
         artistId = artistId,
+        artists = artistsJson.toArtistRefs(),
         coverArtId = coverArtId,
         songCount = songCount,
         durationSeconds = durationSeconds,
@@ -690,6 +772,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artistsJson = artists.toArtistRefsJson(),
         coverArtId = coverArtId,
         durationSeconds = durationSeconds,
         track = track,
@@ -715,6 +798,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artists = artistsJson.toArtistRefs(),
         coverArtId = coverArtId,
         durationSeconds = durationSeconds,
         track = track,
@@ -730,6 +814,28 @@ class DefaultLibraryCacheRepository @Inject constructor(
         created = created,
     )
 
+    private fun List<ArtistRef>.toArtistRefsJson(): String? {
+        if (isEmpty()) return null
+        val payload = map { artist ->
+            CachedArtistRefJsonDto(
+                id = artist.id,
+                name = artist.name,
+            )
+        }
+        return artistRefsAdapter.toJson(payload)
+    }
+
+    private fun String?.toArtistRefs(): List<ArtistRef> {
+        if (isNullOrBlank()) return emptyList()
+        return runCatching {
+            artistRefsAdapter.fromJson(this).orEmpty().mapNotNull { artist ->
+                val id = artist.id.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val name = artist.name.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                ArtistRef(id = id, name = name)
+            }
+        }.getOrDefault(emptyList())
+    }
+
     private companion object {
         const val IN_CLAUSE_QUERY_CHUNK_SIZE = 500
         const val SONG_METADATA_WRITE_CHUNK_SIZE = 500
@@ -737,3 +843,9 @@ class DefaultLibraryCacheRepository @Inject constructor(
         const val LIBRARY_ORDER_UNSET = Int.MAX_VALUE
     }
 }
+
+@JsonClass(generateAdapter = true)
+internal data class CachedArtistRefJsonDto(
+    val id: String,
+    val name: String,
+)

@@ -19,6 +19,7 @@ data class CachedLibrarySongEntity(
     val albumId: String?,
     val artist: String?,
     val artistId: String?,
+    val artistsJson: String?,
     val coverArtId: String?,
     val durationSeconds: Int?,
     val track: Int?,

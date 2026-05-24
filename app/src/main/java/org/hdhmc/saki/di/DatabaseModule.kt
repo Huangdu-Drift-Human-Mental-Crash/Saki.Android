@@ -469,6 +469,32 @@ object DatabaseModule {
         }
     }
 
+    private val migration13To14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `cached_albums` ADD COLUMN `artistsJson` TEXT")
+            db.execSQL("ALTER TABLE `cached_library_songs` ADD COLUMN `artistsJson` TEXT")
+            db.execSQL("ALTER TABLE `cached_song_metadata` ADD COLUMN `artistsJson` TEXT")
+            db.execSQL("ALTER TABLE `cached_artist_detail_albums` ADD COLUMN `artistsJson` TEXT")
+            db.execSQL("ALTER TABLE `cached_album_details` ADD COLUMN `artistsJson` TEXT")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `cached_song_artists` (
+                    `serverId` INTEGER NOT NULL,
+                    `songId` TEXT NOT NULL,
+                    `artistId` TEXT NOT NULL,
+                    `name` TEXT COLLATE NOCASE NOT NULL,
+                    `sortOrder` INTEGER NOT NULL,
+                    PRIMARY KEY(`serverId`, `songId`, `artistId`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_cached_song_artists_serverId_artistId_sortOrder` ON `cached_song_artists` (`serverId`, `artistId`, `sortOrder`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_cached_song_artists_serverId_songId` ON `cached_song_artists` (`serverId`, `songId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_cached_song_artists_serverId_name` ON `cached_song_artists` (`serverId`, `name`)")
+            db.execSQL("DELETE FROM `cached_artists`")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideSakiDatabase(
@@ -486,6 +512,7 @@ object DatabaseModule {
         migration1To2, migration2To3, migration3To4, migration4To5,
         migration5To6, migration6To7, migration7To8, migration8To9,
         migration9To10, migration10To11, migration11To12, migration12To13,
+        migration13To14,
     )
 
     @Provides

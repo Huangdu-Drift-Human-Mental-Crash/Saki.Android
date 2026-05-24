@@ -456,12 +456,14 @@ private fun NowPlayingOverlayHost(
             }
             .orEmpty()
     }
-    val canOpenArtist = track.artistId != null && (
-        libraryIndexes == null ||
-            track.serverId == null ||
-            track.serverId != selectedServerId ||
-            track.artistId in availableArtistIds
-        )
+    fun canOpenArtist(artistId: String?): Boolean {
+        return artistId != null && (
+            libraryIndexes == null ||
+                track.serverId == null ||
+                track.serverId != selectedServerId ||
+                artistId in availableArtistIds
+            )
+    }
     val progress = if (visible) {
         playbackProgressFlow.collectAsStateWithLifecycle().value
     } else {
@@ -473,10 +475,10 @@ private fun NowPlayingOverlayHost(
         playbackProgress = progress,
         track = track,
         onDismiss = onDismiss,
-        canOpenArtist = canOpenArtist,
-        onOpenArtist = {
+        canOpenArtist = ::canOpenArtist,
+        onOpenArtist = { artistId ->
             onCloseSettings()
-            onOpenArtistFromPlayback(track.serverId, track.artistId)
+            onOpenArtistFromPlayback(track.serverId, artistId)
             onDismiss()
         },
         onOpenAlbum = {

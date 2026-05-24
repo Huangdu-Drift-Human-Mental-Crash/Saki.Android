@@ -86,15 +86,36 @@ class DefaultSubsonicRepository @Inject constructor(
         musicFolderId: String?,
         ifModifiedSince: Long?,
     ): SubsonicCallResult<LibraryIndexes> = withContext(ioDispatcher) {
-        executeWithFallback(
-            serverId = serverId,
-            path = "getIndexes.view",
-            extraQuery = mapOfNotNull(
-                "musicFolderId" to musicFolderId,
-                "ifModifiedSince" to ifModifiedSince?.toString(),
-            ),
-        ) { response ->
-            response.toLibraryIndexes()
+        val query = mapOfNotNull(
+            "musicFolderId" to musicFolderId,
+            "ifModifiedSince" to ifModifiedSince?.toString(),
+        )
+        try {
+            executeWithFallback(
+                serverId = serverId,
+                path = "getArtists.view",
+                extraQuery = query,
+            ) { response ->
+                response.toLibraryIndexes()
+            }
+        } catch (exception: SubsonicApiException) {
+            if (!exception.isUnsupportedEndpoint()) throw exception
+            executeWithFallback(
+                serverId = serverId,
+                path = "getIndexes.view",
+                extraQuery = query,
+            ) { response ->
+                response.toLibraryIndexes()
+            }
+        } catch (exception: SubsonicHttpException) {
+            if (!exception.isUnsupportedEndpoint()) throw exception
+            executeWithFallback(
+                serverId = serverId,
+                path = "getIndexes.view",
+                extraQuery = query,
+            ) { response ->
+                response.toLibraryIndexes()
+            }
         }
     }
 
@@ -476,6 +497,14 @@ private fun IOException.shouldFallback(): Boolean {
         this is NoRouteToHostException
 }
 
+private fun SubsonicApiException.isUnsupportedEndpoint(): Boolean {
+    return code == API_ERROR_NOT_FOUND
+}
+
+private fun SubsonicHttpException.isUnsupportedEndpoint(): Boolean {
+    return statusCode == HTTP_NOT_FOUND || statusCode == HTTP_METHOD_NOT_ALLOWED
+}
+
 private fun ServerEndpoint.buildRestUrl(
     path: String,
     query: Map<String, String> = emptyMap(),
@@ -503,3 +532,7 @@ private fun mapOfNotNull(vararg entries: Pair<String, String?>): Map<String, Str
         }
     }
 }
+
+private const val API_ERROR_NOT_FOUND = 70
+private const val HTTP_NOT_FOUND = 404
+private const val HTTP_METHOD_NOT_ALLOWED = 405

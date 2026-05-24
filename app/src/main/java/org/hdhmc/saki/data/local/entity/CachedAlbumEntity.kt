@@ -10,6 +10,7 @@ data class CachedAlbumEntity(
     val name: String,
     val artist: String?,
     val artistId: String?,
+    val artistsJson: String?,
     val coverArtId: String?,
     val songCount: Int?,
     val durationSeconds: Int?,

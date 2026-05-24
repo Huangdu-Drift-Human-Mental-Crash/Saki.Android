@@ -591,6 +591,7 @@ class DefaultPlaybackManager @Inject constructor(
             title = title,
             artist = artist,
             artistId = artistId,
+            artists = artists,
             album = album,
             albumId = albumId,
             artworkUri = null,

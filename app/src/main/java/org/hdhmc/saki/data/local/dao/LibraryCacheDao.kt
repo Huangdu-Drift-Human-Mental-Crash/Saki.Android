@@ -18,6 +18,8 @@ import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailSongEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistEntity
 import org.hdhmc.saki.data.local.entity.CachedSongMetadataEntity
 import org.hdhmc.saki.data.local.entity.CachedSongMetadataOrder
+import org.hdhmc.saki.data.local.entity.CachedSongArtistEntity
+import org.hdhmc.saki.data.local.entity.CachedSongArtistSummary
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -111,6 +113,24 @@ interface LibraryCacheDao {
 
     @Query(
         """
+        SELECT
+            artist.artistId AS artistId,
+            MIN(artist.name) AS name,
+            COUNT(DISTINCT song.albumId) AS albumCount,
+            MIN(song.coverArtId) AS coverArtId
+        FROM cached_song_artists AS artist
+        LEFT JOIN cached_song_metadata AS song
+            ON song.serverId = artist.serverId
+            AND song.songId = artist.songId
+        WHERE artist.serverId = :serverId
+        GROUP BY artist.artistId
+        ORDER BY artist.name COLLATE NOCASE
+        """,
+    )
+    suspend fun getSongArtistSummaries(serverId: Long): List<CachedSongArtistSummary>
+
+    @Query(
+        """
         SELECT * FROM cached_albums AS album
         WHERE album.serverId = :serverId
             AND (
@@ -160,7 +180,22 @@ interface LibraryCacheDao {
     @Query("SELECT * FROM cached_library_songs WHERE serverId = :serverId AND albumId = :albumId ORDER BY CASE WHEN discNumber IS NULL THEN 1 ELSE 0 END, discNumber, CASE WHEN track IS NULL THEN 1 ELSE 0 END, track, title COLLATE NOCASE")
     suspend fun getLibrarySongsByAlbumId(serverId: Long, albumId: String): List<CachedLibrarySongEntity>
 
-    @Query("SELECT * FROM cached_library_songs WHERE serverId = :serverId AND artistId = :artistId ORDER BY album COLLATE NOCASE, CASE WHEN discNumber IS NULL THEN 1 ELSE 0 END, discNumber, CASE WHEN track IS NULL THEN 1 ELSE 0 END, track, title COLLATE NOCASE")
+    @Query(
+        """
+        SELECT DISTINCT song.* FROM cached_library_songs AS song
+        LEFT JOIN cached_song_artists AS artist
+            ON artist.serverId = song.serverId
+            AND artist.songId = song.songId
+        WHERE song.serverId = :serverId
+            AND (song.artistId = :artistId OR artist.artistId = :artistId)
+        ORDER BY song.album COLLATE NOCASE,
+            CASE WHEN song.discNumber IS NULL THEN 1 ELSE 0 END,
+            song.discNumber,
+            CASE WHEN song.track IS NULL THEN 1 ELSE 0 END,
+            song.track,
+            song.title COLLATE NOCASE
+        """,
+    )
     suspend fun getLibrarySongsByArtistId(serverId: Long, artistId: String): List<CachedLibrarySongEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -285,6 +320,36 @@ interface LibraryCacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSongMetadata(songs: List<CachedSongMetadataEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSongArtists(artists: List<CachedSongArtistEntity>)
+
+    @Query("DELETE FROM cached_song_artists WHERE serverId = :serverId AND songId IN (:songIds)")
+    suspend fun clearSongArtists(serverId: Long, songIds: List<String>)
+
+    @Query(
+        """
+        DELETE FROM cached_song_artists
+        WHERE serverId = :serverId
+            AND NOT EXISTS (
+                SELECT 1 FROM cached_song_metadata
+                WHERE cached_song_metadata.serverId = cached_song_artists.serverId
+                    AND cached_song_metadata.songId = cached_song_artists.songId
+            )
+        """,
+    )
+    suspend fun pruneOrphanedSongArtists(serverId: Long)
+
+    @Transaction
+    suspend fun replaceSongArtists(
+        serverId: Long,
+        songIds: List<String>,
+        artists: List<CachedSongArtistEntity>,
+    ) {
+        if (songIds.isEmpty()) return
+        clearSongArtists(serverId, songIds)
+        if (artists.isNotEmpty()) insertSongArtists(artists)
+    }
 
     @Query(
         """
@@ -412,6 +477,21 @@ interface LibraryCacheDao {
     @Query("SELECT * FROM cached_song_metadata WHERE serverId = :serverId AND albumId = :albumId ORDER BY CASE WHEN discNumber IS NULL THEN 1 ELSE 0 END, discNumber, CASE WHEN track IS NULL THEN 1 ELSE 0 END, track, title COLLATE NOCASE")
     suspend fun getSongMetadataByAlbumId(serverId: Long, albumId: String): List<CachedSongMetadataEntity>
 
-    @Query("SELECT * FROM cached_song_metadata WHERE serverId = :serverId AND artistId = :artistId ORDER BY album COLLATE NOCASE, CASE WHEN discNumber IS NULL THEN 1 ELSE 0 END, discNumber, CASE WHEN track IS NULL THEN 1 ELSE 0 END, track, title COLLATE NOCASE")
+    @Query(
+        """
+        SELECT DISTINCT song.* FROM cached_song_metadata AS song
+        LEFT JOIN cached_song_artists AS artist
+            ON artist.serverId = song.serverId
+            AND artist.songId = song.songId
+        WHERE song.serverId = :serverId
+            AND (song.artistId = :artistId OR artist.artistId = :artistId)
+        ORDER BY song.album COLLATE NOCASE,
+            CASE WHEN song.discNumber IS NULL THEN 1 ELSE 0 END,
+            song.discNumber,
+            CASE WHEN song.track IS NULL THEN 1 ELSE 0 END,
+            song.track,
+            song.title COLLATE NOCASE
+        """,
+    )
     suspend fun getSongMetadataByArtistId(serverId: Long, artistId: String): List<CachedSongMetadataEntity>
 }

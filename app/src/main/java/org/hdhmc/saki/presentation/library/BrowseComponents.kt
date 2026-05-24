@@ -58,6 +58,7 @@ import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
+import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.ArtistSummary
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.Playlist
@@ -160,7 +161,7 @@ fun AlbumDetailScreen(
 ) {
     val songCount = album.songCount
     val subtitle = listOfNotNull(
-        album.artist,
+        album.artistDisplayLabel(),
         album.year?.toString(),
         if (songCount != null) songCountText(songCount) else null,
     ).joinToString(" • ")
@@ -364,7 +365,7 @@ fun PlaylistCard(playlist: PlaylistSummary, server: ServerConfig, onOpenPlaylist
 fun AlbumRow(album: AlbumSummary, server: ServerConfig, onOpenAlbum: (String) -> Unit) {
     val songCount = album.songCount
     val subtitle = listOfNotNull(
-        album.artist,
+        album.artistDisplayLabel(),
         album.year?.toString(),
         if (songCount != null) songCountText(songCount) else null,
     ).joinToString(" • ")
@@ -425,7 +426,7 @@ fun AlbumCard(album: AlbumSummary, server: ServerConfig, onOpenAlbum: (String) -
             )
             Text(text = album.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 10.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                text = listOfNotNull(album.artist, album.year?.toString()).joinToString(" • "),
+                text = listOfNotNull(album.artistDisplayLabel(), album.year?.toString()).joinToString(" • "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
@@ -457,7 +458,7 @@ private fun AlbumMiniCard(album: AlbumSummary, server: ServerConfig, onOpenAlbum
             )
             Text(text = album.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                text = album.year?.toString() ?: album.artist.orEmpty(),
+                text = album.year?.toString() ?: album.artistDisplayLabel().orEmpty(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -526,18 +527,74 @@ fun SongRow(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    text = listOfNotNull(song.artist, song.album).joinToString(" • ")
-                        .ifBlank { stringResource(R.string.library_unknown_artist_album) },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                SongArtistAlbumLine(
+                    song = song,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
             }
         }
         IconButton(onClick = onMore) {
             Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.library_more_actions))
+        }
+    }
+}
+
+@Composable
+private fun SongArtistAlbumLine(
+    song: Song,
+    modifier: Modifier = Modifier,
+) {
+    val artistLinks = song.artistRefsForDisplay()
+    if (artistLinks.isEmpty() && song.album.isNullOrBlank()) {
+        Text(
+            text = stringResource(R.string.library_unknown_artist_album),
+            modifier = modifier,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        artistLinks.forEachIndexed { index, artist ->
+            Text(
+                text = artist.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (index != artistLinks.lastIndex) {
+                Text(
+                    text = "/",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+        if (artistLinks.isNotEmpty() && !song.album.isNullOrBlank()) {
+            Text(
+                text = "•",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        song.album?.takeIf(String::isNotBlank)?.let { album ->
+            Text(
+                text = album,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -563,7 +620,7 @@ fun SongActionsSheet(
         ) {
             Text(text = song.title, style = MaterialTheme.typography.headlineSmall)
             Text(
-                text = listOfNotNull(song.artist, song.album).joinToString(" • "),
+                text = song.artistAlbumLabel(),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -617,7 +674,7 @@ fun SongDetailsDialog(song: Song, onDismiss: () -> Unit) {
         title = { Text(song.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                DetailLine(stringResource(R.string.detail_artist), song.artist)
+                DetailLine(stringResource(R.string.detail_artist), song.artistLabel())
                 DetailLine(stringResource(R.string.detail_album), song.album)
                 DetailLine(stringResource(R.string.detail_track), song.track?.toString())
                 DetailLine(stringResource(R.string.detail_disc), song.discNumber?.toString())
@@ -810,4 +867,32 @@ private fun formatDurationSeconds(durationSeconds: Int): String {
     val minutes = durationSeconds / 60
     val seconds = durationSeconds % 60
     return "%d:%02d".format(minutes, seconds)
+}
+
+private fun Song.artistRefsForDisplay(): List<ArtistRef> {
+    if (artists.isNotEmpty()) return artists
+    val fallbackName = artist?.takeIf(String::isNotBlank) ?: return emptyList()
+    return listOf(ArtistRef(id = artistId.orEmpty(), name = fallbackName))
+}
+
+private fun Song.artistLabel(): String? {
+    return artistRefsForDisplay().artistNamesLabel()
+}
+
+private fun Song.artistAlbumLabel(): String {
+    return listOfNotNull(artistLabel(), album?.takeIf(String::isNotBlank))
+        .joinToString(" • ")
+}
+
+private fun AlbumSummary.artistDisplayLabel(): String? {
+    return artists.artistNamesLabel() ?: artist
+}
+
+private fun Album.artistDisplayLabel(): String? {
+    return artists.artistNamesLabel() ?: artist
+}
+
+private fun List<ArtistRef>.artistNamesLabel(): String? {
+    return joinToString(" / ") { it.name }
+        .ifBlank { null }
 }
