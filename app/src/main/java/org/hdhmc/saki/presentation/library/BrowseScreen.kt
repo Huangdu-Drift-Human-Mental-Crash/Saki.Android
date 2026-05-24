@@ -12,8 +12,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +27,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -168,6 +170,7 @@ fun BrowseScreen(
             onUnavailable = onOfflineSongUnavailable,
         )
     }
+    val scrollState = rememberBrowseScrollState(uiState.selectedServerId)
 
     BackHandler(
         enabled = uiState.selectedArtist != null ||
@@ -278,6 +281,7 @@ fun BrowseScreen(
                         modifier = Modifier.fillMaxSize(),
                         uiState = uiState,
                         currentServer = currentServer,
+                        scrollState = scrollState,
                         cachedSongsBySongId = cachedSongsBySongId,
                         isOfflineDegraded = isOfflineDegraded,
                         bottomOverlayPadding = bottomOverlayPadding,
@@ -359,6 +363,71 @@ private data class BrowseDetailTarget(
     val hasPlaylist: Boolean,
 )
 
+private class BrowseScrollState(
+    val searchResultsPosition: LazyListScrollPosition = LazyListScrollPosition(),
+    val recentSearchesPosition: LazyListScrollPosition = LazyListScrollPosition(),
+    val artistsPosition: LazyListScrollPosition = LazyListScrollPosition(),
+    val albumFeedPositions: Map<AlbumListType, AlbumFeedScrollPosition>,
+    val playlistsPosition: LazyListScrollPosition = LazyListScrollPosition(),
+    val songsPosition: LazyListScrollPosition = LazyListScrollPosition(),
+)
+
+private class AlbumFeedScrollPosition(
+    val gridPosition: LazyGridScrollPosition = LazyGridScrollPosition(),
+    val listPosition: LazyListScrollPosition = LazyListScrollPosition(),
+)
+
+private class LazyListScrollPosition(
+    var index: Int = 0,
+    var scrollOffset: Int = 0,
+)
+
+private class LazyGridScrollPosition(
+    var index: Int = 0,
+    var scrollOffset: Int = 0,
+)
+
+@Composable
+private fun rememberBrowseScrollState(serverId: Long?): BrowseScrollState {
+    return remember(serverId) {
+        BrowseScrollState(
+            albumFeedPositions = AlbumListType.defaultBrowseFeeds.associateWith { AlbumFeedScrollPosition() },
+        )
+    }
+}
+
+@Composable
+private fun rememberRestoredLazyListState(position: LazyListScrollPosition): LazyListState {
+    val state = rememberLazyListState(
+        initialFirstVisibleItemIndex = position.index,
+        initialFirstVisibleItemScrollOffset = position.scrollOffset,
+    )
+    LaunchedEffect(state, position) {
+        snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+            .collect { (index, scrollOffset) ->
+                position.index = index
+                position.scrollOffset = scrollOffset
+            }
+    }
+    return state
+}
+
+@Composable
+private fun rememberRestoredLazyGridState(position: LazyGridScrollPosition): LazyGridState {
+    val state = rememberLazyGridState(
+        initialFirstVisibleItemIndex = position.index,
+        initialFirstVisibleItemScrollOffset = position.scrollOffset,
+    )
+    LaunchedEffect(state, position) {
+        snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
+            .collect { (index, scrollOffset) ->
+                position.index = index
+                position.scrollOffset = scrollOffset
+            }
+    }
+    return state
+}
+
 @Composable
 private fun OfflineModeBanner(modifier: Modifier = Modifier) {
     Surface(
@@ -382,6 +451,7 @@ private fun BrowsePager(
     modifier: Modifier,
     uiState: SakiAppUiState,
     currentServer: ServerConfig,
+    scrollState: BrowseScrollState,
     cachedSongsBySongId: Map<String, CachedSong>,
     isOfflineDegraded: Boolean,
     bottomOverlayPadding: Dp,
@@ -453,6 +523,8 @@ private fun BrowsePager(
                 downloadingSongIds = uiState.downloadingSongIds,
                 isOfflineDegraded = isOfflineDegraded,
                 bottomOverlayPadding = bottomOverlayPadding,
+                resultsPosition = scrollState.searchResultsPosition,
+                recentSearchesPosition = scrollState.recentSearchesPosition,
                 onSearchQuery = onUpdateSearchQuery,
                 onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
                 onClearRecentSearchQueries = onClearRecentSearchQueries,
@@ -512,6 +584,7 @@ private fun BrowsePager(
                                 isLoading = uiState.isArtistsLoading,
                                 error = uiState.artistsError?.asString(),
                                 bottomOverlayPadding = bottomOverlayPadding,
+                                scrollPosition = scrollState.artistsPosition,
                                 onOpenArtist = onOpenArtist,
                             )
 
@@ -521,6 +594,7 @@ private fun BrowsePager(
                                 server = currentServer,
                                 selectedFeed = uiState.selectedAlbumFeed,
                                 viewMode = uiState.appPreferences.albumViewMode,
+                                scrollPositions = scrollState.albumFeedPositions,
                                 onSelectFeed = onSelectAlbumFeed,
                                 onLoadMore = onLoadMoreAlbums,
                                 onUpdateViewMode = onUpdateAlbumViewMode,
@@ -534,6 +608,7 @@ private fun BrowsePager(
                                 isLoading = uiState.isPlaylistsLoading,
                                 error = uiState.playlistsError?.asString(),
                                 bottomOverlayPadding = bottomOverlayPadding,
+                                scrollPosition = scrollState.playlistsPosition,
                                 onOpenPlaylist = onOpenPlaylist,
                             )
 
@@ -552,6 +627,7 @@ private fun BrowsePager(
                                 isLoadingMore = uiState.isSongsLoadingMore,
                                 error = uiState.songsError?.asString(),
                                 bottomOverlayPadding = bottomOverlayPadding,
+                                scrollPosition = scrollState.songsPosition,
                                 onLoadPrevious = onLoadPreviousSongs,
                                 onLoadMore = onLoadMoreSongs,
                                 onPlaySongs = onPlaySongs,
@@ -639,6 +715,8 @@ private fun SearchResultsPage(
     downloadingSongIds: Set<String>,
     isOfflineDegraded: Boolean,
     bottomOverlayPadding: Dp,
+    resultsPosition: LazyListScrollPosition,
+    recentSearchesPosition: LazyListScrollPosition,
     onSearchQuery: (String) -> Unit,
     onRemoveRecentSearchQuery: (String) -> Unit,
     onClearRecentSearchQueries: () -> Unit,
@@ -655,6 +733,7 @@ private fun SearchResultsPage(
             currentServer = currentServer,
             recentSearchQueries = recentSearchQueries,
             bottomOverlayPadding = bottomOverlayPadding,
+            scrollPosition = recentSearchesPosition,
             onSearchQuery = onSearchQuery,
             onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
             onClearRecentSearchQueries = onClearRecentSearchQueries,
@@ -695,7 +774,9 @@ private fun SearchResultsPage(
                 results.songs.take(SearchResultPreviewCount)
             }
 
+            val listState = rememberRestoredLazyListState(resultsPosition)
             LazyColumn(
+                state = listState,
                 modifier = modifier.fillMaxSize(),
                 contentPadding = bottomContentPadding(bottomOverlayPadding),
             ) {
@@ -776,6 +857,7 @@ private fun RecentSearchesPage(
     currentServer: ServerConfig,
     recentSearchQueries: List<String>,
     bottomOverlayPadding: Dp,
+    scrollPosition: LazyListScrollPosition,
     onSearchQuery: (String) -> Unit,
     onRemoveRecentSearchQuery: (String) -> Unit,
     onClearRecentSearchQueries: () -> Unit,
@@ -790,7 +872,9 @@ private fun RecentSearchesPage(
         return
     }
 
+    val listState = rememberRestoredLazyListState(scrollPosition)
     LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxSize(),
         contentPadding = bottomContentPadding(bottomOverlayPadding),
     ) {
@@ -918,6 +1002,7 @@ private fun ArtistsPage(
     isLoading: Boolean,
     error: String?,
     bottomOverlayPadding: Dp,
+    scrollPosition: LazyListScrollPosition,
     onOpenArtist: (String) -> Unit,
 ) {
     if (isLoading && indexes == null) {
@@ -968,7 +1053,7 @@ private fun ArtistsPage(
         map
     }
 
-    val listState = rememberLazyListState()
+    val listState = rememberRestoredLazyListState(scrollPosition)
     val coroutineScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
 
@@ -1031,6 +1116,7 @@ private fun AlbumsPage(
     server: ServerConfig,
     selectedFeed: AlbumListType,
     viewMode: AlbumViewMode,
+    scrollPositions: Map<AlbumListType, AlbumFeedScrollPosition>,
     onSelectFeed: (AlbumListType) -> Unit,
     onLoadMore: () -> Unit,
     onUpdateViewMode: (AlbumViewMode) -> Unit,
@@ -1097,10 +1183,12 @@ private fun AlbumsPage(
         ) { page ->
             val feed = feeds[page]
             val feedState = albumFeeds[feed] ?: AlbumFeedState()
+            val scrollPosition = scrollPositions.getValue(feed)
             AlbumFeedPageContent(
                 albums = feedState.albums,
                 server = server,
                 viewMode = viewMode,
+                scrollPosition = scrollPosition,
                 isLoading = feedState.isLoading,
                 hasMore = feedState.hasMore,
                 isLoadingMore = feedState.isLoadingMore,
@@ -1180,6 +1268,7 @@ private fun AlbumFeedPageContent(
     albums: List<AlbumSummary>,
     server: ServerConfig,
     viewMode: AlbumViewMode,
+    scrollPosition: AlbumFeedScrollPosition,
     isLoading: Boolean,
     hasMore: Boolean,
     isLoadingMore: Boolean,
@@ -1191,7 +1280,7 @@ private fun AlbumFeedPageContent(
 ) {
     when (viewMode) {
         AlbumViewMode.GRID -> {
-            val gridState = rememberLazyGridState()
+            val gridState = rememberRestoredLazyGridState(scrollPosition.gridPosition)
             LaunchedEffect(gridState, canLoadMore, hasMore, isLoading, isLoadingMore, albums.size) {
                 snapshotFlow {
                     if (!canLoadMore || !hasMore || isLoading || isLoadingMore || albums.isEmpty()) {
@@ -1242,7 +1331,7 @@ private fun AlbumFeedPageContent(
         }
 
         AlbumViewMode.LIST -> {
-            val listState = rememberLazyListState()
+            val listState = rememberRestoredLazyListState(scrollPosition.listPosition)
             LaunchedEffect(listState, canLoadMore, hasMore, isLoading, isLoadingMore, albums.size) {
                 snapshotFlow {
                     if (!canLoadMore || !hasMore || isLoading || isLoadingMore || albums.isEmpty()) {
@@ -1354,6 +1443,7 @@ private fun PlaylistsPage(
     isLoading: Boolean,
     error: String?,
     bottomOverlayPadding: Dp,
+    scrollPosition: LazyListScrollPosition,
     onOpenPlaylist: (String) -> Unit,
 ) {
     if (isLoading && playlists.isEmpty()) {
@@ -1372,7 +1462,9 @@ private fun PlaylistsPage(
         )
         return
     }
+    val listState = rememberRestoredLazyListState(scrollPosition)
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = bottomContentPadding(bottomOverlayPadding),
     ) {
@@ -1398,6 +1490,7 @@ private fun SongsPage(
     isLoadingMore: Boolean,
     error: String?,
     bottomOverlayPadding: Dp,
+    scrollPosition: LazyListScrollPosition,
     onLoadPrevious: () -> Unit,
     onLoadMore: () -> Unit,
     onPlaySongs: (List<Song>, Int) -> Unit,
@@ -1405,7 +1498,7 @@ private fun SongsPage(
     onOfflineSongUnavailable: () -> Unit,
     onShowSongActions: (Song) -> Unit,
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberRestoredLazyListState(scrollPosition)
     var wasLoadingPrevious by remember { mutableStateOf(isLoadingPrevious) }
     var previousLoadAnchorIndex by remember { mutableStateOf<Int?>(null) }
     var previousLoadAnchorScrollOffset by remember { mutableStateOf(0) }
