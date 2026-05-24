@@ -221,6 +221,7 @@ data class PlaybackQueueItem(
     val title: String,
     val artist: String?,
     val artistId: String?,
+    val artists: List<ArtistRef> = emptyList(),
     val album: String?,
     val albumId: String?,
     val artworkUri: String?,

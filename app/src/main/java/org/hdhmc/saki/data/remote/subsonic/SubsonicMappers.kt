@@ -3,6 +3,7 @@ package org.hdhmc.saki.data.remote.subsonic
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
+import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.ArtistSection
 import org.hdhmc.saki.domain.model.ArtistSummary
 import org.hdhmc.saki.domain.model.LibraryIndexes
@@ -36,7 +37,7 @@ internal fun SubsonicResponseDto.toMusicFolders(): List<MusicFolder> {
 }
 
 internal fun SubsonicResponseDto.toLibraryIndexes(): LibraryIndexes {
-    val indexesPayload = indexes ?: return LibraryIndexes(
+    val indexesPayload = artists ?: indexes ?: return LibraryIndexes(
         lastModified = null,
         ignoredArticles = null,
         shortcuts = emptyList(),
@@ -86,6 +87,7 @@ internal fun SubsonicResponseDto.toAlbum(): Album {
         name = albumPayload.displayName,
         artist = albumPayload.artist,
         artistId = albumPayload.artistId,
+        artists = albumPayload.artists.orEmpty().mapNotNull(ArtistRefDto::toArtistRef),
         coverArtId = albumPayload.coverArt,
         songCount = albumPayload.songCount,
         durationSeconds = albumPayload.duration,
@@ -160,6 +162,7 @@ private fun AlbumDto.toAlbumSummary(): AlbumSummary {
         name = displayName,
         artist = artist,
         artistId = artistId,
+        artists = artists.orEmpty().mapNotNull(ArtistRefDto::toArtistRef),
         coverArtId = coverArt,
         songCount = songCount,
         durationSeconds = duration,
@@ -178,6 +181,7 @@ private fun SongDto.toSong(): Song {
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artists = artists.orEmpty().mapNotNull(ArtistRefDto::toArtistRef),
         coverArtId = coverArt,
         durationSeconds = duration,
         track = track,
@@ -191,6 +195,15 @@ private fun SongDto.toSong(): Song {
         sizeBytes = size,
         path = path,
         created = created,
+    )
+}
+
+private fun ArtistRefDto.toArtistRef(): ArtistRef? {
+    val cleanId = id?.takeIf(String::isNotBlank) ?: return null
+    val cleanName = name?.takeIf(String::isNotBlank) ?: return null
+    return ArtistRef(
+        id = cleanId,
+        name = cleanName,
     )
 }
 

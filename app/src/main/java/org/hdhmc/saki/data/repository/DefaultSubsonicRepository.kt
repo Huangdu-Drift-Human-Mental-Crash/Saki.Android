@@ -86,15 +86,26 @@ class DefaultSubsonicRepository @Inject constructor(
         musicFolderId: String?,
         ifModifiedSince: Long?,
     ): SubsonicCallResult<LibraryIndexes> = withContext(ioDispatcher) {
-        executeWithFallback(
-            serverId = serverId,
-            path = "getIndexes.view",
-            extraQuery = mapOfNotNull(
-                "musicFolderId" to musicFolderId,
-                "ifModifiedSince" to ifModifiedSince?.toString(),
-            ),
-        ) { response ->
-            response.toLibraryIndexes()
+        val query = mapOfNotNull(
+            "musicFolderId" to musicFolderId,
+            "ifModifiedSince" to ifModifiedSince?.toString(),
+        )
+        try {
+            executeWithFallback(
+                serverId = serverId,
+                path = "getArtists.view",
+                extraQuery = query,
+            ) { response ->
+                response.toLibraryIndexes()
+            }
+        } catch (_: SubsonicApiException) {
+            executeWithFallback(
+                serverId = serverId,
+                path = "getIndexes.view",
+                extraQuery = query,
+            ) { response ->
+                response.toLibraryIndexes()
+            }
         }
     }
 

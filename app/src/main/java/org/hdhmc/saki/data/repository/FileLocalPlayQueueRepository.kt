@@ -10,6 +10,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.hdhmc.saki.di.IoDispatcher
+import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSource
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
@@ -135,6 +136,7 @@ internal data class LocalPlayQueueSongDto(
     val albumId: String?,
     val artist: String?,
     val artistId: String?,
+    val artists: List<LocalArtistRefDto> = emptyList(),
     val coverArtId: String?,
     val durationSeconds: Int?,
     val track: Int?,
@@ -148,6 +150,12 @@ internal data class LocalPlayQueueSongDto(
     val sizeBytes: Long?,
     val path: String?,
     val created: String?,
+)
+
+@JsonClass(generateAdapter = true)
+internal data class LocalArtistRefDto(
+    val id: String,
+    val name: String,
 )
 
 private fun LocalPlayQueueSnapshot.toDto() = LocalPlayQueueSnapshotDto(
@@ -196,6 +204,12 @@ private fun Song.toDto() = LocalPlayQueueSongDto(
     albumId = albumId,
     artist = artist,
     artistId = artistId,
+    artists = artists.map { artist ->
+        LocalArtistRefDto(
+            id = artist.id,
+            name = artist.name,
+        )
+    },
     coverArtId = coverArtId,
     durationSeconds = durationSeconds,
     track = track,
@@ -219,6 +233,7 @@ private fun LocalPlayQueueSongDto.toDomain() = Song(
     albumId = albumId,
     artist = artist,
     artistId = artistId,
+    artists = artists.mapNotNull(LocalArtistRefDto::toDomain),
     coverArtId = coverArtId,
     durationSeconds = durationSeconds,
     track = track,
@@ -233,5 +248,11 @@ private fun LocalPlayQueueSongDto.toDomain() = Song(
     path = path,
     created = created,
 )
+
+private fun LocalArtistRefDto.toDomain(): ArtistRef? {
+    val cleanId = id.takeIf(String::isNotBlank) ?: return null
+    val cleanName = name.takeIf(String::isNotBlank) ?: return null
+    return ArtistRef(id = cleanId, name = cleanName)
+}
 
 private const val LOCAL_QUEUE_SOURCE_LIBRARY_SONGS = "library_songs"

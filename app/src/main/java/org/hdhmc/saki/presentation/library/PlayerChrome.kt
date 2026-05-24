@@ -131,6 +131,7 @@ import androidx.palette.graphics.Palette
 import org.hdhmc.saki.R
 import org.hdhmc.saki.presentation.EndpointProbeInfo
 import org.hdhmc.saki.presentation.predictiveBackMotion
+import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.PlaybackProgressState
 import org.hdhmc.saki.domain.model.PlaybackRuntimeInfo
@@ -322,8 +323,8 @@ fun NowPlayingOverlay(
     playbackProgress: PlaybackProgressState,
     track: PlaybackQueueItem,
     onDismiss: () -> Unit,
-    canOpenArtist: Boolean,
-    onOpenArtist: () -> Unit,
+    canOpenArtist: (String?) -> Boolean,
+    onOpenArtist: (String?) -> Unit,
     onOpenAlbum: () -> Unit,
     onPlayPause: () -> Unit,
     onSkipToNext: () -> Unit,
@@ -1346,8 +1347,8 @@ private fun PressScaleIconButton(
 private fun MetadataLinkRow(
     track: PlaybackQueueItem,
     textStyle: TextStyle,
-    canOpenArtist: Boolean,
-    onOpenArtist: () -> Unit,
+    canOpenArtist: (String?) -> Boolean,
+    onOpenArtist: (String?) -> Unit,
     onOpenAlbum: () -> Unit,
 ) {
     Row(
@@ -1357,20 +1358,41 @@ private fun MetadataLinkRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        track.artist?.takeIf(String::isNotBlank)?.let { artist ->
+        val artistLinks = track.artists.ifEmpty {
+            listOfNotNull(
+                track.artist?.takeIf(String::isNotBlank)?.let { artist ->
+                    ArtistRef(
+                        id = track.artistId.orEmpty(),
+                        name = artist,
+                    )
+                },
+            )
+        }
+        artistLinks.forEachIndexed { index, artist ->
+            val artistId = artist.id.takeIf(String::isNotBlank)
+            val canOpen = canOpenArtist(artistId)
             Text(
-                text = artist,
+                text = artist.name,
                 style = textStyle,
-                color = if (canOpenArtist) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.clickable(
-                    enabled = canOpenArtist,
-                    onClick = onOpenArtist,
+                    enabled = canOpen,
+                    onClick = { onOpenArtist(artistId) },
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Clip,
             )
+            if (index != artistLinks.lastIndex) {
+                Text(
+                    text = "/",
+                    style = textStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                )
+            }
         }
-        if (!track.artist.isNullOrBlank() && !track.album.isNullOrBlank()) {
+        if ((artistLinks.isNotEmpty() || !track.artist.isNullOrBlank()) && !track.album.isNullOrBlank()) {
             Box(
                 modifier = Modifier
                     .size(5.dp)

@@ -18,6 +18,7 @@ data class SubsonicResponseDto(
     val openSubsonic: Boolean? = null,
     val error: SubsonicErrorDto? = null,
     val musicFolders: MusicFoldersDto? = null,
+    val artists: IndexesDto? = null,
     val indexes: IndexesDto? = null,
     val artist: ArtistDetailDto? = null,
     val albumList: AlbumListDto? = null,
@@ -72,6 +73,12 @@ data class ArtistDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class ArtistRefDto(
+    val id: String? = null,
+    val name: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
 data class ArtistDetailDto(
     val id: String,
     val name: String,
@@ -93,6 +100,7 @@ data class AlbumDto(
     val title: String? = null,
     val artist: String? = null,
     val artistId: String? = null,
+    val artists: List<ArtistRefDto>? = emptyList(),
     val coverArt: String? = null,
     val songCount: Int? = null,
     val duration: Int? = null,
@@ -111,6 +119,7 @@ data class SongDto(
     val albumId: String? = null,
     val artist: String? = null,
     val artistId: String? = null,
+    val artists: List<ArtistRefDto>? = emptyList(),
     val coverArt: String? = null,
     val duration: Int? = null,
     val track: Int? = null,

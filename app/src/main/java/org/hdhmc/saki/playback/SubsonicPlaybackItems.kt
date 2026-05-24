@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
+import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.Song
@@ -18,6 +19,8 @@ private const val EXTRA_ALBUM = "saki.playback.album"
 private const val EXTRA_ALBUM_ID = "saki.playback.album_id"
 private const val EXTRA_ARTIST = "saki.playback.artist"
 private const val EXTRA_ARTIST_ID = "saki.playback.artist_id"
+private const val EXTRA_ARTIST_REF_IDS = "saki.playback.artist_ref_ids"
+private const val EXTRA_ARTIST_REF_NAMES = "saki.playback.artist_ref_names"
 private const val EXTRA_DURATION_MS = "saki.playback.duration_ms"
 private const val EXTRA_TRACK = "saki.playback.track"
 private const val EXTRA_DISC_NUMBER = "saki.playback.disc_number"
@@ -50,6 +53,7 @@ internal data class PlaybackRequest(
     val albumId: String?,
     val artist: String?,
     val artistId: String?,
+    val artists: List<ArtistRef>,
     val durationMs: Long?,
     val track: Int?,
     val discNumber: Int?,
@@ -99,6 +103,7 @@ internal fun Song.toPlaybackRequestMediaItem(
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artists = artists,
         durationMs = durationSeconds?.times(1_000L),
         track = track,
         discNumber = discNumber,
@@ -144,6 +149,7 @@ internal fun CachedSong.toCachedMediaItem(
         albumId = albumId,
         artist = artist,
         artistId = artistId,
+        artists = emptyList(),
         durationMs = durationSeconds?.times(1_000L),
         track = track,
         discNumber = discNumber,
@@ -197,6 +203,7 @@ internal fun MediaItem.toPlaybackRequestOrNull(): PlaybackRequest? {
         albumId = extras.getString(EXTRA_ALBUM_ID),
         artist = extras.getString(EXTRA_ARTIST),
         artistId = extras.getString(EXTRA_ARTIST_ID),
+        artists = extras.getArtistRefs(),
         durationMs = extras.getLong(EXTRA_DURATION_MS).takeIf { extras.containsKey(EXTRA_DURATION_MS) },
         track = extras.getInt(EXTRA_TRACK).takeIf { extras.containsKey(EXTRA_TRACK) },
         discNumber = extras.getInt(EXTRA_DISC_NUMBER).takeIf { extras.containsKey(EXTRA_DISC_NUMBER) },
@@ -235,6 +242,7 @@ internal fun MediaItem.toQueueItemOrNull(): PlaybackQueueItem? {
         title = title,
         artist = extras.getString(EXTRA_ARTIST) ?: mediaMetadata.artist?.toString(),
         artistId = extras.getString(EXTRA_ARTIST_ID),
+        artists = extras.getArtistRefs(),
         album = extras.getString(EXTRA_ALBUM) ?: mediaMetadata.albumTitle?.toString(),
         albumId = extras.getString(EXTRA_ALBUM_ID),
         artworkUri = extras.getString(EXTRA_ARTWORK_URI) ?: mediaMetadata.artworkUri?.toString(),
@@ -322,6 +330,7 @@ internal fun PlaybackRequest.toBundle(): Bundle {
         putString(EXTRA_ALBUM_ID, albumId)
         putString(EXTRA_ARTIST, artist)
         putString(EXTRA_ARTIST_ID, artistId)
+        putArtistRefs(artists)
         durationMs?.let { putLong(EXTRA_DURATION_MS, it) }
         track?.let { putInt(EXTRA_TRACK, it) }
         discNumber?.let { putInt(EXTRA_DISC_NUMBER, it) }
@@ -342,6 +351,23 @@ internal fun PlaybackRequest.toBundle(): Bundle {
         putString(EXTRA_QUEUE_SOURCE, queueSource)
         libraryIndex?.let { putInt(EXTRA_LIBRARY_INDEX, it) }
     }
+}
+
+private fun Bundle.putArtistRefs(artists: List<ArtistRef>) {
+    if (artists.isEmpty()) return
+    putStringArrayList(EXTRA_ARTIST_REF_IDS, ArrayList(artists.map(ArtistRef::id)))
+    putStringArrayList(EXTRA_ARTIST_REF_NAMES, ArrayList(artists.map(ArtistRef::name)))
+}
+
+private fun Bundle.getArtistRefs(): List<ArtistRef> {
+    val ids = getStringArrayList(EXTRA_ARTIST_REF_IDS).orEmpty()
+    val names = getStringArrayList(EXTRA_ARTIST_REF_NAMES).orEmpty()
+    return ids.zip(names)
+        .mapNotNull { (id, name) ->
+            val cleanId = id.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val cleanName = name.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            ArtistRef(id = cleanId, name = cleanName)
+        }
 }
 
 @UnstableApi

@@ -240,7 +240,12 @@ class SakiAppViewModel @Inject constructor(
 
     private fun loadBrowseSectionIfNeeded(serverId: Long, section: BrowseSection) {
         when (section) {
-            BrowseSection.ARTISTS -> if (uiState.value.libraryIndexes == null) loadArtists(serverId)
+            BrowseSection.ARTISTS -> if (
+                uiState.value.libraryIndexes == null ||
+                (!uiState.value.hasLoadedArtistsFromNetwork && !endpointStatus.value.isOfflineDegraded)
+            ) {
+                loadArtists(serverId)
+            }
             BrowseSection.ALBUMS -> if (uiState.value.albums.isEmpty()) loadAlbums(serverId, uiState.value.selectedAlbumFeed)
             BrowseSection.PLAYLISTS -> if (uiState.value.playlists.isEmpty()) loadPlaylists(serverId)
             BrowseSection.SONGS -> if (
@@ -577,6 +582,9 @@ class SakiAppViewModel @Inject constructor(
                         )
                     }
                 }
+                if (loadedFromNetwork) {
+                    refreshCachedArtistIndex(serverId)
+                }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
                 if (uiState.value.selectedServerId == serverId) {
@@ -662,6 +670,9 @@ class SakiAppViewModel @Inject constructor(
                         )
                     }
                 }
+                if (loadedFromNetwork) {
+                    refreshCachedArtistIndex(serverId)
+                }
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
                 if (uiState.value.selectedServerId == serverId) {
@@ -693,6 +704,7 @@ class SakiAppViewModel @Inject constructor(
             }
             try {
                 val syncedCount = syncAllSongMetadata(serverId)
+                refreshCachedArtistIndex(serverId)
                 mutableUiState.update {
                     it.copy(
                         isSongMetadataSyncing = false,
@@ -762,14 +774,27 @@ class SakiAppViewModel @Inject constructor(
             }
             runCatching {
                 val artist = subsonicRepository.getArtist(serverId, artistId).data
-                artist to buildArtistTopSongs(serverId, artist)
-            }.onSuccess { (artist, topSongs) ->
+                val topSongs = buildArtistTopSongs(serverId, artist)
+                val relationshipDetail = libraryCacheRepository.getArtistDetail(serverId, artistId)
+                val relationshipSongs = relationshipDetail?.songs.orEmpty()
+                val displayArtist = relationshipDetail?.artist?.let { localArtist ->
+                    artist.copy(
+                        name = localArtist.name,
+                        coverArtId = artist.coverArtId ?: localArtist.coverArtId,
+                        artistImageUrl = artist.artistImageUrl ?: localArtist.artistImageUrl,
+                        albumCount = artist.albumCount ?: localArtist.albumCount,
+                    )
+                } ?: artist
+                val songs = (topSongs + relationshipSongs).distinctBy(Song::id)
+                val songsAreTopSongs = relationshipSongs.isEmpty()
+                Triple(displayArtist, songs, songsAreTopSongs)
+            }.onSuccess { (artist, songs, songsAreTopSongs) ->
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
                         state.copy(
                             selectedArtist = artist,
-                            selectedArtistSongs = topSongs,
-                            selectedArtistSongsAreTopSongs = true,
+                            selectedArtistSongs = songs,
+                            selectedArtistSongsAreTopSongs = songsAreTopSongs,
                             isArtistLoading = false,
                             artistError = null,
                         )
@@ -778,8 +803,9 @@ class SakiAppViewModel @Inject constructor(
                 runCatching {
                     libraryCacheRepository.saveArtistDetail(
                         serverId = serverId,
-                        detail = CachedArtistDetail(artist = artist, songs = topSongs, songsAreTopSongs = true),
+                        detail = CachedArtistDetail(artist = artist, songs = songs, songsAreTopSongs = songsAreTopSongs),
                     )
+                    refreshCachedArtistIndex(serverId)
                 }.onFailure { Log.w("SakiApp", "Failed to cache artist detail", it) }
             }.onFailure { throwable ->
                 if (uiState.value.selectedServerId == serverId) {
@@ -858,6 +884,7 @@ class SakiAppViewModel @Inject constructor(
                 }
                 runCatching { libraryCacheRepository.saveAlbumDetail(serverId, album) }
                     .onFailure { Log.w("SakiApp", "Failed to cache album detail", it) }
+                refreshCachedArtistIndex(serverId)
             }.onFailure { throwable ->
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
@@ -931,6 +958,7 @@ class SakiAppViewModel @Inject constructor(
                 }
                 runCatching { libraryCacheRepository.savePlaylistDetail(serverId, playlist) }
                     .onFailure { Log.w("SakiApp", "Failed to cache playlist detail", it) }
+                refreshCachedArtistIndex(serverId)
             }.onFailure { throwable ->
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
@@ -1376,6 +1404,7 @@ class SakiAppViewModel @Inject constructor(
                 selectedArtist = if (serverChanged) null else state.selectedArtist,
                 selectedArtistSongs = if (serverChanged) emptyList() else state.selectedArtistSongs,
                 selectedArtistSongsAreTopSongs = if (serverChanged) true else state.selectedArtistSongsAreTopSongs,
+                hasLoadedArtistsFromNetwork = if (serverChanged) false else state.hasLoadedArtistsFromNetwork,
                 albumFeeds = if (serverChanged) emptyAlbumFeedStates() else state.albumFeeds,
                 selectedAlbum = if (serverChanged) null else state.selectedAlbum,
                 selectedPlaylist = if (serverChanged) null else state.selectedPlaylist,
@@ -1636,7 +1665,13 @@ class SakiAppViewModel @Inject constructor(
         serverId: Long,
         forceRefresh: Boolean = false,
     ) {
-        if (!forceRefresh && uiState.value.libraryIndexes != null) return
+        if (
+            !forceRefresh &&
+            uiState.value.libraryIndexes != null &&
+            (uiState.value.hasLoadedArtistsFromNetwork || endpointStatus.value.isOfflineDegraded)
+        ) {
+            return
+        }
 
         viewModelScope.launch {
             mutableUiState.update { it.copy(isArtistsLoading = true, artistsError = null) }
@@ -1651,11 +1686,21 @@ class SakiAppViewModel @Inject constructor(
             runCatching {
                 subsonicRepository.getIndexes(serverId).data
             }.onSuccess { indexes ->
-                if (uiState.value.selectedServerId == serverId) {
-                    mutableUiState.update { it.copy(libraryIndexes = indexes.regroupByLocale(), isArtistsLoading = false, artistsError = null) }
-                }
                 runCatching { libraryCacheRepository.saveArtists(serverId, indexes) }
                     .onFailure { Log.w("SakiApp", "Failed to cache artists", it) }
+                val mergedIndexes = runCatching {
+                    libraryCacheRepository.getArtists(serverId)
+                }.getOrNull() ?: indexes
+                if (uiState.value.selectedServerId == serverId) {
+                    mutableUiState.update {
+                        it.copy(
+                            libraryIndexes = mergedIndexes.regroupByLocale(),
+                            hasLoadedArtistsFromNetwork = true,
+                            isArtistsLoading = false,
+                            artistsError = null,
+                        )
+                    }
+                }
             }.onFailure { throwable ->
                 mutableUiState.update {
                     it.copy(isArtistsLoading = false, artistsError = throwable.localizedOr(R.string.error_load_artists))
@@ -1904,6 +1949,7 @@ class SakiAppViewModel @Inject constructor(
                 if (!result.hasMore) {
                     libraryCacheRepository.pruneSongMetadataBefore(serverId, cachedAt)
                 }
+                refreshCachedArtistIndex(serverId)
             } catch (e: CancellationException) {
                 throw e
             } catch (throwable: Throwable) {
@@ -1946,6 +1992,15 @@ class SakiAppViewModel @Inject constructor(
             songs = songs,
             hasMore = songs.size >= limit,
         )
+    }
+
+    private suspend fun refreshCachedArtistIndex(serverId: Long) {
+        val artists = runCatching { libraryCacheRepository.getArtists(serverId) }.getOrNull() ?: return
+        if (uiState.value.selectedServerId == serverId) {
+            mutableUiState.update {
+                it.copy(libraryIndexes = artists.regroupByLocale())
+            }
+        }
     }
 
     // Navidrome supports empty query in search3 to return all songs.
@@ -2321,6 +2376,7 @@ data class SakiAppUiState(
     val selectedServerId: Long? = null,
     val selectedAlbumFeed: AlbumListType = AlbumListType.NEWEST,
     val libraryIndexes: LibraryIndexes? = null,
+    val hasLoadedArtistsFromNetwork: Boolean = false,
     val isArtistsLoading: Boolean = false,
     val artistsError: UiText? = null,
     val selectedArtist: Artist? = null,
@@ -2412,6 +2468,7 @@ private fun AlbumSummary.toAlbum() = Album(
     name = name,
     artist = artist,
     artistId = artistId,
+    artists = artists,
     coverArtId = coverArtId,
     songCount = songCount,
     durationSeconds = durationSeconds,
@@ -2450,8 +2507,6 @@ private fun Song.withFallbackAlbumMetadata(album: Album): Song {
     return copy(
         album = this.album ?: album.name,
         albumId = albumId ?: album.id,
-        artist = artist ?: album.artist,
-        artistId = artistId ?: album.artistId,
         coverArtId = coverArtId ?: album.coverArtId,
     )
 }
