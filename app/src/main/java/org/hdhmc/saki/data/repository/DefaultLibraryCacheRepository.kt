@@ -851,7 +851,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
 
     private companion object {
         val ARTIST_NAME_SEPARATOR_REGEX = Regex(
-            "\\s*(/|;|、|,|&|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bfeaturing\\b)\\s*",
+            "\\s*(/|;|、|,|&|×|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bfeaturing\\b)\\s*",
             RegexOption.IGNORE_CASE,
         )
         const val IN_CLAUSE_QUERY_CHUNK_SIZE = 500

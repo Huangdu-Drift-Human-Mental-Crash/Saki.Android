@@ -786,7 +786,8 @@ class SakiAppViewModel @Inject constructor(
                     )
                 } ?: artist
                 val songs = (topSongs + relationshipSongs).distinctBy(Song::id)
-                val songsAreTopSongs = relationshipSongs.isEmpty()
+                val topSongIds = topSongs.mapTo(HashSet(topSongs.size), Song::id)
+                val songsAreTopSongs = relationshipSongs.none { it.id !in topSongIds }
                 Triple(displayArtist, songs, songsAreTopSongs)
             }.onSuccess { (artist, songs, songsAreTopSongs) ->
                 if (uiState.value.selectedServerId == serverId) {
