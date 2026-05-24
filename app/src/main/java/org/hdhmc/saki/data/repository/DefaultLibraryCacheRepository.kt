@@ -372,22 +372,9 @@ class DefaultLibraryCacheRepository @Inject constructor(
         serverArtists: List<ArtistSummary>,
         songArtists: List<ArtistSummary>,
     ): List<ArtistSummary> {
-        val songArtistNames = songArtists.map { it.name }.toSet()
-        val visibleServerArtists = serverArtists.filterNot { artist ->
-            artist.name.isCoveredAggregateArtist(songArtistNames)
-        }
-        return (songArtists + visibleServerArtists)
+        return (songArtists + serverArtists)
             .distinctBy(ArtistSummary::id)
             .sortedBy { it.name.lowercase() }
-    }
-
-    private fun String.isCoveredAggregateArtist(knownArtistNames: Set<String>): Boolean {
-        if (knownArtistNames.isEmpty()) return false
-        val parts = split(ARTIST_NAME_SEPARATOR_REGEX)
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .distinct()
-        return parts.size > 1 && parts.all { it in knownArtistNames }
     }
 
     private fun CachedAlbumEntity.toDomain() = AlbumSummary(
@@ -850,10 +837,6 @@ class DefaultLibraryCacheRepository @Inject constructor(
     }
 
     private companion object {
-        val ARTIST_NAME_SEPARATOR_REGEX = Regex(
-            "\\s*(/|;|、|,|&|×|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bfeaturing\\b)\\s*",
-            RegexOption.IGNORE_CASE,
-        )
         const val IN_CLAUSE_QUERY_CHUNK_SIZE = 500
         const val SONG_METADATA_WRITE_CHUNK_SIZE = 500
         const val SEARCH_DUPLICATE_BUFFER_MULTIPLIER = 4
