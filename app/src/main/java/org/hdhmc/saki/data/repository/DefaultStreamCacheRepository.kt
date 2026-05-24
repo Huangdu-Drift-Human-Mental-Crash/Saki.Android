@@ -169,10 +169,10 @@ class DefaultStreamCacheRepository @Inject constructor(
             val isFullyCached = if (contentLength != C.LENGTH_UNSET.toLong() && contentLength > 0L) {
                 streamCache.isCached(key, 0, contentLength)
             } else {
-                // No Content-Length (e.g. transcoded stream): consider cached if there is
-                // a single contiguous span starting at 0 with meaningful size
-                val spans = streamCache.getCachedSpans(key)
-                spans.size == 1 && spans.first().position == 0L && cachedBytes > 0L
+                // No Content-Length (e.g. transcoded stream): consider cached if the
+                // resource has a contiguous cached prefix starting at 0. SimpleCache
+                // may split a completed CacheWriter result into multiple spans.
+                hasContiguousCachedPrefix(key)
             }
             if (isFullyCached) {
                 cachedSongIdsByServerAndQuality
@@ -188,6 +188,22 @@ class DefaultStreamCacheRepository @Inject constructor(
             },
             bytesByServer = bytesByServer.toMap(),
         )
+    }
+
+    private fun hasContiguousCachedPrefix(key: String): Boolean {
+        val spans = streamCache.getCachedSpans(key).sortedBy { span -> span.position }
+        if (spans.isEmpty() || spans.first().position != 0L) return false
+
+        var coveredUntil = 0L
+        for (span in spans) {
+            if (span.length <= 0L) continue
+            if (span.position > coveredUntil) return false
+            val spanEnd = span.position + span.length
+            if (spanEnd > coveredUntil) {
+                coveredUntil = spanEnd
+            }
+        }
+        return coveredUntil > 0L
     }
 }
 
