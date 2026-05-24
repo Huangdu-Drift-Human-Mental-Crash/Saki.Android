@@ -481,6 +481,7 @@ class SakiPlaybackService : MediaSessionService() {
         streamPrefetchReevaluationJob = playerScope.launch {
             while (true) {
                 delay(STREAM_PREFETCH_REEVALUATION_MS)
+                if (streamPrefetchJob?.isActive == true) continue
                 syncCurrentStreamPrefetch()
             }
         }
@@ -573,7 +574,7 @@ class SakiPlaybackService : MediaSessionService() {
                 val isSatisfied = isStreamPrefetchSatisfied(request.serverId, request.songId, quality)
                 val isDeferred = isStreamPrefetchDeferred(targetKey, nowMs)
                 val trackEndFromCurrentMs = remainingTrackMs?.let { distanceFromCurrentMs + it }
-                val isHandledByPlayerBuffer = index == currentIndex ||
+                val isHandledByPlayerBuffer =
                     trackEndFromCurrentMs?.let { it <= CUSTOM_PLAYER_MAX_BUFFER_MS } == true
                 val targetState = when {
                     isSatisfied -> "done"
