@@ -1,5 +1,8 @@
 package org.hdhmc.saki.presentation.library
 
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import android.util.LruCache
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -14,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -114,11 +118,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -141,6 +147,7 @@ import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SongLyrics
 import java.io.File
 import coil3.imageLoader
+import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.toBitmap
@@ -1957,15 +1964,83 @@ private fun NowPlayingArtworkFrame(
         } else {
             Modifier
         }
-        ArtworkCard(
-            model = item?.queueArtworkModel(item.serverId?.let { serversById[it] }),
-            contentDescription = item?.title,
-            modifier = contentModifier
-                .aspectRatio(1f)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(34.dp))
-                .then(clickModifier),
-            cornerRadiusDp = 34,
+        val artworkModel = item?.queueArtworkModel(item.serverId?.let { serversById[it] })
+        val frameModifier = contentModifier
+            .aspectRatio(1f)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(34.dp))
+            .then(clickModifier)
+        if (artworkModel != null) {
+            NowPlayingLayeredArtwork(
+                model = artworkModel,
+                contentDescription = item?.title,
+                modifier = frameModifier,
+            )
+        } else {
+            ArtworkCard(
+                model = null,
+                contentDescription = item?.title,
+                modifier = frameModifier,
+                cornerRadiusDp = 34,
+                contentScale = ContentScale.Fit,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingLayeredArtwork(
+    model: Any,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val imageRequest = remember(model, context) {
+        ImageRequest.Builder(context)
+            .data(model)
+            .size(FULL_COVER_ART_SIZE_PX)
+            .build()
+    }
+    val painter = rememberAsyncImagePainter(model = imageRequest)
+    val backdropRenderEffect = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            RenderEffect.createBlurEffect(
+                NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX,
+                NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX,
+                Shader.TileMode.CLAMP,
+            ).asComposeRenderEffect()
+        } else {
+            null
+        }
+    }
+
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+    ) {
+        if (backdropRenderEffect != null) {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = NOW_PLAYING_ARTWORK_BACKDROP_SCALE
+                        scaleY = NOW_PLAYING_ARTWORK_BACKDROP_SCALE
+                        renderEffect = backdropRenderEffect
+                    },
+                contentScale = ContentScale.Crop,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = NOW_PLAYING_ARTWORK_BACKDROP_OVERLAY_ALPHA)),
+            )
+        }
+        Image(
+            painter = painter,
+            contentDescription = contentDescription,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit,
         )
     }
 }
@@ -1977,6 +2052,9 @@ private const val ARTWORK_BUTTON_SKIP_CONFIRM_TIMEOUT_MS = 900L
 private const val ARTWORK_BUTTON_SKIP_INITIAL_VELOCITY_PAGES = 3.5f
 private const val COMPACT_TECH_INFO_SETTLE_MS = 700L
 private const val COMPACT_TECH_INFO_FADE_MS = 700
+private const val NOW_PLAYING_ARTWORK_BACKDROP_SCALE = 1.1f
+private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
+private const val NOW_PLAYING_ARTWORK_BACKDROP_OVERLAY_ALPHA = 0.25f
 private const val PROGRAMMATIC_ARTWORK_SPRING_BASE_STIFFNESS = 140f
 private const val PROGRAMMATIC_ARTWORK_SPRING_DISTANCE_STIFFNESS = 60f
 private const val PROGRAMMATIC_ARTWORK_MAX_INITIAL_VELOCITY_PAGES = 8f
