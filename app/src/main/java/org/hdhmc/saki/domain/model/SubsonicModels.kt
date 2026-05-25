@@ -72,13 +72,9 @@ enum class AlbumListType(val apiValue: String) {
     companion object {
         val defaultBrowseFeeds = listOf(
             NEWEST,
-            RECENT,
             RANDOM,
-            HIGHEST,
-            FREQUENT,
             ALPHABETICAL_BY_NAME,
             ALPHABETICAL_BY_ARTIST,
-            STARRED,
         )
 
         fun fromApiValue(apiValue: String?): AlbumListType? {
