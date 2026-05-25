@@ -39,6 +39,7 @@ fun ArtworkCard(
     contentDescription: String?,
     modifier: Modifier = Modifier,
     cornerRadiusDp: Int = 24,
+    contentScale: ContentScale = ContentScale.Crop,
     requestSizePx: Int? = null,
 ) {
     val fallbackBrush = Brush.linearGradient(
@@ -69,7 +70,7 @@ fun ArtworkCard(
                 model = imageModel,
                 contentDescription = contentDescription,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+                contentScale = contentScale,
             )
         } else {
             Box(
