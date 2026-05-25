@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.LruCache
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -22,6 +23,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -51,6 +53,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
@@ -1349,7 +1352,6 @@ private fun PressScaleIconButton(
 }
 
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MetadataLinkRow(
     track: PlaybackQueueItem,
@@ -1358,71 +1360,163 @@ private fun MetadataLinkRow(
     onOpenArtist: (String?) -> Unit,
     onOpenAlbum: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .basicMarquee(iterations = Int.MAX_VALUE),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val artistLinks = track.artists.ifEmpty {
-            listOfNotNull(
-                track.artist?.takeIf(String::isNotBlank)?.let { artist ->
-                    ArtistRef(
-                        id = track.artistId.orEmpty(),
-                        name = artist,
-                    )
-                },
-            )
+    val artistLinks = track.artists.ifEmpty {
+        listOfNotNull(
+            track.artist?.takeIf(String::isNotBlank)?.let { artist ->
+                ArtistRef(
+                    id = track.artistId.orEmpty(),
+                    name = artist,
+                )
+            },
+        )
+    }
+    val scrollState = rememberScrollState()
+    val scrollKey = remember(track.mediaId, artistLinks, track.album, track.albumId) {
+        buildString {
+            append(track.mediaId)
+            artistLinks.forEach { artist ->
+                append('|')
+                append(artist.id)
+                append(':')
+                append(artist.name)
+            }
+            append('|')
+            append(track.album.orEmpty())
+            append(':')
+            append(track.albumId.orEmpty())
         }
-        artistLinks.forEachIndexed { index, artist ->
-            val artistId = artist.id.takeIf(String::isNotBlank)
-            val canOpen = canOpenArtist(artistId)
-            Text(
-                text = artist.name,
-                style = textStyle,
-                color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clickable(
+    }
+    val density = LocalDensity.current
+    LaunchedEffect(scrollKey, scrollState.maxValue, density) {
+        scrollState.scrollTo(0)
+        if (scrollState.maxValue <= 0 || scrollState.maxValue == Int.MAX_VALUE) return@LaunchedEffect
+        if (coroutineContext[MotionDurationScale.Key]?.scaleFactor == 0f) return@LaunchedEffect
+
+        delay(METADATA_LINK_SCROLL_EDGE_PAUSE_MS)
+        val speedPxPerMs = with(density) {
+            METADATA_LINK_SCROLL_SPEED_DP_PER_SECOND.dp.toPx()
+        } / 1000f
+        while (scrollState.maxValue > 0 && scrollState.maxValue != Int.MAX_VALUE) {
+            val forwardDistance = (scrollState.maxValue - scrollState.value).coerceAtLeast(0)
+            if (forwardDistance > 0) {
+                scrollState.animateScrollTo(
+                    scrollState.maxValue,
+                    animationSpec = tween(
+                        durationMillis = metadataLinkScrollDurationMillis(forwardDistance, speedPxPerMs),
+                        easing = LinearEasing,
+                    ),
+                )
+            }
+            delay(METADATA_LINK_SCROLL_EDGE_PAUSE_MS)
+
+            val backwardDistance = scrollState.value.coerceAtLeast(0)
+            if (backwardDistance > 0) {
+                scrollState.animateScrollTo(
+                    0,
+                    animationSpec = tween(
+                        durationMillis = metadataLinkScrollDurationMillis(backwardDistance, speedPxPerMs),
+                        easing = LinearEasing,
+                    ),
+                )
+            }
+            delay(METADATA_LINK_SCROLL_EDGE_PAUSE_MS)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.horizontalScroll(scrollState, enabled = false),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            artistLinks.forEachIndexed { index, artist ->
+                val artistId = artist.id.takeIf(String::isNotBlank)
+                val canOpen = canOpenArtist(artistId)
+                MetadataLinkText(
+                    text = artist.name,
+                    style = textStyle,
+                    color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     enabled = canOpen,
                     onClick = { onOpenArtist(artistId) },
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-            )
-            if (index != artistLinks.lastIndex) {
-                Text(
-                    text = "/",
+                )
+                if (index != artistLinks.lastIndex) {
+                    Text(
+                        text = "/",
+                        style = textStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
+                    )
+                }
+            }
+
+            if ((artistLinks.isNotEmpty() || !track.artist.isNullOrBlank()) && !track.album.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            shape = RoundedCornerShape(percent = 50),
+                        ),
+                )
+            }
+            track.album?.takeIf(String::isNotBlank)?.let { album ->
+                MetadataLinkText(
+                    text = album,
                     style = textStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
+                    color = if (track.albumId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    enabled = track.albumId != null,
+                    onClick = onOpenAlbum,
                 )
             }
         }
-        if ((artistLinks.isNotEmpty() || !track.artist.isNullOrBlank()) && !track.album.isNullOrBlank()) {
-            Box(
-                modifier = Modifier
-                    .size(5.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        shape = RoundedCornerShape(percent = 50),
-                    ),
-            )
-        }
-        track.album?.takeIf(String::isNotBlank)?.let { album ->
-            Text(
-                text = album,
-                style = textStyle,
-                color = if (track.albumId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clickable(
-                    enabled = track.albumId != null,
-                    onClick = onOpenAlbum,
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-            )
-        }
     }
+}
+
+@Composable
+private fun MetadataLinkText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.92f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "MetadataLinkTextPressScale",
+    )
+
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        modifier = Modifier
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .clickable(
+                enabled = enabled,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+        maxLines = 1,
+        overflow = TextOverflow.Clip,
+    )
+}
+
+private fun metadataLinkScrollDurationMillis(distancePx: Int, speedPxPerMs: Float): Int {
+    if (speedPxPerMs <= 0f) return METADATA_LINK_SCROLL_MIN_DURATION_MS
+    return (distancePx / speedPxPerMs)
+        .roundToInt()
+        .coerceAtLeast(METADATA_LINK_SCROLL_MIN_DURATION_MS)
 }
 
 @Composable
@@ -2052,6 +2146,9 @@ private const val ARTWORK_BUTTON_SKIP_CONFIRM_TIMEOUT_MS = 900L
 private const val ARTWORK_BUTTON_SKIP_INITIAL_VELOCITY_PAGES = 3.5f
 private const val COMPACT_TECH_INFO_SETTLE_MS = 700L
 private const val COMPACT_TECH_INFO_FADE_MS = 700
+private const val METADATA_LINK_SCROLL_EDGE_PAUSE_MS = 1_200L
+private const val METADATA_LINK_SCROLL_MIN_DURATION_MS = 350
+private const val METADATA_LINK_SCROLL_SPEED_DP_PER_SECOND = 32f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_SCALE = 1.1f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_OVERLAY_ALPHA = 0.25f
