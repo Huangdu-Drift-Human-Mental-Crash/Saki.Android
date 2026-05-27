@@ -314,16 +314,26 @@ fun NowPlayingCapsule(
                     )
                 }
                 IconButton(onClick = onSkipToPrevious, enabled = track != null) {
-                    Icon(imageVector = Icons.Rounded.SkipPrevious, contentDescription = null)
+                    Icon(
+                        imageVector = Icons.Rounded.SkipPrevious,
+                        contentDescription = stringResource(R.string.player_previous),
+                    )
                 }
                 IconButton(onClick = onPlayPause, enabled = track != null) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = null,
+                        contentDescription = if (isPlaying) {
+                            stringResource(R.string.player_pause)
+                        } else {
+                            stringResource(R.string.player_play)
+                        },
                     )
                 }
                 IconButton(onClick = onSkipToNext, enabled = track != null) {
-                    Icon(imageVector = Icons.Rounded.SkipNext, contentDescription = null)
+                    Icon(
+                        imageVector = Icons.Rounded.SkipNext,
+                        contentDescription = stringResource(R.string.player_next),
+                    )
                 }
             }
         }

@@ -341,6 +341,7 @@ private fun RootShell(
                             uiState = uiState,
                             contentPadding = PaddingValues(),
                             bottomOverlayPadding = capsuleOverlayPadding,
+                            onClose = { onShowSettingsChange(false) },
                             onManageServers = onManageServers,
                             onSelectServer = onSelectServer,
                             onUpdateStreamQuality = onUpdateStreamQuality,
