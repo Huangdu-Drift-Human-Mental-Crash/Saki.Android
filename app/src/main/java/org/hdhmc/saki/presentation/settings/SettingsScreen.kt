@@ -59,6 +59,7 @@ import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.BufferStrategy
@@ -106,6 +107,7 @@ fun SettingsScreen(
     onUpdateTextScale: (TextScale) -> Unit,
     onUpdateLanguage: (AppLanguage) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
+    onUpdateThemeStyle: (ThemeStyle) -> Unit,
     onUpdateDefaultBrowseTab: (DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
@@ -426,6 +428,11 @@ fun SettingsScreen(
                 action = null,
             ) {
                 val currentTheme = uiState.appPreferences.themeMode
+                val currentThemeStyle = uiState.appPreferences.themeStyle
+                Text(
+                    text = stringResource(R.string.settings_theme_mode_label),
+                    style = MaterialTheme.typography.labelLarge,
+                )
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -444,6 +451,21 @@ fun SettingsScreen(
                         selected = currentTheme == ThemeMode.DARK,
                         onClick = { onUpdateThemeMode(ThemeMode.DARK) },
                         label = { Text(stringResource(R.string.settings_theme_dark)) },
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.settings_theme_style_label),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = currentThemeStyle == ThemeStyle.SAKI,
+                        onClick = { onUpdateThemeStyle(ThemeStyle.SAKI) },
+                        label = { Text(stringResource(R.string.settings_theme_style_saki)) },
                     )
                 }
             }

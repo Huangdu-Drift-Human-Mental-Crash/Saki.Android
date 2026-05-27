@@ -59,9 +59,12 @@
     <string name="settings_language_coverage">%1$d%%</string>
     <string name="settings_theme_title">Theme</string>
     <string name="settings_theme_body">Choose the app appearance.</string>
+    <string name="settings_theme_mode_label">Brightness</string>
     <string name="settings_theme_system">System default</string>
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_style_label">Style</string>
+    <string name="settings_theme_style_saki">Saki</string>
     <string name="settings_default_browse_title">Default Browse tab</string>
     <string name="settings_default_browse_body">Choose the Browse tab shown when the app starts.</string>
     <string name="settings_default_album_feed">Default album feed</string>

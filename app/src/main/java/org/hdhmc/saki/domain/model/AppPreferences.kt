@@ -42,6 +42,7 @@ data class AppPreferences(
     val textScale: TextScale = TextScale.DEFAULT,
     val language: AppLanguage = AppLanguage.SYSTEM,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeStyle: ThemeStyle = ThemeStyle.SAKI,
     val albumViewMode: AlbumViewMode = AlbumViewMode.GRID,
     val defaultBrowseTab: DefaultBrowseTab = DefaultBrowseTab.ARTISTS,
     val defaultAlbumFeed: AlbumListType = AlbumListType.NEWEST,
@@ -94,6 +95,15 @@ enum class ThemeMode(val storageKey: String) {
     companion object {
         fun fromStorageKey(storageKey: String?): ThemeMode =
             entries.firstOrNull { it.storageKey == storageKey } ?: SYSTEM
+    }
+}
+
+enum class ThemeStyle(val storageKey: String) {
+    SAKI("saki");
+
+    companion object {
+        fun fromStorageKey(storageKey: String?): ThemeStyle =
+            entries.firstOrNull { it.storageKey == storageKey } ?: SAKI
     }
 }
 

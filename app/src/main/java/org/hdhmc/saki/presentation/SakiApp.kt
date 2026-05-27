@@ -43,11 +43,13 @@ import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SongLyrics
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.presentation.library.BrowseScreen
 import org.hdhmc.saki.presentation.library.NowPlayingCapsule
 import org.hdhmc.saki.presentation.library.NowPlayingOverlay
 import org.hdhmc.saki.presentation.serverconfig.ServerConfigRoute
 import org.hdhmc.saki.presentation.settings.SettingsScreen
+import org.hdhmc.saki.ui.theme.SakiAndroidTheme
 
 @Composable
 fun SakiApp(
@@ -94,7 +96,8 @@ fun SakiApp(
         }
     }
 
-    CompositionLocalProvider(LocalDensity provides appDensity) {
+    SakiAndroidTheme(themeStyle = uiState.appPreferences.themeStyle) {
+        CompositionLocalProvider(LocalDensity provides appDensity) {
         Box(modifier = modifier.fillMaxSize()) {
             when {
                 !uiState.isAppReady -> {
@@ -156,6 +159,7 @@ fun SakiApp(
                         onUpdateTextScale = viewModel::updateTextScale,
                         onUpdateLanguage = viewModel::updateLanguage,
                         onUpdateThemeMode = viewModel::updateThemeMode,
+                        onUpdateThemeStyle = viewModel::updateThemeStyle,
                         onUpdateDefaultBrowseTab = viewModel::updateDefaultBrowseTab,
                         onUpdateDefaultAlbumFeed = viewModel::updateDefaultAlbumFeed,
                         onUpdateSongsPageSize = viewModel::updateSongsPageSize,
@@ -206,6 +210,7 @@ fun SakiApp(
                 }
             }
         }
+    }
     }
 }
 
@@ -260,6 +265,7 @@ private fun RootShell(
     onUpdateTextScale: (org.hdhmc.saki.domain.model.TextScale) -> Unit,
     onUpdateLanguage: (org.hdhmc.saki.domain.model.AppLanguage) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
+    onUpdateThemeStyle: (ThemeStyle) -> Unit,
     onUpdateDefaultBrowseTab: (org.hdhmc.saki.domain.model.DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (org.hdhmc.saki.domain.model.AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
@@ -351,6 +357,7 @@ private fun RootShell(
                             onUpdateTextScale = onUpdateTextScale,
                             onUpdateLanguage = onUpdateLanguage,
                             onUpdateThemeMode = onUpdateThemeMode,
+                            onUpdateThemeStyle = onUpdateThemeStyle,
                             onUpdateDefaultBrowseTab = onUpdateDefaultBrowseTab,
                             onUpdateDefaultAlbumFeed = onUpdateDefaultAlbumFeed,
                             onUpdateSongsPageSize = onUpdateSongsPageSize,
