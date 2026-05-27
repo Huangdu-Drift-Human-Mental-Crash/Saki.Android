@@ -84,6 +84,7 @@ import org.hdhmc.saki.presentation.library.THUMBNAIL_COVER_ART_SIZE_PX
 import org.hdhmc.saki.presentation.library.resolveArtworkModel
 import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
+import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSelectedContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
@@ -173,12 +174,11 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.displaySmall,
                         )
-                        IconButton(onClick = onClose) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = stringResource(R.string.common_close),
-                            )
-                        }
+                        SakiChromeIconButton(
+                            onClick = onClose,
+                            icon = Icons.Rounded.Close,
+                            contentDescription = stringResource(R.string.common_close),
+                        )
                     }
                     Text(
                         text = stringResource(R.string.settings_intro),

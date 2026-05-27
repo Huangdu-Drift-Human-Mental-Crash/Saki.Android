@@ -182,6 +182,11 @@ fun NowPlayingCapsule(
     onSkipToNext: () -> Unit,
 ) {
     val visuals = SakiTheme.visuals
+    val capsuleContainerColor = if (visuals.useExpressiveSurfaceContainers) {
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = visuals.nowPlayingCapsuleContainerAlpha)
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = visuals.nowPlayingCapsuleContainerAlpha)
+    }
     val elevation by animateDpAsState(
         targetValue = if (isPlaying) 12.dp else 6.dp,
         animationSpec = spring(
@@ -248,11 +253,9 @@ fun NowPlayingCapsule(
                     },
                 )
             },
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = RoundedCornerShape(visuals.miniPlayerContainerCornerRadius),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(
-                alpha = visuals.nowPlayingCapsuleContainerAlpha,
-            ),
+            containerColor = capsuleContainerColor,
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = elevation),
     ) {
@@ -266,9 +269,11 @@ fun NowPlayingCapsule(
             AnimatedVisibility(visible = track != null) {
                 Box(
                     modifier = Modifier
-                        .size(width = 36.dp, height = 3.dp)
+                        .size(width = visuals.miniPlayerHandleWidth, height = 3.dp)
                         .background(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                alpha = visuals.miniPlayerHandleAlpha,
+                            ),
                             shape = RoundedCornerShape(100),
                         ),
                 )
@@ -290,7 +295,7 @@ fun NowPlayingCapsule(
                         model = model,
                         contentDescription = title,
                         modifier = Modifier.size(46.dp),
-                        cornerRadiusDp = 14,
+                        cornerRadiusDp = visuals.miniPlayerArtworkCornerRadius.value.roundToInt(),
                         requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
                     )
                 }
@@ -313,30 +318,59 @@ fun NowPlayingCapsule(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                IconButton(onClick = onSkipToPrevious, enabled = track != null) {
-                    Icon(
-                        imageVector = Icons.Rounded.SkipPrevious,
-                        contentDescription = stringResource(R.string.player_previous),
-                    )
-                }
-                IconButton(onClick = onPlayPause, enabled = track != null) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = if (isPlaying) {
-                            stringResource(R.string.player_pause)
-                        } else {
-                            stringResource(R.string.player_play)
-                        },
-                    )
-                }
-                IconButton(onClick = onSkipToNext, enabled = track != null) {
-                    Icon(
-                        imageVector = Icons.Rounded.SkipNext,
-                        contentDescription = stringResource(R.string.player_next),
-                    )
-                }
+                MiniPlayerIconButton(
+                    icon = Icons.Rounded.SkipPrevious,
+                    contentDescription = stringResource(R.string.player_previous),
+                    onClick = onSkipToPrevious,
+                    enabled = track != null,
+                )
+                MiniPlayerIconButton(
+                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = if (isPlaying) {
+                        stringResource(R.string.player_pause)
+                    } else {
+                        stringResource(R.string.player_play)
+                    },
+                    onClick = onPlayPause,
+                    enabled = track != null,
+                )
+                MiniPlayerIconButton(
+                    icon = Icons.Rounded.SkipNext,
+                    contentDescription = stringResource(R.string.player_next),
+                    onClick = onSkipToNext,
+                    enabled = track != null,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun MiniPlayerIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+) {
+    val visuals = SakiTheme.visuals
+    if (visuals.miniPlayerControlContainerAlpha <= 0f) {
+        IconButton(onClick = onClick, enabled = enabled) {
+            Icon(imageVector = icon, contentDescription = contentDescription)
+        }
+    } else {
+        PressScaleIconButton(
+            icon = icon,
+            contentDescription = contentDescription,
+            onClick = onClick,
+            compact = true,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(
+                alpha = visuals.miniPlayerControlContainerAlpha,
+            ),
+            cornerRadius = visuals.miniPlayerControlCornerRadius,
+            iconSize = visuals.miniPlayerControlIconSize,
+            enabled = enabled,
+        )
     }
 }
 
@@ -796,7 +830,7 @@ fun NowPlayingOverlay(
                             val shuffleOnLabel = stringResource(R.string.player_shuffle_on)
                             val shuffleOffLabel = stringResource(R.string.player_shuffle_off)
                             Row(
-                                modifier = Modifier.offset(x = (-12).dp),
+                                modifier = Modifier.offset(x = -visuals.nowPlayingTopControlEdgeOffset),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 ToggleIconButton(
@@ -826,7 +860,7 @@ fun NowPlayingOverlay(
                                     compact = true,
                                 )
                             }
-                            Box(modifier = Modifier.offset(x = 12.dp)) {
+                            Box(modifier = Modifier.offset(x = visuals.nowPlayingTopControlEdgeOffset)) {
                                 PressScaleIconButton(
                                     icon = Icons.Rounded.MoreVert,
                                     contentDescription = stringResource(R.string.player_more),
@@ -1379,13 +1413,19 @@ private fun PressScaleIconButton(
     iconSize: Dp = 24.dp,
     role: Role = Role.Button,
     semanticStateDescription: String? = null,
+    enabled: Boolean = true,
 ) {
-    val iconTint = tint ?: MaterialTheme.colorScheme.onBackground
+    val baseTint = tint ?: MaterialTheme.colorScheme.onBackground
+    val iconTint = if (enabled) {
+        baseTint
+    } else {
+        baseTint.copy(alpha = baseTint.alpha * 0.38f)
+    }
     val shape = RoundedCornerShape(cornerRadius)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.85f else 1f,
+        targetValue = if (enabled && pressed) 0.85f else 1f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMedium,
@@ -1405,6 +1445,7 @@ private fun PressScaleIconButton(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
+                enabled = enabled,
                 role = role,
                 onClick = onClick,
             )
