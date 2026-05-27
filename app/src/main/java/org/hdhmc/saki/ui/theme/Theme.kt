@@ -11,6 +11,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.expressiveLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -71,24 +72,31 @@ fun SakiAndroidTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    when (themeStyle) {
-        ThemeStyle.SAKI -> {
-            MaterialTheme(
-                colorScheme = sakiColorScheme(darkTheme = darkTheme, dynamicColor = dynamicColor),
-                typography = Typography,
-                shapes = SakiShapes,
-                content = content,
-            )
-        }
+    CompositionLocalProvider(LocalSakiVisualTokens provides sakiVisualTokens(themeStyle)) {
+        when (themeStyle) {
+            ThemeStyle.SAKI -> {
+                MaterialTheme(
+                    colorScheme = sakiColorScheme(darkTheme = darkTheme, dynamicColor = dynamicColor),
+                    typography = Typography,
+                    shapes = SakiShapes,
+                    content = content,
+                )
+            }
 
-        ThemeStyle.MATERIAL_EXPRESSIVE -> {
-            MaterialExpressiveTheme(
-                colorScheme = if (darkTheme) darkColorScheme() else expressiveLightColorScheme(),
-                motionScheme = MotionScheme.expressive(),
-                content = content,
-            )
+            ThemeStyle.MATERIAL_EXPRESSIVE -> {
+                MaterialExpressiveTheme(
+                    colorScheme = if (darkTheme) darkColorScheme() else expressiveLightColorScheme(),
+                    motionScheme = MotionScheme.expressive(),
+                    content = content,
+                )
+            }
         }
     }
+}
+
+private fun sakiVisualTokens(themeStyle: ThemeStyle) = when (themeStyle) {
+    ThemeStyle.SAKI -> DefaultSakiVisualTokens
+    ThemeStyle.MATERIAL_EXPRESSIVE -> MaterialExpressiveSakiVisualTokens
 }
 
 @Composable

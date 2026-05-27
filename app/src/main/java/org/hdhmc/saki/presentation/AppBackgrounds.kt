@@ -8,15 +8,19 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
+import org.hdhmc.saki.ui.theme.SakiTheme
 
 @Composable
 fun rememberBrowseBackgroundBrush(): Brush {
     val colorScheme = MaterialTheme.colorScheme
-    return remember(colorScheme) {
+    val visuals = SakiTheme.visuals
+    return remember(colorScheme, visuals) {
         Brush.verticalGradient(
             listOf(
-                colorScheme.primary.copy(alpha = 0.16f).compositeOver(colorScheme.background),
-                colorScheme.tertiary.copy(alpha = 0.10f).compositeOver(colorScheme.surface),
+                colorScheme.primary.copy(alpha = visuals.backgroundPrimaryOverlayAlpha)
+                    .compositeOver(colorScheme.background),
+                colorScheme.tertiary.copy(alpha = visuals.backgroundTertiaryOverlayAlpha)
+                    .compositeOver(colorScheme.surface),
                 colorScheme.background,
             ),
         )

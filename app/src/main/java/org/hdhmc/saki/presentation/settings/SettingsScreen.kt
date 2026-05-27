@@ -84,6 +84,9 @@ import org.hdhmc.saki.presentation.library.THUMBNAIL_COVER_ART_SIZE_PX
 import org.hdhmc.saki.presentation.library.resolveArtworkModel
 import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
+import org.hdhmc.saki.ui.theme.sakiCardContainerColor
+import org.hdhmc.saki.ui.theme.sakiSelectedContainerColor
+import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -155,7 +158,7 @@ fun SettingsScreen(
             Card(
                 shape = MaterialTheme.shapes.extraLarge,
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    containerColor = sakiCardContainerColor(),
                 ),
             ) {
                 Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -907,7 +910,7 @@ private fun SettingsSectionCard(
     Card(
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+            containerColor = sakiCardContainerColor(),
         ),
     ) {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -948,9 +951,9 @@ private fun ServerRow(
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
+                sakiSelectedContainerColor()
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+                sakiTonalContainerColor()
             },
         ),
     ) {

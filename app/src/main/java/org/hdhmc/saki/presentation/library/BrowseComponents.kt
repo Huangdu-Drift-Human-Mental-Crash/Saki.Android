@@ -65,6 +65,9 @@ import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.ui.theme.sakiCardContainerColor
+import org.hdhmc.saki.ui.theme.sakiSubtleCardContainerColor
+import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
 
 @Composable
 fun ArtistDetailScreen(
@@ -387,7 +390,7 @@ fun ArtistShortcutCard(artist: ArtistSummary, onOpenArtist: (String) -> Unit) {
             .padding(end = 12.dp)
             .clickable { onOpenArtist(artist.id) },
         shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+        colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor()),
     ) {
         Column(
             modifier = Modifier.padding(18.dp),
@@ -412,7 +415,7 @@ fun AlbumCard(album: AlbumSummary, server: ServerConfig, onOpenAlbum: (String) -
         modifier = Modifier
             .padding(6.dp),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+        colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor()),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             ArtworkCard(
@@ -444,7 +447,7 @@ private fun AlbumMiniCard(album: AlbumSummary, server: ServerConfig, onOpenAlbum
             .padding(end = 12.dp)
             .clickable { onOpenAlbum(album.id) },
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+        colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor()),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             ArtworkCard(
@@ -691,7 +694,7 @@ fun NoServerBrowseState(modifier: Modifier, onManageServers: () -> Unit, onImpor
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Card(
             shape = MaterialTheme.shapes.extraLarge,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+            colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor()),
         ) {
             Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = stringResource(R.string.browse_needs_server), style = MaterialTheme.typography.displaySmall)
@@ -736,7 +739,7 @@ fun SectionTitle(
 
 @Composable
 fun LoadingStateCard(label: String) {
-    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))) {
+    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor())) {
         Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
             Text(text = label, modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
@@ -761,7 +764,7 @@ fun ErrorStateCard(message: String) {
 
 @Composable
 fun EmptyStateCard(title: String, body: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
-    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f))) {
+    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = sakiSubtleCardContainerColor())) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (icon != null) {
                 Icon(icon, contentDescription = null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -786,7 +789,7 @@ private fun RowCard(
             .fillMaxWidth()
             .padding(vertical = 6.dp),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)),
+        colors = CardDefaults.cardColors(containerColor = sakiSubtleCardContainerColor()),
     ) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             if (artwork != null) {
@@ -826,7 +829,7 @@ private fun SheetActionRow(
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick),
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        color = sakiTonalContainerColor(),
     ) {
         Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
