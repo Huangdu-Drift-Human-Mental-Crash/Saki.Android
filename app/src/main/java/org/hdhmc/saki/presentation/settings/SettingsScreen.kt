@@ -18,10 +18,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.rounded.TextFields
@@ -95,6 +95,7 @@ fun SettingsScreen(
     uiState: SakiAppUiState,
     contentPadding: PaddingValues,
     bottomOverlayPadding: Dp = 0.dp,
+    onClose: () -> Unit,
     onManageServers: () -> Unit,
     onSelectServer: (Long) -> Unit,
     onUpdateStreamQuality: (StreamQuality) -> Unit,
@@ -167,8 +168,17 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(text = stringResource(R.string.settings_title), style = MaterialTheme.typography.displaySmall)
-                        Icon(Icons.Rounded.Settings, contentDescription = null)
+                        Text(
+                            text = stringResource(R.string.settings_title),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.displaySmall,
+                        )
+                        IconButton(onClick = onClose) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = stringResource(R.string.common_close),
+                            )
+                        }
                     }
                     Text(
                         text = stringResource(R.string.settings_intro),
