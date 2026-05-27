@@ -467,6 +467,11 @@ fun SettingsScreen(
                         onClick = { onUpdateThemeStyle(ThemeStyle.SAKI) },
                         label = { Text(stringResource(R.string.settings_theme_style_saki)) },
                     )
+                    FilterChip(
+                        selected = currentThemeStyle == ThemeStyle.MATERIAL_EXPRESSIVE,
+                        onClick = { onUpdateThemeStyle(ThemeStyle.MATERIAL_EXPRESSIVE) },
+                        label = { Text(stringResource(R.string.settings_theme_style_material_expressive)) },
+                    )
                 }
             }
         }

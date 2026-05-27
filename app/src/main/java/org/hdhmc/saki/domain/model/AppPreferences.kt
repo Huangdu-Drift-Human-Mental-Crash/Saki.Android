@@ -99,7 +99,8 @@ enum class ThemeMode(val storageKey: String) {
 }
 
 enum class ThemeStyle(val storageKey: String) {
-    SAKI("saki");
+    SAKI("saki"),
+    MATERIAL_EXPRESSIVE("material_expressive");
 
     companion object {
         fun fromStorageKey(storageKey: String?): ThemeStyle =

@@ -9,9 +9,7 @@ plugins {
 android {
     namespace = "org.hdhmc.saki"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version = release(37)
     }
 
     defaultConfig {

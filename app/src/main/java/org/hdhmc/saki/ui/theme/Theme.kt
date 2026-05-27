@@ -2,10 +2,14 @@ package org.hdhmc.saki.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.expressiveLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -58,6 +62,7 @@ private val LightColorScheme = lightColorScheme(
     outlineVariant = Color(0xFFBCCAD1),
 )
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SakiAndroidTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -66,22 +71,33 @@ fun SakiAndroidTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when (themeStyle) {
-        ThemeStyle.SAKI -> when {
-            dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                val context = LocalContext.current
-                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-            }
+    when (themeStyle) {
+        ThemeStyle.SAKI -> {
+            MaterialTheme(
+                colorScheme = sakiColorScheme(darkTheme = darkTheme, dynamicColor = dynamicColor),
+                typography = Typography,
+                shapes = SakiShapes,
+                content = content,
+            )
+        }
 
-            darkTheme -> DarkColorScheme
-            else -> LightColorScheme
+        ThemeStyle.MATERIAL_EXPRESSIVE -> {
+            MaterialExpressiveTheme(
+                colorScheme = if (darkTheme) darkColorScheme() else expressiveLightColorScheme(),
+                motionScheme = MotionScheme.expressive(),
+                content = content,
+            )
         }
     }
+}
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        shapes = SakiShapes,
-        content = content
-    )
+@Composable
+private fun sakiColorScheme(darkTheme: Boolean, dynamicColor: Boolean) = when {
+    dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        val context = LocalContext.current
+        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    }
+
+    darkTheme -> DarkColorScheme
+    else -> LightColorScheme
 }
