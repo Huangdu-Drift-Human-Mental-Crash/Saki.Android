@@ -134,6 +134,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.palette.graphics.Palette
@@ -148,6 +149,7 @@ import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.RepeatModeSetting
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SongLyrics
+import org.hdhmc.saki.ui.theme.SakiTheme
 import java.io.File
 import coil3.imageLoader
 import coil3.compose.rememberAsyncImagePainter
@@ -179,6 +181,7 @@ fun NowPlayingCapsule(
     onSkipToPrevious: () -> Unit,
     onSkipToNext: () -> Unit,
 ) {
+    val visuals = SakiTheme.visuals
     val elevation by animateDpAsState(
         targetValue = if (isPlaying) 12.dp else 6.dp,
         animationSpec = spring(
@@ -247,7 +250,9 @@ fun NowPlayingCapsule(
             },
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            containerColor = MaterialTheme.colorScheme.surface.copy(
+                alpha = visuals.nowPlayingCapsuleContainerAlpha,
+            ),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = elevation),
     ) {
@@ -359,6 +364,7 @@ fun NowPlayingOverlay(
     useArtworkMotion: Boolean = true,
     artworkPrewarmRadius: Int = ARTWORK_PREWARM_RADIUS_PAGES,
 ) {
+    val visuals = SakiTheme.visuals
     val serversById = remember(servers) { servers.associateBy { it.id } }
     var showDetails by remember(track.songId) { mutableStateOf(false) }
     var showMenu by remember(track.songId) { mutableStateOf(false) }
@@ -495,13 +501,16 @@ fun NowPlayingOverlay(
         )
         val dominant = artworkColors.dominant
         val accent = artworkColors.accent
-        val background = remember(dominant, accent, colorScheme, useGradientBackground) {
+        val background = remember(dominant, accent, colorScheme, visuals, useGradientBackground) {
             if (useGradientBackground) {
                 Brush.verticalGradient(
                     listOf(
-                        dominant.copy(alpha = 0.50f).compositeOver(colorScheme.background),
-                        accent.copy(alpha = 0.35f).compositeOver(colorScheme.surface),
-                        dominant.copy(alpha = 0.12f).compositeOver(colorScheme.background),
+                        dominant.copy(alpha = visuals.nowPlayingBackgroundDominantOverlayAlpha)
+                            .compositeOver(colorScheme.background),
+                        accent.copy(alpha = visuals.nowPlayingBackgroundAccentOverlayAlpha)
+                            .compositeOver(colorScheme.surface),
+                        dominant.copy(alpha = visuals.nowPlayingBackgroundTailOverlayAlpha)
+                            .compositeOver(colorScheme.background),
                     ),
                 )
             } else {
@@ -678,7 +687,9 @@ fun NowPlayingOverlay(
                         )
                         Surface(
                             shape = MaterialTheme.shapes.large,
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.88f),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(
+                                alpha = visuals.nowPlayingStatusContainerAlpha,
+                            ),
                         ) {
                             Text(
                                 text = when {
@@ -726,7 +737,7 @@ fun NowPlayingOverlay(
                                     .aspectRatio(1f)
                                     .fillMaxHeight()
                                     .clip(RoundedCornerShape(34.dp))
-                                    .background(Color.Black.copy(alpha = 0.65f)),
+                                    .background(Color.Black.copy(alpha = visuals.nowPlayingLyricsOverlayAlpha)),
                             ) {
                                 if (lyrics != null && lyrics.lines.isNotEmpty()) {
                                     SyncedLyricsView(
@@ -811,6 +822,11 @@ fun NowPlayingOverlay(
                                     contentDescription = stringResource(R.string.player_more),
                                     onClick = { showMenu = true },
                                     compact = true,
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                        alpha = visuals.nowPlayingMoreControlContainerAlpha,
+                                    ),
+                                    cornerRadius = visuals.nowPlayingSecondaryControlCornerRadius,
+                                    iconSize = visuals.nowPlayingSecondaryControlIconSize,
                                 )
                                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                     DropdownMenuItem(
@@ -955,14 +971,14 @@ fun NowPlayingOverlay(
                                     width = if (compactControls) 132.dp else 148.dp,
                                     height = if (compactControls) 64.dp else 72.dp,
                                 ),
-                                shape = MaterialTheme.shapes.medium,
+                                shape = RoundedCornerShape(visuals.nowPlayingPrimaryControlCornerRadius),
                                 color = playButtonColor,
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clickable(onClick = onPlayPause)
-                                        .padding(horizontal = 22.dp),
+                                        .padding(horizontal = visuals.nowPlayingPrimaryControlHorizontalPadding),
                                     horizontalArrangement = Arrangement.Center,
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
@@ -970,6 +986,7 @@ fun NowPlayingOverlay(
                                         imageVector = if (playbackState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                         contentDescription = null,
                                         tint = onPlayButtonColor,
+                                        modifier = Modifier.size(visuals.nowPlayingPrimaryControlIconSize),
                                     )
                                     Text(
                                         text = if (playbackState.isPlaying) {
@@ -977,7 +994,7 @@ fun NowPlayingOverlay(
                                         } else {
                                             stringResource(R.string.player_play)
                                         },
-                                        modifier = Modifier.padding(start = 10.dp),
+                                        modifier = Modifier.padding(start = visuals.nowPlayingPrimaryControlLabelSpacing),
                                         style = MaterialTheme.typography.titleMedium,
                                         color = onPlayButtonColor,
                                     )
@@ -1188,7 +1205,9 @@ fun NowPlayingOverlay(
                                 shape = MaterialTheme.shapes.medium,
                                 color = when {
                                     isActive -> MaterialTheme.colorScheme.primaryContainer
-                                    !result.reachable -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    !result.reachable -> MaterialTheme.colorScheme.surfaceVariant.copy(
+                                        alpha = visuals.nowPlayingDisabledEndpointContainerAlpha,
+                                    )
                                     else -> MaterialTheme.colorScheme.surfaceVariant
                                 },
                             ) {
@@ -1267,11 +1286,27 @@ private fun PlayerActionButton(
     onClick: () -> Unit,
     compact: Boolean,
 ) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.size(if (compact) 48.dp else 56.dp),
-    ) {
-        Icon(imageVector = icon, contentDescription = label)
+    val visuals = SakiTheme.visuals
+    if (visuals.nowPlayingSecondaryControlContainerAlpha <= 0f) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(if (compact) 48.dp else 56.dp),
+        ) {
+            Icon(imageVector = icon, contentDescription = label)
+        }
+    } else {
+        PressScaleIconButton(
+            icon = icon,
+            contentDescription = label,
+            onClick = onClick,
+            compact = compact,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                alpha = visuals.nowPlayingSecondaryControlContainerAlpha,
+            ),
+            cornerRadius = visuals.nowPlayingSecondaryControlCornerRadius,
+            iconSize = visuals.nowPlayingSecondaryControlIconSize,
+        )
     }
 }
 
@@ -1283,6 +1318,9 @@ private fun ToggleIconButton(
     onClick: () -> Unit,
     compact: Boolean = false,
 ) {
+    val visuals = SakiTheme.visuals
+    val hasSelectedContainer = visuals.nowPlayingToggleSelectedContainerAlpha > 0f
+    val hasInactiveContainer = visuals.nowPlayingToggleContainerAlpha > 0f
     val onText = stringResource(R.string.common_on)
     val offText = stringResource(R.string.common_off)
     PressScaleIconButton(
@@ -1290,7 +1328,30 @@ private fun ToggleIconButton(
         contentDescription = contentDescription,
         onClick = onClick,
         compact = compact,
-        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = if (active) 1f else 0.38f),
+        tint = if (active) {
+            (if (hasSelectedContainer) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onBackground
+            }).copy(alpha = visuals.nowPlayingToggleSelectedIconAlpha)
+        } else {
+            (if (hasInactiveContainer) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onBackground
+            }).copy(alpha = visuals.nowPlayingToggleIconAlpha)
+        },
+        containerColor = when {
+            active -> MaterialTheme.colorScheme.secondaryContainer.copy(
+                alpha = visuals.nowPlayingToggleSelectedContainerAlpha,
+            )
+            hasInactiveContainer -> MaterialTheme.colorScheme.surfaceVariant.copy(
+                alpha = visuals.nowPlayingToggleContainerAlpha,
+            )
+            else -> Color.Transparent
+        },
+        cornerRadius = visuals.nowPlayingSecondaryControlCornerRadius,
+        iconSize = visuals.nowPlayingSecondaryControlIconSize,
         role = Role.Switch,
         semanticStateDescription = "$contentDescription: ${if (active) onText else offText}",
     )
@@ -1303,10 +1364,14 @@ private fun PressScaleIconButton(
     onClick: () -> Unit,
     compact: Boolean = false,
     tint: Color? = null,
+    containerColor: Color = Color.Transparent,
+    cornerRadius: Dp = 28.dp,
+    iconSize: Dp = 24.dp,
     role: Role = Role.Button,
     semanticStateDescription: String? = null,
 ) {
     val iconTint = tint ?: MaterialTheme.colorScheme.onBackground
+    val shape = RoundedCornerShape(cornerRadius)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -1325,6 +1390,8 @@ private fun PressScaleIconButton(
                 scaleX = pressScale
                 scaleY = pressScale
             }
+            .clip(shape)
+            .background(containerColor)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -1346,7 +1413,7 @@ private fun PressScaleIconButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = iconTint,
-            modifier = if (compact) Modifier.size(24.dp) else Modifier,
+            modifier = Modifier.size(iconSize),
         )
     }
 }
@@ -1527,14 +1594,17 @@ private fun QueueRow(
     onClick: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val visuals = SakiTheme.visuals
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         color = if (isCurrent) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.84f)
+            MaterialTheme.colorScheme.primaryContainer.copy(
+                alpha = visuals.nowPlayingQueueSelectedContainerAlpha,
+            )
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = visuals.nowPlayingQueueContainerAlpha)
         },
     ) {
         Row(
@@ -2089,6 +2159,7 @@ private fun NowPlayingLayeredArtwork(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val visuals = SakiTheme.visuals
     val imageRequest = remember(model, context) {
         ImageRequest.Builder(context)
             .data(model)
@@ -2109,7 +2180,11 @@ private fun NowPlayingLayeredArtwork(
     }
 
     Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
+        modifier = modifier.background(
+            MaterialTheme.colorScheme.surfaceVariant.copy(
+                alpha = visuals.nowPlayingArtworkBackdropContainerAlpha,
+            ),
+        ),
     ) {
         if (backdropRenderEffect != null) {
             Image(
@@ -2127,7 +2202,7 @@ private fun NowPlayingLayeredArtwork(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = NOW_PLAYING_ARTWORK_BACKDROP_OVERLAY_ALPHA)),
+                    .background(Color.Black.copy(alpha = visuals.nowPlayingArtworkBackdropOverlayAlpha)),
             )
         }
         Image(
@@ -2151,7 +2226,6 @@ private const val METADATA_LINK_SCROLL_MIN_DURATION_MS = 350
 private const val METADATA_LINK_SCROLL_SPEED_DP_PER_SECOND = 32f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_SCALE = 1.1f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
-private const val NOW_PLAYING_ARTWORK_BACKDROP_OVERLAY_ALPHA = 0.25f
 private const val PROGRAMMATIC_ARTWORK_SPRING_BASE_STIFFNESS = 140f
 private const val PROGRAMMATIC_ARTWORK_SPRING_DISTANCE_STIFFNESS = 60f
 private const val PROGRAMMATIC_ARTWORK_MAX_INITIAL_VELOCITY_PAGES = 8f
