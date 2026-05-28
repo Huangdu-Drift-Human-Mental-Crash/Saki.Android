@@ -37,8 +37,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -68,6 +70,7 @@ import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSubtleCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
+import org.hdhmc.saki.ui.theme.SakiTheme
 
 @Composable
 fun ArtistDetailScreen(
@@ -483,6 +486,7 @@ fun SongRow(
     onClick: () -> Unit,
     onMore: () -> Unit,
 ) {
+    val visuals = SakiTheme.visuals
     val isUnavailableOffline = isOfflineDegraded && !isOfflinePlayable
     Row(
         modifier = Modifier
@@ -537,7 +541,11 @@ fun SongRow(
             }
         }
         IconButton(onClick = onMore) {
-            Icon(Icons.Rounded.MoreVert, contentDescription = stringResource(R.string.library_more_actions))
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.library_more_actions),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = visuals.browseRowActionIconAlpha),
+            )
         }
     }
 }
@@ -737,11 +745,16 @@ fun SectionTitle(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun LoadingStateCard(label: String) {
     Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor())) {
         Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            if (SakiTheme.visuals.useExpressiveLoadingIndicator) {
+                LoadingIndicator(modifier = Modifier.size(28.dp))
+            } else {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
             Text(text = label, modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
     }
@@ -783,6 +796,7 @@ private fun RowCard(
     artworkRequestSizePx: Int? = null,
     onClick: () -> Unit,
 ) {
+    val visuals = SakiTheme.visuals
     Card(
         onClick = onClick,
         modifier = Modifier
@@ -811,7 +825,11 @@ private fun RowCard(
                     Text(text = subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = visuals.browseRowNavigationIconAlpha),
+            )
         }
     }
 }

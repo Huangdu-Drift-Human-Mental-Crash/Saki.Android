@@ -8,12 +8,15 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -56,6 +60,7 @@ import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,6 +68,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -110,6 +116,8 @@ import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.presentation.SakiAppUiState
 import org.hdhmc.saki.presentation.asString
+import org.hdhmc.saki.ui.theme.SakiChromeIconButton
+import org.hdhmc.saki.ui.theme.SakiTheme
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filter
@@ -445,7 +453,7 @@ private fun OfflineModeBanner(modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun BrowsePager(
     modifier: Modifier,
@@ -550,6 +558,23 @@ private fun BrowsePager(
                 onRefresh = onRefreshCurrentTab,
                 modifier = Modifier.weight(1f),
                 state = pullState,
+                indicator = {
+                    if (SakiTheme.visuals.useExpressiveLoadingIndicator) {
+                        PullToRefreshDefaults.LoadingIndicator(
+                            state = pullState,
+                            isRefreshing = isRefreshing,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .size(SakiTheme.visuals.pullRefreshLoadingIndicatorSize),
+                        )
+                    } else {
+                        PullToRefreshDefaults.Indicator(
+                            state = pullState,
+                            isRefreshing = isRefreshing,
+                            modifier = Modifier.align(Alignment.TopCenter),
+                        )
+                    }
+                },
             ) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     LazyRow(
@@ -559,16 +584,10 @@ private fun BrowsePager(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(sections) { section ->
-                            FilterChip(
+                            BrowseSectionChip(
+                                section = section,
                                 selected = uiState.selectedBrowseSection == section,
                                 onClick = { onSelectBrowseSection(section) },
-                                label = {
-                                    Text(
-                                        text = section.localizedLabel(),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        maxLines = 1,
-                                    )
-                                },
                             )
                         }
                     }
@@ -691,12 +710,82 @@ private fun BrowseHeroCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(modifier = Modifier.width(8.dp))
-            IconButton(onClick = { onSearchActiveChange(true) }) {
-                Icon(Icons.Rounded.Search, contentDescription = stringResource(R.string.browse_search_server))
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Rounded.Settings, contentDescription = stringResource(R.string.browse_settings))
-            }
+            SakiChromeIconButton(
+                onClick = { onSearchActiveChange(true) },
+                icon = Icons.Rounded.Search,
+                contentDescription = stringResource(R.string.browse_search_server),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            SakiChromeIconButton(
+                onClick = onOpenSettings,
+                icon = Icons.Rounded.Settings,
+                contentDescription = stringResource(R.string.browse_settings),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BrowseSectionChip(
+    section: BrowseSection,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val visuals = SakiTheme.visuals
+    if (visuals.browseSectionChipSelectedContainerAlpha <= 0f) {
+        FilterChip(
+            selected = selected,
+            onClick = onClick,
+            label = {
+                Text(
+                    text = section.localizedLabel(),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                )
+            },
+        )
+    } else {
+        val chipShape = RoundedCornerShape(visuals.browseSectionChipCornerRadius)
+        Surface(
+            modifier = Modifier
+                .clip(chipShape)
+                .selectable(
+                    selected = selected,
+                    onClick = onClick,
+                    role = Role.Tab,
+                ),
+            shape = chipShape,
+            color = if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer.copy(
+                    alpha = visuals.browseSectionChipSelectedContainerAlpha,
+                )
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(
+                    alpha = visuals.browseSectionChipContainerAlpha,
+                )
+            },
+            contentColor = if (selected) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            border = if (selected || visuals.browseSectionChipOutlineAlpha <= 0f) {
+                null
+            } else {
+                BorderStroke(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(
+                        alpha = visuals.browseSectionChipOutlineAlpha,
+                    ),
+                )
+            },
+        ) {
+            Text(
+                text = section.localizedLabel(),
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+            )
         }
     }
 }
