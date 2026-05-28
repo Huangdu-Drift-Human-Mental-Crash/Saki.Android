@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,9 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -73,6 +72,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.presentation.asString
+import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
+import org.hdhmc.saki.ui.theme.SakiTheme
+import org.hdhmc.saki.ui.theme.sakiCardContainerColor
+import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
 import org.hdhmc.saki.ui.theme.SakiAndroidTheme
 import kotlinx.coroutines.flow.collectLatest
 
@@ -146,16 +149,7 @@ fun ServerConfigScreen(
     onSaveServer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val colorScheme = MaterialTheme.colorScheme
-    val backgroundBrush = remember(colorScheme) {
-        Brush.verticalGradient(
-            colors = listOf(
-                colorScheme.primary.copy(alpha = 0.14f).compositeOver(colorScheme.background),
-                colorScheme.secondary.copy(alpha = 0.10f).compositeOver(colorScheme.surface),
-                colorScheme.background,
-            ),
-        )
-    }
+    val backgroundBrush = rememberBrowseBackgroundBrush()
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -163,7 +157,7 @@ fun ServerConfigScreen(
         contentWindowInsets = WindowInsets.navigationBars,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         floatingActionButton = {
-            if (uiState.servers.isNotEmpty()) {
+            if (uiState.servers.isNotEmpty() && uiState.editor == null) {
                 ExtendedFloatingActionButton(
                     onClick = onAddServer,
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -286,6 +280,38 @@ fun ServerConfigScreen(
 }
 
 @Composable
+private fun serverCardContainerColor(defaultAlpha: Float): Color =
+    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        sakiCardContainerColor()
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = defaultAlpha)
+    }
+
+@Composable
+private fun serverSheetContainerColor(): Color =
+    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+
+@Composable
+private fun serverTonalContainerColor(defaultAlpha: Float): Color =
+    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        sakiTonalContainerColor()
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = defaultAlpha)
+    }
+
+@Composable
+private fun serverBadgeContainerColor(): Color =
+    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        sakiTonalContainerColor()
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+
+@Composable
 private fun HeroSection(
     serverCount: Int,
     modifier: Modifier = Modifier,
@@ -294,7 +320,7 @@ private fun HeroSection(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+            containerColor = serverCardContainerColor(defaultAlpha = 0.88f),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -342,7 +368,7 @@ private fun EmptyStateCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            containerColor = serverCardContainerColor(defaultAlpha = 0.92f),
         ),
     ) {
         Column(
@@ -375,7 +401,7 @@ private fun ServerCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+            containerColor = serverCardContainerColor(defaultAlpha = 0.94f),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -433,9 +459,9 @@ private fun ServerCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            Row(
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(onClick = onEditServer, shape = MaterialTheme.shapes.small) {
                     Text(stringResource(R.string.server_config_manage))
@@ -454,7 +480,7 @@ private fun EndpointBadge(
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = serverBadgeContainerColor(),
     ) {
         Text(
             text = buildString {
@@ -491,168 +517,204 @@ private fun ServerEditorSheet(
         modifier = modifier,
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = serverSheetContainerColor(),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+        BoxWithConstraints {
+            val compactEditor = maxWidth < 560.dp
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = if (editor.serverId == 0L) {
+                                stringResource(R.string.server_config_new_server)
+                            } else {
+                                stringResource(R.string.server_config_edit_server)
+                            },
+                            style = MaterialTheme.typography.headlineMedium,
+                        )
+                        Text(
+                            text = stringResource(R.string.server_config_editor_body),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = onDismissEditor, shape = MaterialTheme.shapes.small) {
+                        Text(stringResource(R.string.server_config_close))
+                    }
+                }
+
+                editor.formError?.let { error ->
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.errorContainer,
+                    ) {
+                        Text(
+                            text = error.asString(),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = editor.name,
+                    onValueChange = onNameChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.server_config_profile_name)) },
+                    placeholder = { Text(stringResource(R.string.server_config_profile_name_placeholder)) },
+                    singleLine = true,
+                )
+
+                ResponsiveFieldPair(
+                    compact = compactEditor,
+                    first = {
+                        OutlinedTextField(
+                            value = editor.username,
+                            onValueChange = onUsernameChanged,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.server_config_username)) },
+                            singleLine = true,
+                        )
+                    },
+                    second = {
+                        OutlinedTextField(
+                            value = editor.password,
+                            onValueChange = onPasswordChanged,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.server_config_password)) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                        )
+                    },
+                )
+
+                ResponsiveFieldPair(
+                    compact = compactEditor,
+                    first = {
+                        OutlinedTextField(
+                            value = editor.clientName,
+                            onValueChange = onClientNameChanged,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.server_config_client_name)) },
+                            singleLine = true,
+                        )
+                    },
+                    second = {
+                        OutlinedTextField(
+                            value = editor.apiVersion,
+                            onValueChange = onApiVersionChanged,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.server_config_api_version_label)) },
+                            singleLine = true,
+                        )
+                    },
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = if (editor.serverId == 0L) {
-                            stringResource(R.string.server_config_new_server)
-                        } else {
-                            stringResource(R.string.server_config_edit_server)
-                        },
+                        text = stringResource(R.string.server_config_endpoints_title),
                         style = MaterialTheme.typography.headlineMedium,
                     )
                     Text(
-                        text = stringResource(R.string.server_config_editor_body),
+                        text = stringResource(R.string.server_config_endpoints_body),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = onDismissEditor, shape = MaterialTheme.shapes.small) {
-                    Text(stringResource(R.string.server_config_close))
-                }
-            }
 
-            editor.formError?.let { error ->
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.errorContainer,
-                ) {
-                    Text(
-                        text = error.asString(),
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                editor.endpoints.forEachIndexed { index, endpoint ->
+                    EndpointEditorCard(
+                        index = index,
+                        endpoint = endpoint,
+                        canRemove = editor.endpoints.size > 1,
+                        onLabelChanged = { onEndpointLabelChanged(endpoint.editorId, it) },
+                        onUrlChanged = { onEndpointUrlChanged(endpoint.editorId, it) },
+                        onRemove = { onRemoveEndpoint(endpoint.editorId) },
+                        onTest = { onTestEndpoint(endpoint.editorId) },
                     )
                 }
-            }
 
-            OutlinedTextField(
-                value = editor.name,
-                onValueChange = onNameChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.server_config_profile_name)) },
-                placeholder = { Text(stringResource(R.string.server_config_profile_name_placeholder)) },
-                singleLine = true,
-            )
+                TextButton(onClick = onAddEndpoint, shape = MaterialTheme.shapes.small) {
+                    Text(stringResource(R.string.server_config_add_endpoint))
+                }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                OutlinedTextField(
-                    value = editor.username,
-                    onValueChange = onUsernameChanged,
-                    modifier = Modifier.weight(1f),
-                    label = { Text(stringResource(R.string.server_config_username)) },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = editor.password,
-                    onValueChange = onPasswordChanged,
-                    modifier = Modifier.weight(1f),
-                    label = { Text(stringResource(R.string.server_config_password)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                )
-            }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                OutlinedTextField(
-                    value = editor.clientName,
-                    onValueChange = onClientNameChanged,
-                    modifier = Modifier.weight(1f),
-                    label = { Text(stringResource(R.string.server_config_client_name)) },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = editor.apiVersion,
-                    onValueChange = onApiVersionChanged,
-                    modifier = Modifier.weight(1f),
-                    label = { Text(stringResource(R.string.server_config_api_version_label)) },
-                    singleLine = true,
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = stringResource(R.string.server_config_endpoints_title),
-                    style = MaterialTheme.typography.headlineMedium,
-                )
-                Text(
-                    text = stringResource(R.string.server_config_endpoints_body),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            editor.endpoints.forEachIndexed { index, endpoint ->
-                EndpointEditorCard(
-                    index = index,
-                    endpoint = endpoint,
-                    canRemove = editor.endpoints.size > 1,
-                    onLabelChanged = { onEndpointLabelChanged(endpoint.editorId, it) },
-                    onUrlChanged = { onEndpointUrlChanged(endpoint.editorId, it) },
-                    onRemove = { onRemoveEndpoint(endpoint.editorId) },
-                    onTest = { onTestEndpoint(endpoint.editorId) },
-                )
-            }
-
-            TextButton(onClick = onAddEndpoint, shape = MaterialTheme.shapes.small) {
-                Text(stringResource(R.string.server_config_add_endpoint))
-            }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Button(
-                    onClick = onSaveServer,
-                    enabled = !isSaving,
-                    shape = MaterialTheme.shapes.small,
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
+                    Button(
+                        onClick = onSaveServer,
+                        enabled = !isSaving,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            if (editor.serverId == 0L) {
+                                stringResource(R.string.server_config_save_server)
+                            } else {
+                                stringResource(R.string.server_config_save_changes)
+                            },
                         )
-                        Spacer(Modifier.width(8.dp))
                     }
-                    Text(
-                        if (editor.serverId == 0L) {
-                            stringResource(R.string.server_config_save_server)
-                        } else {
-                            stringResource(R.string.server_config_save_changes)
-                        },
-                    )
+                    TextButton(
+                        onClick = onDismissEditor,
+                        enabled = !isSaving,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(stringResource(R.string.server_config_cancel))
+                    }
                 }
-                TextButton(
-                    onClick = onDismissEditor,
-                    enabled = !isSaving,
-                    shape = MaterialTheme.shapes.small,
-                ) {
-                    Text(stringResource(R.string.server_config_cancel))
-                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResponsiveFieldPair(
+    compact: Boolean,
+    first: @Composable () -> Unit,
+    second: @Composable () -> Unit,
+) {
+    if (compact) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            first()
+            second()
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                first()
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                second()
             }
         }
     }
@@ -672,7 +734,7 @@ private fun EndpointEditorCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            containerColor = serverTonalContainerColor(defaultAlpha = 0.55f),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -714,9 +776,9 @@ private fun EndpointEditorCard(
                 testState = endpoint.testState,
             )
 
-            Row(
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
                     onClick = onTest,
