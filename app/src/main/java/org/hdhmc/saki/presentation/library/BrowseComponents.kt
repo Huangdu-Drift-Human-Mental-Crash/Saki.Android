@@ -5,9 +5,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,7 +29,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
@@ -38,10 +51,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,8 +66,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -162,64 +182,451 @@ fun AlbumDetailScreen(
     bottomOverlayPadding: Dp = 0.dp,
     isOfflineDegraded: Boolean = false,
     onOfflineSongUnavailable: () -> Unit = {},
+    currentPlaybackSongId: String? = null,
+    isPlaying: Boolean = false,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    onBack: () -> Unit = {},
 ) {
     val songCount = album.songCount
-    val subtitle = listOfNotNull(
+    val artistYearSongCount = listOfNotNull(
         album.artistDisplayLabel(),
         album.year?.toString(),
         if (songCount != null) songCountText(songCount) else null,
-    ).joinToString(" • ")
-    LibraryDetailScaffold(
-        title = album.name,
-        subtitle = subtitle,
-        artwork = resolveArtworkModel(server, album.coverArtId, null),
-        bottomOverlayPadding = bottomOverlayPadding,
+    )
+    val subtitle = artistYearSongCount.joinToString(" • ")
+    val playAlbum: () -> Unit = {
+        if (album.songs.isNotEmpty()) {
+            if (isOfflineDegraded) {
+                val startIndex = album.songs.firstOfflinePlayableIndexOrNull(
+                    cachedSongsBySongId,
+                    streamCachedSongIds,
+                )
+                if (startIndex != null) {
+                    onPlaySongs(album.songs, startIndex)
+                } else {
+                    onOfflineSongUnavailable()
+                }
+            } else {
+                onPlaySongs(album.songs, 0)
+            }
+        }
+    }
+
+    if (!SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        LibraryDetailScaffold(
+            title = album.name,
+            subtitle = subtitle,
+            artwork = resolveArtworkModel(server, album.coverArtId, null),
+            bottomOverlayPadding = bottomOverlayPadding,
+        ) {
+            when {
+                isLoading && album.songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_album)) }
+                error != null && album.songs.isEmpty() -> item { ErrorStateCard(error) }
+                else -> {
+                    item {
+                        SectionTitle(
+                            title = stringResource(R.string.library_track_list),
+                            subtitle = album.genre ?: stringResource(R.string.library_album_details),
+                            actionLabel = stringResource(R.string.library_play_album),
+                            onAction = playAlbum,
+                        )
+                    }
+                    itemsIndexed(album.songs, key = { _, s -> s.id }) { index, song ->
+                        val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
+                        SongRow(
+                            song = song,
+                            server = server,
+                            cachedSong = cachedSongsBySongId[song.id],
+                            isStreamCached = song.id in streamCachedSongIds,
+                            isDownloading = song.id in downloadingSongIds,
+                            isOfflineDegraded = isOfflineDegraded,
+                            isOfflinePlayable = isOfflinePlayable,
+                            onClick = { onPlaySongs(album.songs, index) },
+                            onMore = { onShowActions(song) },
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    val artworkModel = resolveArtworkModel(server, album.coverArtId, null)
+    val albumAccent = animateColorAsState(
+        rememberArtworkAccentColor(artworkModel, MaterialTheme.colorScheme.primary),
+        label = "albumAccent",
+    ).value
+    val trackAccent = albumAccent.ensureContrast(
+        MaterialTheme.colorScheme.surfaceContainerHighest,
+        MaterialTheme.colorScheme.primary,
+    )
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = bottomContentPadding(bottomOverlayPadding),
     ) {
+        item {
+            AlbumDetailHeroCard(
+                title = album.name,
+                artwork = artworkModel,
+                accentColor = albumAccent,
+                metaItems = artistYearSongCount,
+                canPlay = album.songs.isNotEmpty(),
+                onPlay = playAlbum,
+                onBack = onBack,
+            )
+        }
+
         when {
             isLoading && album.songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_album)) }
             error != null && album.songs.isEmpty() -> item { ErrorStateCard(error) }
             else -> {
                 item {
-                    SectionTitle(
-                        title = stringResource(R.string.library_track_list),
-                        subtitle = album.genre ?: stringResource(R.string.library_album_details),
-                        actionLabel = stringResource(R.string.library_play_album),
-                        onAction = {
-                            if (album.songs.isNotEmpty()) {
-                                if (isOfflineDegraded) {
-                                    val startIndex = album.songs.firstOfflinePlayableIndexOrNull(
-                                        cachedSongsBySongId,
-                                        streamCachedSongIds,
-                                    )
-                                    if (startIndex != null) {
-                                        onPlaySongs(album.songs, startIndex)
-                                    } else {
-                                        onOfflineSongUnavailable()
-                                    }
-                                } else {
-                                    onPlaySongs(album.songs, 0)
-                                }
-                            }
-                        },
-                    )
+                        AlbumTrackListCard(
+                            songs = album.songs,
+                            cachedSongsBySongId = cachedSongsBySongId,
+                            streamCachedSongIds = streamCachedSongIds,
+                            downloadingSongIds = downloadingSongIds,
+                            isOfflineDegraded = isOfflineDegraded,
+                            currentPlaybackSongId = currentPlaybackSongId,
+                            isPlaying = isPlaying,
+                            accentColor = trackAccent,
+                            albumArtistLabel = album.artistDisplayLabel(),
+                            onPlaySongs = onPlaySongs,
+                            onShowActions = onShowActions,
+                        )
                 }
-                itemsIndexed(album.songs, key = { _, s -> s.id }) { index, song ->
-                    val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-                    SongRow(
-                        song = song,
-                        server = server,
-                        cachedSong = cachedSongsBySongId[song.id],
-                        isStreamCached = song.id in streamCachedSongIds,
-                        isDownloading = song.id in downloadingSongIds,
-                        isOfflineDegraded = isOfflineDegraded,
-                        isOfflinePlayable = isOfflinePlayable,
-                        onClick = { onPlaySongs(album.songs, index) },
-                        onMore = { onShowActions(song) },
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlbumDetailHeroCard(
+    title: String,
+    artwork: Any?,
+    metaItems: List<String>,
+    canPlay: Boolean,
+    onPlay: () -> Unit,
+    onBack: () -> Unit,
+    accentColor: Color,
+) {
+    val playContainer = accentColor.ensureContrast(Color.Black, MaterialTheme.colorScheme.primary)
+    val onPlayAccent = if (playContainer.contrastRatio(Color.White) >= playContainer.contrastRatio(Color.Black)) {
+        Color.White
+    } else {
+        Color.Black
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 18.dp)
+            .clip(MaterialTheme.shapes.extraLarge),
+    ) {
+        AdaptiveBlurArtwork(
+            model = artwork,
+            contentDescription = title,
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadiusDp = 28,
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.4f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.72f),
+                        ),
+                    ),
+                ),
+        )
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val metaLine = metaItems.joinToString(" • ")
+                if (metaLine.isNotBlank()) {
+                    Text(
+                        text = metaLine,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .basicMarquee(iterations = Int.MAX_VALUE, velocity = 20.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }
+            FilledIconButton(
+                onClick = onPlay,
+                enabled = canPlay,
+                modifier = Modifier.size(52.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = playContainer,
+                    contentColor = onPlayAccent,
+                ),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = stringResource(R.string.library_play_album),
+                )
+            }
+        }
+        Surface(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(10.dp)
+                .minimumInteractiveComponentSize()
+                .size(40.dp),
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.32f),
+            contentColor = Color.White,
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = stringResource(R.string.library_back),
+                modifier = Modifier.padding(9.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AlbumTrackListCard(
+    songs: List<Song>,
+    cachedSongsBySongId: Map<String, CachedSong>,
+    streamCachedSongIds: Set<String>,
+    downloadingSongIds: Set<String>,
+    isOfflineDegraded: Boolean,
+    currentPlaybackSongId: String?,
+    isPlaying: Boolean,
+    accentColor: Color,
+    albumArtistLabel: String?,
+    onPlaySongs: (List<Song>, Int) -> Unit,
+    onShowActions: (Song) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val useTrackNumbers = songs.all { (it.track ?: 0) > 0 }
+            songs.forEachIndexed { index, song ->
+                val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
+                AlbumTrackRow(
+                    song = song,
+                    index = index,
+                    useTrackNumbers = useTrackNumbers,
+                    albumArtistLabel = albumArtistLabel,
+                    cachedSong = cachedSongsBySongId[song.id],
+                    isStreamCached = song.id in streamCachedSongIds,
+                    isDownloading = song.id in downloadingSongIds,
+                    isOfflineDegraded = isOfflineDegraded,
+                    isOfflinePlayable = isOfflinePlayable,
+                    isCurrent = currentPlaybackSongId == song.id,
+                    isPlaying = isPlaying,
+                    accentColor = accentColor,
+                    onClick = { onPlaySongs(songs, index) },
+                    onMore = { onShowActions(song) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlbumTrackRow(
+    song: Song,
+    index: Int,
+    useTrackNumbers: Boolean,
+    albumArtistLabel: String?,
+    cachedSong: CachedSong?,
+    isStreamCached: Boolean,
+    isDownloading: Boolean,
+    isOfflineDegraded: Boolean = false,
+    isOfflinePlayable: Boolean = true,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    accentColor: Color,
+    onClick: () -> Unit,
+    onMore: () -> Unit,
+) {
+    val visuals = SakiTheme.visuals
+    val isUnavailableOffline = isOfflineDegraded && !isOfflinePlayable
+    val trackLabel = (if (useTrackNumbers) song.track else index + 1).toString()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .alpha(if (isUnavailableOffline) 0.5f else 1f)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.width(42.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isCurrent) {
+                NowPlayingIndicator(isPlaying = isPlaying, color = accentColor)
+            } else {
+                Text(
+                    text = trackLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp),
+        ) {
+            Text(
+                text = song.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (isCurrent) accentColor else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val artistLine = song.artistLabel()?.takeIf { it != albumArtistLabel }
+            if (artistLine != null) {
+                Text(
+                    text = artistLine,
+                    modifier = Modifier.padding(top = 2.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        when {
+            cachedSong != null || isStreamCached -> Icon(
+                Icons.Rounded.DownloadDone,
+                contentDescription = stringResource(R.string.library_available_offline),
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .size(16.dp),
+                tint = accentColor,
+            )
+
+            isDownloading -> CircularProgressIndicator(
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .size(14.dp),
+                strokeWidth = 2.dp,
+            )
+
+            isUnavailableOffline -> Icon(
+                Icons.Rounded.ErrorOutline,
+                contentDescription = stringResource(R.string.library_unavailable_offline),
+                modifier = Modifier
+                    .padding(start = 8.dp)
+                    .size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        song.durationSeconds?.let { durationSeconds ->
+            Text(
+                text = formatDurationSeconds(durationSeconds),
+                modifier = Modifier.padding(start = 8.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+
+        IconButton(onClick = onMore) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.library_more_actions),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = visuals.browseRowActionIconAlpha),
+            )
+        }
+    }
+}
+
+private fun Color.contrastRatio(other: Color): Float {
+    val lighter = maxOf(luminance(), other.luminance())
+    val darker = minOf(luminance(), other.luminance())
+    return (lighter + 0.05f) / (darker + 0.05f)
+}
+
+private fun Color.ensureContrast(against: Color, fallback: Color, minRatio: Float = 3f): Color =
+    if (contrastRatio(against) >= minRatio) this else fallback
+
+@Composable
+private fun NowPlayingIndicator(
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.primary,
+) {
+    val transition = rememberInfiniteTransition(label = "nowPlayingEq")
+    val bar1 = transition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(520, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bar1",
+    )
+    val bar2 = transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.4f,
+        animationSpec = infiniteRepeatable(tween(440, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bar2",
+    )
+    val bar3 = transition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bar3",
+    )
+    val heights = if (isPlaying) {
+        listOf(bar1.value, bar2.value, bar3.value)
+    } else {
+        listOf(0.5f, 0.3f, 0.45f)
+    }
+    Row(
+        modifier = modifier.height(16.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        heights.forEach { fraction ->
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .fillMaxHeight(fraction)
+                    .clip(CircleShape)
+                    .background(color),
+            )
         }
     }
 }

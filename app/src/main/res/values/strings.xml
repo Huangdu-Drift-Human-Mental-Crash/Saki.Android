@@ -154,6 +154,7 @@
     <string name="library_unavailable_offline">Unavailable offline</string>
     <string name="library_unknown_artist_album">Unknown artist • Unknown album</string>
     <string name="library_more_actions">More actions</string>
+    <string name="library_back">Back</string>
     <string name="library_play_next">Play next</string>
     <string name="library_play_next_subtitle">Insert this after the current song</string>
     <string name="library_download">Download</string>
