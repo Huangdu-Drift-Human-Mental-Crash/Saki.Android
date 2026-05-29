@@ -147,6 +147,7 @@
     <string name="library_unavailable_offline">离线不可用</string>
     <string name="library_unknown_artist_album">未知艺术家 · 未知专辑</string>
     <string name="library_more_actions">更多操作</string>
+    <string name="library_back">返回</string>
     <string name="library_play_next">下一首播放</string>
     <string name="library_play_next_subtitle">插入到当前歌曲之后</string>
     <string name="library_download">下载</string>

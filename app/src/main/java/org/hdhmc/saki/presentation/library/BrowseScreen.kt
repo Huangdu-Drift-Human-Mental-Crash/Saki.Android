@@ -159,6 +159,8 @@ fun BrowseScreen(
 ) {
     val background = rememberBrowseBackgroundBrush()
     val currentServer = uiState.servers.firstOrNull { it.id == uiState.selectedServerId }
+    val currentPlaybackSongId = uiState.playbackState.currentItem?.songId
+        ?: uiState.playbackState.queue.getOrNull(uiState.playbackState.currentIndex)?.songId
     val cachedSongsBySongId = remember(uiState.cachedSongs, uiState.selectedServerId) {
         uiState.cachedSongs
             .asSequence()
@@ -249,8 +251,11 @@ fun BrowseScreen(
                         bottomOverlayPadding = bottomOverlayPadding,
                         isOfflineDegraded = isOfflineDegraded,
                         onOfflineSongUnavailable = onOfflineSongUnavailable,
+                        currentPlaybackSongId = currentPlaybackSongId,
+                        isPlaying = uiState.playbackState.isPlaying,
                         onPlaySongs = offlineAwarePlaySongs,
                         onShowActions = { actionSong = it },
+                        onBack = onCloseAlbum,
                     )
 
                     target.hasArtist && uiState.selectedArtist != null -> ArtistDetailScreen(
@@ -1504,10 +1509,10 @@ private fun AlbumFeedControls(
             contentPadding = PaddingValues(vertical = 10.dp),
         ) {
             items(feeds) { feed ->
-                FilterChip(
+                AlbumFeedChip(
+                    feed = feed,
                     selected = selectedFeed == feed,
                     onClick = { onSelectFeed(feed) },
-                    label = { Text(stringResource(feed.labelRes())) },
                     modifier = Modifier.padding(end = 8.dp),
                 )
             }
@@ -1520,6 +1525,68 @@ private fun AlbumFeedControls(
                     AlbumViewMode.LIST -> Icons.Rounded.ViewList
                 },
                 contentDescription = contentDescription,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AlbumFeedChip(
+    feed: AlbumListType,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val visuals = SakiTheme.visuals
+    val label = stringResource(feed.labelRes())
+    if (visuals.browseSectionChipSelectedContainerAlpha <= 0f) {
+        FilterChip(
+            selected = selected,
+            onClick = onClick,
+            label = { Text(label) },
+            modifier = modifier,
+        )
+    } else {
+        val chipShape = RoundedCornerShape(visuals.browseSectionChipCornerRadius)
+        Surface(
+            modifier = modifier
+                .clip(chipShape)
+                .selectable(
+                    selected = selected,
+                    onClick = onClick,
+                    role = Role.Tab,
+                ),
+            shape = chipShape,
+            color = if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer.copy(
+                    alpha = visuals.browseSectionChipSelectedContainerAlpha,
+                )
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(
+                    alpha = visuals.browseSectionChipContainerAlpha,
+                )
+            },
+            contentColor = if (selected) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            border = if (selected || visuals.browseSectionChipOutlineAlpha <= 0f) {
+                null
+            } else {
+                BorderStroke(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(
+                        alpha = visuals.browseSectionChipOutlineAlpha,
+                    ),
+                )
+            },
+        ) {
+            Text(
+                text = label,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
             )
         }
     }

@@ -333,6 +333,7 @@ fun NowPlayingCapsule(
                     },
                     onClick = onPlayPause,
                     enabled = track != null,
+                    primary = true,
                 )
                 MiniPlayerIconButton(
                     icon = Icons.Rounded.SkipNext,
@@ -351,24 +352,54 @@ private fun MiniPlayerIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     enabled: Boolean,
+    primary: Boolean = false,
 ) {
     val visuals = SakiTheme.visuals
-    if (visuals.miniPlayerControlContainerAlpha <= 0f) {
+    if (visuals.miniPlayerControlContainerAlpha <= 0f && (!primary || visuals.miniPlayerPrimaryControlContainerAlpha <= 0f)) {
         IconButton(onClick = onClick, enabled = enabled) {
             Icon(imageVector = icon, contentDescription = contentDescription)
         }
     } else {
+        val isPrimary = primary && visuals.miniPlayerPrimaryControlContainerAlpha > 0f
         PressScaleIconButton(
             icon = icon,
             contentDescription = contentDescription,
             onClick = onClick,
             compact = true,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(
-                alpha = visuals.miniPlayerControlContainerAlpha,
-            ),
-            cornerRadius = visuals.miniPlayerControlCornerRadius,
-            iconSize = visuals.miniPlayerControlIconSize,
+            tint = if (isPrimary) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            containerColor = if (isPrimary) {
+                MaterialTheme.colorScheme.primaryContainer.copy(
+                    alpha = visuals.miniPlayerPrimaryControlContainerAlpha,
+                )
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(
+                    alpha = visuals.miniPlayerControlContainerAlpha,
+                )
+            },
+            cornerRadius = if (isPrimary) {
+                visuals.miniPlayerPrimaryControlSize / 2f
+            } else {
+                visuals.miniPlayerControlCornerRadius
+            },
+            iconSize = if (isPrimary) {
+                visuals.miniPlayerPrimaryControlIconSize
+            } else {
+                visuals.miniPlayerControlIconSize
+            },
+            buttonSize = if (isPrimary) {
+                visuals.miniPlayerPrimaryControlSize
+            } else {
+                48.dp
+            },
+            containerSize = if (isPrimary) {
+                visuals.miniPlayerPrimaryControlSize
+            } else {
+                visuals.miniPlayerControlVisibleSize
+            },
             enabled = enabled,
         )
     }
@@ -1411,6 +1442,8 @@ private fun PressScaleIconButton(
     containerColor: Color = Color.Transparent,
     cornerRadius: Dp = 28.dp,
     iconSize: Dp = 24.dp,
+    buttonSize: Dp = if (compact) 48.dp else 56.dp,
+    containerSize: Dp = buttonSize,
     role: Role = Role.Button,
     semanticStateDescription: String? = null,
     enabled: Boolean = true,
@@ -1435,13 +1468,11 @@ private fun PressScaleIconButton(
 
     Box(
         modifier = Modifier
-            .size(if (compact) 48.dp else 56.dp)
+            .size(buttonSize)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .clip(shape)
-            .background(containerColor)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -1460,12 +1491,20 @@ private fun PressScaleIconButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = iconTint,
-            modifier = Modifier.size(iconSize),
-        )
+        Box(
+            modifier = Modifier
+                .size(containerSize)
+                .clip(shape)
+                .background(containerColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = iconTint,
+                modifier = Modifier.size(iconSize),
+            )
+        }
     }
 }
 
