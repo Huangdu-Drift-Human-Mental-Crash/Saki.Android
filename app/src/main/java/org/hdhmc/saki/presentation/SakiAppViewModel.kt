@@ -13,6 +13,7 @@ import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.AppPreferences
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
@@ -364,6 +365,12 @@ class SakiAppViewModel @Inject constructor(
     fun updateThemeSeed(seedKey: String) {
         viewModelScope.launch {
             appPreferencesRepository.updateThemeSeed(seedKey)
+        }
+    }
+
+    fun updatePaletteStyle(style: SakiPaletteStyle) {
+        viewModelScope.launch {
+            appPreferencesRepository.updatePaletteStyle(style)
         }
     }
 

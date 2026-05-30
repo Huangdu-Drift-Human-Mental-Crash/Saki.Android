@@ -76,14 +76,14 @@ data class SakiVisualTokens(
 internal val DefaultSakiVisualTokens = SakiVisualTokens()
 
 internal val MaterialExpressiveSakiVisualTokens = SakiVisualTokens(
-    backgroundPrimaryOverlayAlpha = 0.12f,
-    backgroundTertiaryOverlayAlpha = 0.16f,
+    backgroundPrimaryOverlayAlpha = 0.05f,
+    backgroundTertiaryOverlayAlpha = 0.07f,
     cardContainerAlpha = 0.98f,
     subtleCardContainerAlpha = 0.96f,
     selectedContainerAlpha = 0.45f,
     tonalContainerAlpha = 0.72f,
     useExpressiveSurfaceContainers = true,
-    chromeIconButtonContainerAlpha = 1f,
+    chromeIconButtonContainerAlpha = 0f,
     chromeIconButtonCornerRadius = 24.dp,
     chromeIconButtonIconSize = 24.dp,
     browseSectionChipContainerAlpha = 1f,

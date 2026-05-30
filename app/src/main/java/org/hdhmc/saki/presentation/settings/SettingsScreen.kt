@@ -3,9 +3,11 @@ package org.hdhmc.saki.presentation.settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,6 +68,7 @@ import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
@@ -93,6 +96,7 @@ import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiThemePresets
+import org.hdhmc.saki.ui.theme.rememberSakiExpressiveColorScheme
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSelectedContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
@@ -122,6 +126,7 @@ fun SettingsScreen(
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateThemeStyle: (ThemeStyle) -> Unit,
     onUpdateThemeSeed: (String) -> Unit,
+    onUpdatePaletteStyle: (SakiPaletteStyle) -> Unit,
     onUpdateDefaultBrowseTab: (DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
@@ -496,7 +501,36 @@ fun SettingsScreen(
                     )
                 }
                 if (currentThemeStyle == ThemeStyle.MATERIAL_EXPRESSIVE) {
+                    val currentPaletteStyle = uiState.appPreferences.paletteStyle
+                    Text(
+                        text = stringResource(R.string.settings_palette_style_label),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = currentPaletteStyle == SakiPaletteStyle.TONAL_SPOT,
+                            onClick = { onUpdatePaletteStyle(SakiPaletteStyle.TONAL_SPOT) },
+                            label = { Text(stringResource(R.string.settings_palette_style_tonal_spot)) },
+                        )
+                        FilterChip(
+                            selected = currentPaletteStyle == SakiPaletteStyle.VIBRANT,
+                            onClick = { onUpdatePaletteStyle(SakiPaletteStyle.VIBRANT) },
+                            label = { Text(stringResource(R.string.settings_palette_style_vibrant)) },
+                        )
+                        FilterChip(
+                            selected = currentPaletteStyle == SakiPaletteStyle.EXPRESSIVE,
+                            onClick = { onUpdatePaletteStyle(SakiPaletteStyle.EXPRESSIVE) },
+                            label = { Text(stringResource(R.string.settings_palette_style_expressive)) },
+                        )
+                    }
                     val currentSeedKey = uiState.appPreferences.themeSeedKey
+                    // Preview follows the current light/dark mode and uses the container roles, so the
+                    // swatches stay pleasant pastels in light and deep tones in dark (KSU-style).
+                    val previewDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
                     Text(
                         text = stringResource(R.string.settings_theme_seed_label),
                         style = MaterialTheme.typography.labelLarge,
@@ -509,11 +543,22 @@ fun SettingsScreen(
                         SakiThemePresets.forEach { preset ->
                             val selected = preset.key == currentSeedKey
                             val presetName = stringResource(preset.nameRes)
+                            // Preview the actual generated pairing (top = primary, bottom = secondary)
+                            // under the active palette style, so the theme's two tones read at a glance.
+                            val previewScheme = rememberSakiExpressiveColorScheme(
+                                seedColor = preset.seed,
+                                isDark = previewDark,
+                                paletteStyle = currentPaletteStyle,
+                            )
+                            // Pick tonally balanced roles per mode so both halves read as similar
+                            // lightness (containers are pale + balanced in light; in dark the accent
+                            // pair stays balanced whereas SPEC_2025 Expressive containers go extreme).
+                            val topColor = if (previewDark) previewScheme.primary else previewScheme.primaryContainer
+                            val bottomColor = if (previewDark) previewScheme.secondary else previewScheme.secondaryContainer
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(preset.seed)
                                     .border(
                                         width = if (selected) 3.dp else 1.dp,
                                         color = if (selected) {
@@ -529,7 +574,12 @@ fun SettingsScreen(
                                         onClick = { onUpdateThemeSeed(preset.key) },
                                     )
                                     .semantics { contentDescription = presetName },
-                            )
+                            ) {
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    drawArc(color = topColor, startAngle = 180f, sweepAngle = 180f, useCenter = true)
+                                    drawArc(color = bottomColor, startAngle = 0f, sweepAngle = 180f, useCenter = true)
+                                }
+                            }
                         }
                     }
                 }

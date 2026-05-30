@@ -5,6 +5,7 @@ import org.hdhmc.saki.domain.model.AppPreferences
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
 import org.hdhmc.saki.domain.model.ThemeStyle
@@ -24,6 +25,8 @@ interface AppPreferencesRepository {
     suspend fun updateThemeStyle(themeStyle: ThemeStyle)
 
     suspend fun updateThemeSeed(seedKey: String)
+
+    suspend fun updatePaletteStyle(style: SakiPaletteStyle)
 
     suspend fun updateAlbumViewMode(mode: AlbumViewMode)
 

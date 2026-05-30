@@ -154,6 +154,9 @@ class ConfigBackupManager @Inject constructor(
                         DataStoreAppPreferencesRepository.KEY_THEME_SEED.name -> {
                             ds[DataStoreAppPreferencesRepository.KEY_THEME_SEED] = value; settingsApplied = true
                         }
+                        DataStoreAppPreferencesRepository.KEY_PALETTE_STYLE.name -> {
+                            ds[DataStoreAppPreferencesRepository.KEY_PALETTE_STYLE] = value; settingsApplied = true
+                        }
                         DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE.name -> {
                             ds[DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE] =
                                 value.toIntOrNull()?.normalizeSongsPageSize() ?: return@forEach

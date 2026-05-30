@@ -14,6 +14,7 @@ import org.hdhmc.saki.domain.model.AppPreferences
 import org.hdhmc.saki.domain.model.DEFAULT_SONGS_PAGE_SIZE
 import org.hdhmc.saki.domain.model.DEFAULT_THEME_SEED_KEY
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
 import org.hdhmc.saki.domain.model.ThemeStyle
@@ -64,6 +65,10 @@ class DataStoreAppPreferencesRepository @Inject constructor(
 
     override suspend fun updateThemeSeed(seedKey: String) {
         dataStore.edit { it[KEY_THEME_SEED] = seedKey }
+    }
+
+    override suspend fun updatePaletteStyle(style: SakiPaletteStyle) {
+        dataStore.edit { it[KEY_PALETTE_STYLE] = style.storageKey }
     }
 
     override suspend fun updateAlbumViewMode(mode: AlbumViewMode) {
@@ -133,6 +138,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         val KEY_THEME_STYLE = stringPreferencesKey("theme_style")
         val KEY_THEME_SEED = stringPreferencesKey("theme_seed")
+        val KEY_PALETTE_STYLE = stringPreferencesKey("palette_style")
         val KEY_ALBUM_VIEW_MODE = stringPreferencesKey("album_view_mode")
         val KEY_DEFAULT_BROWSE_TAB = stringPreferencesKey("default_browse_tab")
         val KEY_DEFAULT_ALBUM_FEED = stringPreferencesKey("default_album_feed")
@@ -148,6 +154,7 @@ private fun Preferences.toAppPreferences() = AppPreferences(
     themeMode = ThemeMode.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_THEME_MODE]),
     themeStyle = ThemeStyle.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_THEME_STYLE]),
     themeSeedKey = this[DataStoreAppPreferencesRepository.KEY_THEME_SEED] ?: DEFAULT_THEME_SEED_KEY,
+    paletteStyle = SakiPaletteStyle.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_PALETTE_STYLE]),
     albumViewMode = AlbumViewMode.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_ALBUM_VIEW_MODE]),
     defaultBrowseTab = DefaultBrowseTab.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_DEFAULT_BROWSE_TAB]),
     defaultAlbumFeed = AlbumListType.fromApiValue(

@@ -100,6 +100,7 @@ fun SakiApp(
     SakiAndroidTheme(
         themeStyle = uiState.appPreferences.themeStyle,
         seedColor = seedColorForKey(uiState.appPreferences.themeSeedKey),
+        paletteStyle = uiState.appPreferences.paletteStyle,
     ) {
         CompositionLocalProvider(LocalDensity provides appDensity) {
         Box(modifier = modifier.fillMaxSize()) {
@@ -165,6 +166,7 @@ fun SakiApp(
                         onUpdateThemeMode = viewModel::updateThemeMode,
                         onUpdateThemeStyle = viewModel::updateThemeStyle,
                         onUpdateThemeSeed = viewModel::updateThemeSeed,
+                        onUpdatePaletteStyle = viewModel::updatePaletteStyle,
                         onUpdateDefaultBrowseTab = viewModel::updateDefaultBrowseTab,
                         onUpdateDefaultAlbumFeed = viewModel::updateDefaultAlbumFeed,
                         onUpdateSongsPageSize = viewModel::updateSongsPageSize,
@@ -272,6 +274,7 @@ private fun RootShell(
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateThemeStyle: (ThemeStyle) -> Unit,
     onUpdateThemeSeed: (String) -> Unit,
+    onUpdatePaletteStyle: (org.hdhmc.saki.domain.model.SakiPaletteStyle) -> Unit,
     onUpdateDefaultBrowseTab: (org.hdhmc.saki.domain.model.DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (org.hdhmc.saki.domain.model.AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
@@ -366,6 +369,7 @@ private fun RootShell(
                             onUpdateThemeMode = onUpdateThemeMode,
                             onUpdateThemeStyle = onUpdateThemeStyle,
                             onUpdateThemeSeed = onUpdateThemeSeed,
+                            onUpdatePaletteStyle = onUpdatePaletteStyle,
                             onUpdateDefaultBrowseTab = onUpdateDefaultBrowseTab,
                             onUpdateDefaultAlbumFeed = onUpdateDefaultAlbumFeed,
                             onUpdateSongsPageSize = onUpdateSongsPageSize,

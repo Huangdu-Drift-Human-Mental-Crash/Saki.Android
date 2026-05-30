@@ -66,6 +66,10 @@
     <string name="settings_theme_style_label">Style</string>
     <string name="settings_theme_style_saki">Saki</string>
     <string name="settings_theme_style_material_expressive">Material 3 Expressive</string>
+    <string name="settings_palette_style_label">Palette style</string>
+    <string name="settings_palette_style_tonal_spot">Tonal</string>
+    <string name="settings_palette_style_vibrant">Vibrant</string>
+    <string name="settings_palette_style_expressive">Expressive</string>
     <string name="settings_theme_seed_label">Theme color</string>
     <string name="settings_theme_seed_harbor_blue">Harbor blue</string>
     <string name="settings_theme_seed_sakura">Sakura</string>
