@@ -43,6 +43,7 @@ data class AppPreferences(
     val language: AppLanguage = AppLanguage.SYSTEM,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val themeStyle: ThemeStyle = ThemeStyle.SAKI,
+    val themeSeedKey: String = DEFAULT_THEME_SEED_KEY,
     val albumViewMode: AlbumViewMode = AlbumViewMode.GRID,
     val defaultBrowseTab: DefaultBrowseTab = DefaultBrowseTab.ARTISTS,
     val defaultAlbumFeed: AlbumListType = AlbumListType.NEWEST,
@@ -50,6 +51,9 @@ data class AppPreferences(
     val lastSelectedServerId: Long? = null,
     val recentSearchQueries: List<String> = emptyList(),
 )
+
+/** Default theme seed preset key; see [org.hdhmc.saki.ui.theme.SakiThemePresets]. */
+const val DEFAULT_THEME_SEED_KEY = "harbor_blue"
 
 const val MIN_SONGS_PAGE_SIZE = 250
 const val MAX_SONGS_PAGE_SIZE = 3_000

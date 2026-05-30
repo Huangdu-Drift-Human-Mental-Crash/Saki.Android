@@ -254,7 +254,11 @@ fun AlbumDetailScreen(
 
     val artworkModel = resolveArtworkModel(server, album.coverArtId, null)
     val albumAccent = animateColorAsState(
-        rememberArtworkAccentColor(artworkModel, MaterialTheme.colorScheme.primary),
+        rememberArtworkAccentColor(
+            artworkModel,
+            fallback = MaterialTheme.colorScheme.secondaryContainer,
+            harmonizeTarget = MaterialTheme.colorScheme.primary,
+        ),
         label = "albumAccent",
     ).value
     val trackAccent = albumAccent.ensureContrast(
@@ -535,7 +539,7 @@ private fun AlbumTrackRow(
                 modifier = Modifier
                     .padding(start = 8.dp)
                     .size(16.dp),
-                tint = accentColor,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             isDownloading -> CircularProgressIndicator(

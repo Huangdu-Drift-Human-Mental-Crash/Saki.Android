@@ -761,13 +761,9 @@ private fun BrowseSectionChip(
                 ),
             shape = chipShape,
             color = if (selected) {
-                MaterialTheme.colorScheme.secondaryContainer.copy(
-                    alpha = visuals.browseSectionChipSelectedContainerAlpha,
-                )
+                MaterialTheme.colorScheme.secondaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainerHighest.copy(
-                    alpha = visuals.browseSectionChipContainerAlpha,
-                )
+                MaterialTheme.colorScheme.surfaceContainerHighest
             },
             contentColor = if (selected) {
                 MaterialTheme.colorScheme.onSecondaryContainer
@@ -1558,13 +1554,9 @@ private fun AlbumFeedChip(
                 ),
             shape = chipShape,
             color = if (selected) {
-                MaterialTheme.colorScheme.secondaryContainer.copy(
-                    alpha = visuals.browseSectionChipSelectedContainerAlpha,
-                )
+                MaterialTheme.colorScheme.secondaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainerHighest.copy(
-                    alpha = visuals.browseSectionChipContainerAlpha,
-                )
+                MaterialTheme.colorScheme.surfaceContainerHighest
             },
             contentColor = if (selected) {
                 MaterialTheme.colorScheme.onSecondaryContainer

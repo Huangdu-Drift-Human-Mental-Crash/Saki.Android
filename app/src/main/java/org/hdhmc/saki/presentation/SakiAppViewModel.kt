@@ -361,6 +361,12 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
+    fun updateThemeSeed(seedKey: String) {
+        viewModelScope.launch {
+            appPreferencesRepository.updateThemeSeed(seedKey)
+        }
+    }
+
     fun updateAlbumViewMode(mode: AlbumViewMode) {
         viewModelScope.launch {
             appPreferencesRepository.updateAlbumViewMode(mode)

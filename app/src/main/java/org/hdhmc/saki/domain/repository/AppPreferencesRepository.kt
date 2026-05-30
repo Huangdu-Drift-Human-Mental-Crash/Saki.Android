@@ -23,6 +23,8 @@ interface AppPreferencesRepository {
 
     suspend fun updateThemeStyle(themeStyle: ThemeStyle)
 
+    suspend fun updateThemeSeed(seedKey: String)
+
     suspend fun updateAlbumViewMode(mode: AlbumViewMode)
 
     suspend fun updateDefaultBrowseTab(tab: DefaultBrowseTab)

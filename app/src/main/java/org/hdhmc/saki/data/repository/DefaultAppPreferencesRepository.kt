@@ -52,6 +52,10 @@ class DefaultAppPreferencesRepository @Inject constructor(
         // Theme preference is only supported via DataStore; no-op here
     }
 
+    override suspend fun updateThemeSeed(seedKey: String) {
+        // Theme preference is only supported via DataStore; no-op here
+    }
+
     override suspend fun updateAlbumViewMode(mode: AlbumViewMode) {
         // Album view mode preference is only supported via DataStore; no-op here
     }

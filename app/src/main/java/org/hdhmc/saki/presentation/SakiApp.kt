@@ -49,6 +49,7 @@ import org.hdhmc.saki.presentation.library.NowPlayingCapsule
 import org.hdhmc.saki.presentation.library.NowPlayingOverlay
 import org.hdhmc.saki.presentation.serverconfig.ServerConfigRoute
 import org.hdhmc.saki.presentation.settings.SettingsScreen
+import org.hdhmc.saki.ui.theme.seedColorForKey
 import org.hdhmc.saki.ui.theme.SakiAndroidTheme
 
 @Composable
@@ -96,7 +97,10 @@ fun SakiApp(
         }
     }
 
-    SakiAndroidTheme(themeStyle = uiState.appPreferences.themeStyle) {
+    SakiAndroidTheme(
+        themeStyle = uiState.appPreferences.themeStyle,
+        seedColor = seedColorForKey(uiState.appPreferences.themeSeedKey),
+    ) {
         CompositionLocalProvider(LocalDensity provides appDensity) {
         Box(modifier = modifier.fillMaxSize()) {
             when {
@@ -160,6 +164,7 @@ fun SakiApp(
                         onUpdateLanguage = viewModel::updateLanguage,
                         onUpdateThemeMode = viewModel::updateThemeMode,
                         onUpdateThemeStyle = viewModel::updateThemeStyle,
+                        onUpdateThemeSeed = viewModel::updateThemeSeed,
                         onUpdateDefaultBrowseTab = viewModel::updateDefaultBrowseTab,
                         onUpdateDefaultAlbumFeed = viewModel::updateDefaultAlbumFeed,
                         onUpdateSongsPageSize = viewModel::updateSongsPageSize,
@@ -266,6 +271,7 @@ private fun RootShell(
     onUpdateLanguage: (org.hdhmc.saki.domain.model.AppLanguage) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateThemeStyle: (ThemeStyle) -> Unit,
+    onUpdateThemeSeed: (String) -> Unit,
     onUpdateDefaultBrowseTab: (org.hdhmc.saki.domain.model.DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (org.hdhmc.saki.domain.model.AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
@@ -359,6 +365,7 @@ private fun RootShell(
                             onUpdateLanguage = onUpdateLanguage,
                             onUpdateThemeMode = onUpdateThemeMode,
                             onUpdateThemeStyle = onUpdateThemeStyle,
+                            onUpdateThemeSeed = onUpdateThemeSeed,
                             onUpdateDefaultBrowseTab = onUpdateDefaultBrowseTab,
                             onUpdateDefaultAlbumFeed = onUpdateDefaultAlbumFeed,
                             onUpdateSongsPageSize = onUpdateSongsPageSize,
