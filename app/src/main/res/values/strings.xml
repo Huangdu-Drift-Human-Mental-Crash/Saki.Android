@@ -158,6 +158,9 @@
     <string name="library_track_list">Track list</string>
     <string name="library_album_details">Album details</string>
     <string name="library_play_album">Play album</string>
+    <string name="library_play">Play</string>
+    <string name="library_show_all_songs">Show all (%1$d)</string>
+    <string name="library_show_less">Show less</string>
     <string name="library_loading_playlist">Loading playlist</string>
     <string name="library_tracks">Tracks</string>
     <string name="library_playlist_sequence">Playlist sequence</string>

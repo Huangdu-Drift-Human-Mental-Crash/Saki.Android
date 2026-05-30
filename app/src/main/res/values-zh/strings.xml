@@ -151,6 +151,9 @@
     <string name="library_track_list">曲目列表</string>
     <string name="library_album_details">专辑详情</string>
     <string name="library_play_album">播放专辑</string>
+    <string name="library_play">播放</string>
+    <string name="library_show_all_songs">展开全部 (%1$d)</string>
+    <string name="library_show_less">收起</string>
     <string name="library_loading_playlist">正在加载播放列表</string>
     <string name="library_tracks">曲目</string>
     <string name="library_playlist_sequence">播放列表顺序</string>
