@@ -273,6 +273,9 @@ fun BrowseScreen(
                         onOpenAlbum = onOpenAlbum,
                         onPlaySongs = offlineAwarePlaySongs,
                         onShowActions = { actionSong = it },
+                        currentPlaybackSongId = currentPlaybackSongId,
+                        isPlaying = uiState.playbackState.isPlaying,
+                        onBack = onCloseArtist,
                     )
 
                     target.hasPlaylist && uiState.selectedPlaylist != null -> PlaylistDetailScreen(
@@ -288,6 +291,9 @@ fun BrowseScreen(
                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                         onPlaySongs = offlineAwarePlaySongs,
                         onShowActions = { actionSong = it },
+                        currentPlaybackSongId = currentPlaybackSongId,
+                        isPlaying = uiState.playbackState.isPlaying,
+                        onBack = onClosePlaylist,
                     )
 
                     else -> BrowsePager(
@@ -652,6 +658,9 @@ private fun BrowsePager(
                                 error = uiState.songsError?.asString(),
                                 bottomOverlayPadding = bottomOverlayPadding,
                                 scrollPosition = scrollState.songsPosition,
+                                currentPlaybackSongId = uiState.playbackState.currentItem?.songId
+                                    ?: uiState.playbackState.queue.getOrNull(uiState.playbackState.currentIndex)?.songId,
+                                isPlaying = uiState.playbackState.isPlaying,
                                 onLoadPrevious = onLoadPreviousSongs,
                                 onLoadMore = onLoadMoreSongs,
                                 onPlaySongs = onPlaySongs,
@@ -1639,6 +1648,8 @@ private fun SongsPage(
     error: String?,
     bottomOverlayPadding: Dp,
     scrollPosition: LazyListScrollPosition,
+    currentPlaybackSongId: String? = null,
+    isPlaying: Boolean = false,
     onLoadPrevious: () -> Unit,
     onLoadMore: () -> Unit,
     onPlaySongs: (List<Song>, Int) -> Unit,
@@ -1726,14 +1737,20 @@ private fun SongsPage(
     ) {
         itemsIndexed(songs, key = { index, s -> "${songsOffset + index}-${s.id}" }) { index, song ->
             val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-            SongRow(
+            AlbumTrackRow(
                 song = song,
-                server = server,
+                index = index,
+                useTrackNumbers = false,
+                albumArtistLabel = null,
                 cachedSong = cachedSongsBySongId[song.id],
                 isStreamCached = song.id in streamCachedSongIds,
                 isDownloading = song.id in downloadingSongIds,
                 isOfflineDegraded = isOfflineDegraded,
                 isOfflinePlayable = isOfflinePlayable,
+                isCurrent = currentPlaybackSongId == song.id,
+                isPlaying = isPlaying,
+                accentColor = MaterialTheme.colorScheme.primary,
+                artworkModel = resolveArtworkModel(server, song.coverArtId, cachedSongsBySongId[song.id]),
                 onClick = {
                     if (isOfflineDegraded) {
                         playOfflineAwareSongs(

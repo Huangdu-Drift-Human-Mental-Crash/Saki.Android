@@ -806,9 +806,7 @@ class SakiAppViewModel @Inject constructor(
                     )
                 } ?: artist
                 val songs = (topSongs + relationshipSongs).distinctBy(Song::id)
-                val topSongIds = topSongs.mapTo(HashSet(topSongs.size), Song::id)
-                val songsAreTopSongs = relationshipSongs.none { it.id !in topSongIds }
-                Triple(displayArtist, songs, songsAreTopSongs)
+                Triple(displayArtist, songs, false)
             }.onSuccess { (artist, songs, songsAreTopSongs) ->
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
@@ -2086,20 +2084,18 @@ class SakiAppViewModel @Inject constructor(
         serverId: Long,
         artist: Artist,
     ): List<Song> = coroutineScope {
-        artist.albums.take(4)
-            .map { album ->
-                async {
-                    subsonicRepository.getAlbum(serverId, album.id).data
-                }
+        artist.albums
+            .chunked(6)
+            .flatMap { batch ->
+                batch.map { album -> async { subsonicRepository.getAlbum(serverId, album.id).data } }
+                    .map { it.await() }
             }
-            .map { deferred -> deferred.await() }
             .flatMap { album ->
                 album.songs.map { song ->
                     song.withFallbackAlbumMetadata(album)
                 }
             }
             .distinctBy(Song::id)
-            .take(8)
     }
 
     private suspend fun performSearch(query: String) {

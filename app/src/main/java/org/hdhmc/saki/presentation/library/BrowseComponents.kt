@@ -52,6 +52,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -63,6 +64,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -108,45 +113,117 @@ fun ArtistDetailScreen(
     onOpenAlbum: (String) -> Unit,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    currentPlaybackSongId: String? = null,
+    isPlaying: Boolean = false,
+    onBack: () -> Unit = {},
 ) {
     val albumCount = artist.albumCount
-    LibraryDetailScaffold(
-        title = artist.name,
-        subtitle = if (albumCount != null) albumCountText(albumCount) else null,
-        artwork = null,
-        bottomOverlayPadding = bottomOverlayPadding,
+    if (!SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        LibraryDetailScaffold(
+            title = artist.name,
+            subtitle = if (albumCount != null) albumCountText(albumCount) else null,
+            artwork = null,
+            bottomOverlayPadding = bottomOverlayPadding,
+        ) {
+            when {
+                isLoading && songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_artist)) }
+                error != null && songs.isEmpty() -> item { ErrorStateCard(error) }
+                else -> {
+                    if (songs.isNotEmpty()) {
+                        item {
+                            SectionTitle(
+                                stringResource(R.string.library_artist_songs),
+                                stringResource(R.string.library_artist_songs_subtitle, artist.name),
+                            )
+                        }
+                        itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
+                            val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
+                            SongRow(
+                                song = song,
+                                server = server,
+                                cachedSong = cachedSongsBySongId[song.id],
+                                isStreamCached = song.id in streamCachedSongIds,
+                                isDownloading = song.id in downloadingSongIds,
+                                isOfflineDegraded = isOfflineDegraded,
+                                isOfflinePlayable = isOfflinePlayable,
+                                onClick = { onPlaySongs(songs, index) },
+                                onMore = { onShowActions(song) },
+                            )
+                        }
+                    }
+                    if (artist.albums.isNotEmpty()) {
+                        item {
+                            SectionTitle(
+                                stringResource(R.string.library_albums),
+                                stringResource(R.string.library_albums_subtitle_full_release),
+                            )
+                        }
+                        item {
+                            LazyRow {
+                                items(artist.albums, key = { it.id }) { album ->
+                                    AlbumMiniCard(album = album, server = server, onOpenAlbum = onOpenAlbum)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    val heroArtwork = artist.albums.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, null) }
+        ?: songs.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, cachedSongsBySongId[it.id]) }
+    val accent = animateColorAsState(
+        rememberArtworkAccentColor(
+            heroArtwork,
+            fallback = MaterialTheme.colorScheme.secondaryContainer,
+            harmonizeTarget = MaterialTheme.colorScheme.primary,
+        ),
+        label = "artistAccent",
+    ).value
+    val trackAccent = accent.ensureContrast(
+        MaterialTheme.colorScheme.surfaceContainerHighest,
+        MaterialTheme.colorScheme.primary,
+    )
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = bottomContentPadding(bottomOverlayPadding),
     ) {
+        item {
+            ArtistDetailHeader(
+                title = artist.name,
+                artwork = heroArtwork,
+                accentColor = accent,
+                metaItems = listOfNotNull(
+                    albumCount?.let { albumCountText(it) },
+                    songs.size.takeIf { it > 0 }?.let { songCountText(it) },
+                ),
+                canPlay = songs.isNotEmpty(),
+                onPlay = { if (songs.isNotEmpty()) onPlaySongs(songs, 0) },
+                onBack = onBack,
+            )
+        }
         when {
             isLoading && songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_artist)) }
             error != null && songs.isEmpty() -> item { ErrorStateCard(error) }
             else -> {
                 if (songs.isNotEmpty()) {
                     item {
-                        SectionTitle(
-                            if (songsAreTopSongs) {
-                                stringResource(R.string.library_popular_songs)
-                            } else {
-                                stringResource(R.string.library_artist_songs)
-                            },
-                            if (songsAreTopSongs) {
-                                stringResource(R.string.library_popular_songs_subtitle, artist.name)
-                            } else {
-                                stringResource(R.string.library_artist_songs_subtitle, artist.name)
-                            },
-                        )
-                    }
-                    itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
-                        val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-                        SongRow(
-                            song = song,
-                            server = server,
-                            cachedSong = cachedSongsBySongId[song.id],
-                            isStreamCached = song.id in streamCachedSongIds,
-                            isDownloading = song.id in downloadingSongIds,
+                        AlbumTrackListCard(
+                            songs = songs,
+                            cachedSongsBySongId = cachedSongsBySongId,
+                            streamCachedSongIds = streamCachedSongIds,
+                            downloadingSongIds = downloadingSongIds,
                             isOfflineDegraded = isOfflineDegraded,
-                            isOfflinePlayable = isOfflinePlayable,
-                            onClick = { onPlaySongs(songs, index) },
-                            onMore = { onShowActions(song) },
+                            currentPlaybackSongId = currentPlaybackSongId,
+                            isPlaying = isPlaying,
+                            accentColor = trackAccent,
+                            albumArtistLabel = artist.name,
+                            collapsedCount = 5,
+                            useSequentialNumbers = true,
+                            onPlaySongs = onPlaySongs,
+                            onShowActions = onShowActions,
                         )
                     }
                 }
@@ -164,6 +241,110 @@ fun ArtistDetailScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtistDetailHeader(
+    title: String,
+    artwork: Any?,
+    accentColor: Color,
+    metaItems: List<String>,
+    canPlay: Boolean,
+    onPlay: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val onAccent = if (accentColor.contrastRatio(Color.White) >= accentColor.contrastRatio(Color.Black)) {
+        Color.White
+    } else {
+        Color.Black
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 16.dp),
+    ) {
+        Surface(
+            onClick = onBack,
+            modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .size(40.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = stringResource(R.string.library_back),
+                modifier = Modifier.padding(9.dp),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(104.dp)
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(accentColor),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (artwork != null) {
+                    ArtworkCard(
+                        model = artwork,
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadiusDp = 24,
+                        requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
+                    )
+                } else {
+                    Text(
+                        text = title.trim().firstOrNull()?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = onAccent,
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val metaLine = metaItems.joinToString(" • ")
+                if (metaLine.isNotBlank()) {
+                    Text(
+                        text = metaLine,
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                FilledTonalButton(
+                    onClick = onPlay,
+                    enabled = canPlay,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.library_play))
                 }
             }
         }
@@ -253,14 +434,11 @@ fun AlbumDetailScreen(
     }
 
     val artworkModel = resolveArtworkModel(server, album.coverArtId, null)
-    val albumAccent = animateColorAsState(
-        rememberArtworkAccentColor(
-            artworkModel,
-            fallback = MaterialTheme.colorScheme.secondaryContainer,
-            harmonizeTarget = MaterialTheme.colorScheme.primary,
-        ),
-        label = "albumAccent",
-    ).value
+    val albumAccent = rememberArtworkAccentColor(
+        artworkModel,
+        fallback = MaterialTheme.colorScheme.primary,
+        harmonizeTarget = MaterialTheme.colorScheme.primary,
+    )
     val trackAccent = albumAccent.ensureContrast(
         MaterialTheme.colorScheme.surfaceContainerHighest,
         MaterialTheme.colorScheme.primary,
@@ -422,6 +600,8 @@ private fun AlbumTrackListCard(
     isPlaying: Boolean,
     accentColor: Color,
     albumArtistLabel: String?,
+    collapsedCount: Int? = null,
+    useSequentialNumbers: Boolean = false,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
 ) {
@@ -438,8 +618,11 @@ private fun AlbumTrackListCard(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            val useTrackNumbers = songs.all { (it.track ?: 0) > 0 }
-            songs.forEachIndexed { index, song ->
+            val useTrackNumbers = !useSequentialNumbers && songs.all { (it.track ?: 0) > 0 }
+            var expanded by rememberSaveable(songs.size) { mutableStateOf(false) }
+            val canCollapse = collapsedCount != null && songs.size > collapsedCount
+            val visibleSongs = if (canCollapse && !expanded) songs.take(collapsedCount!!) else songs
+            visibleSongs.forEachIndexed { index, song ->
                 val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
                 AlbumTrackRow(
                     song = song,
@@ -458,12 +641,26 @@ private fun AlbumTrackListCard(
                     onMore = { onShowActions(song) },
                 )
             }
+            if (canCollapse) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    Text(
+                        text = if (expanded) {
+                            stringResource(R.string.library_show_less)
+                        } else {
+                            stringResource(R.string.library_show_all_songs, songs.size)
+                        },
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AlbumTrackRow(
+internal fun AlbumTrackRow(
     song: Song,
     index: Int,
     useTrackNumbers: Boolean,
@@ -476,6 +673,7 @@ private fun AlbumTrackRow(
     isCurrent: Boolean,
     isPlaying: Boolean,
     accentColor: Color,
+    artworkModel: Any? = null,
     onClick: () -> Unit,
     onMore: () -> Unit,
 ) {
@@ -491,19 +689,45 @@ private fun AlbumTrackRow(
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier.width(42.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (isCurrent) {
-                NowPlayingIndicator(isPlaying = isPlaying, color = accentColor)
-            } else {
-                Text(
-                    text = trackLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+        if (artworkModel != null) {
+            Box(
+                modifier = Modifier.size(44.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                ArtworkCard(
+                    model = artworkModel,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    cornerRadiusDp = 10,
+                    requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
                 )
+                if (isCurrent) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clip(MaterialTheme.shapes.small)
+                            .background(Color.Black.copy(alpha = 0.45f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        NowPlayingIndicator(isPlaying = isPlaying, color = Color.White)
+                    }
+                }
+            }
+        } else {
+            Box(
+                modifier = Modifier.width(42.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isCurrent) {
+                    NowPlayingIndicator(isPlaying = isPlaying, color = accentColor)
+                } else {
+                    Text(
+                        text = trackLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
             }
         }
 
@@ -647,58 +871,122 @@ fun PlaylistDetailScreen(
     bottomOverlayPadding: Dp = 0.dp,
     isOfflineDegraded: Boolean = false,
     onOfflineSongUnavailable: () -> Unit = {},
+    currentPlaybackSongId: String? = null,
+    isPlaying: Boolean = false,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    onBack: () -> Unit = {},
 ) {
     val songCount = playlist.songCount
-    val subtitle = listOfNotNull(
-        playlist.owner,
-        if (songCount != null) songCountText(songCount) else null,
-    ).joinToString(" • ")
-    LibraryDetailScaffold(
-        title = playlist.name,
-        subtitle = subtitle,
-        artwork = resolveArtworkModel(server, playlist.coverArtId, null),
-        bottomOverlayPadding = bottomOverlayPadding,
+    val playPlaylist: () -> Unit = {
+        if (playlist.songs.isNotEmpty()) {
+            if (isOfflineDegraded) {
+                val startIndex = playlist.songs.firstOfflinePlayableIndexOrNull(
+                    cachedSongsBySongId,
+                    streamCachedSongIds,
+                )
+                if (startIndex != null) {
+                    onPlaySongs(playlist.songs, startIndex)
+                } else {
+                    onOfflineSongUnavailable()
+                }
+            } else {
+                onPlaySongs(playlist.songs, 0)
+            }
+        }
+    }
+
+    if (!SakiTheme.visuals.useExpressiveSurfaceContainers) {
+        val subtitle = listOfNotNull(
+            playlist.owner,
+            if (songCount != null) songCountText(songCount) else null,
+        ).joinToString(" • ")
+        LibraryDetailScaffold(
+            title = playlist.name,
+            subtitle = subtitle,
+            artwork = resolveArtworkModel(server, playlist.coverArtId, null),
+            bottomOverlayPadding = bottomOverlayPadding,
+        ) {
+            when {
+                isLoading && playlist.songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_playlist)) }
+                error != null && playlist.songs.isEmpty() -> item { ErrorStateCard(error) }
+                else -> {
+                    item {
+                        SectionTitle(
+                            title = stringResource(R.string.library_tracks),
+                            subtitle = stringResource(R.string.library_playlist_sequence),
+                            actionLabel = stringResource(R.string.library_play_playlist),
+                            onAction = playPlaylist,
+                        )
+                    }
+                    itemsIndexed(playlist.songs, key = { index, s -> "${s.id}_$index" }) { index, song ->
+                        val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
+                        SongRow(
+                            song = song,
+                            server = server,
+                            cachedSong = cachedSongsBySongId[song.id],
+                            isStreamCached = song.id in streamCachedSongIds,
+                            isDownloading = song.id in downloadingSongIds,
+                            isOfflineDegraded = isOfflineDegraded,
+                            isOfflinePlayable = isOfflinePlayable,
+                            onClick = { onPlaySongs(playlist.songs, index) },
+                            onMore = { onShowActions(song) },
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    val artworkModel = resolveArtworkModel(server, playlist.coverArtId, null)
+    val accent = rememberArtworkAccentColor(
+        artworkModel,
+        fallback = MaterialTheme.colorScheme.primary,
+        harmonizeTarget = MaterialTheme.colorScheme.primary,
+    )
+    val trackAccent = accent.ensureContrast(
+        MaterialTheme.colorScheme.surfaceContainerHighest,
+        MaterialTheme.colorScheme.primary,
+    )
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = bottomContentPadding(bottomOverlayPadding),
     ) {
+        item {
+            AlbumDetailHeroCard(
+                title = playlist.name,
+                artwork = artworkModel,
+                accentColor = accent,
+                metaItems = listOfNotNull(
+                    playlist.owner,
+                    songCount?.let { songCountText(it) },
+                ),
+                canPlay = playlist.songs.isNotEmpty(),
+                onPlay = playPlaylist,
+                onBack = onBack,
+            )
+        }
         when {
             isLoading && playlist.songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_playlist)) }
             error != null && playlist.songs.isEmpty() -> item { ErrorStateCard(error) }
             else -> {
-                item {
-                    SectionTitle(
-                        title = stringResource(R.string.library_tracks),
-                        subtitle = stringResource(R.string.library_playlist_sequence),
-                        actionLabel = stringResource(R.string.library_play_playlist),
-                        onAction = {
-                            if (playlist.songs.isNotEmpty()) {
-                                if (isOfflineDegraded) {
-                                    val startIndex = playlist.songs.firstOfflinePlayableIndexOrNull(
-                                        cachedSongsBySongId,
-                                        streamCachedSongIds,
-                                    )
-                                    if (startIndex != null) {
-                                        onPlaySongs(playlist.songs, startIndex)
-                                    } else {
-                                        onOfflineSongUnavailable()
-                                    }
-                                } else {
-                                    onPlaySongs(playlist.songs, 0)
-                                }
-                            }
-                        },
-                    )
-                }
                 itemsIndexed(playlist.songs, key = { index, s -> "${s.id}_$index" }) { index, song ->
                     val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-                    SongRow(
+                    AlbumTrackRow(
                         song = song,
-                        server = server,
+                        index = index,
+                        useTrackNumbers = false,
+                        albumArtistLabel = null,
                         cachedSong = cachedSongsBySongId[song.id],
                         isStreamCached = song.id in streamCachedSongIds,
                         isDownloading = song.id in downloadingSongIds,
                         isOfflineDegraded = isOfflineDegraded,
                         isOfflinePlayable = isOfflinePlayable,
+                        isCurrent = currentPlaybackSongId == song.id,
+                        isPlaying = isPlaying,
+                        accentColor = trackAccent,
+                        artworkModel = resolveArtworkModel(server, song.coverArtId, cachedSongsBySongId[song.id]),
                         onClick = { onPlaySongs(playlist.songs, index) },
                         onMore = { onShowActions(song) },
                     )
