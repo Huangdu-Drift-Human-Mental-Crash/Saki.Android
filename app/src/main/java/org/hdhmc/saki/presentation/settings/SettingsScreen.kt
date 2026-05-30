@@ -3,8 +3,11 @@ package org.hdhmc.saki.presentation.settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -39,7 +42,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,6 +53,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -85,6 +92,7 @@ import org.hdhmc.saki.presentation.library.resolveArtworkModel
 import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
+import org.hdhmc.saki.ui.theme.SakiThemePresets
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSelectedContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
@@ -113,6 +121,7 @@ fun SettingsScreen(
     onUpdateLanguage: (AppLanguage) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateThemeStyle: (ThemeStyle) -> Unit,
+    onUpdateThemeSeed: (String) -> Unit,
     onUpdateDefaultBrowseTab: (DefaultBrowseTab) -> Unit,
     onUpdateDefaultAlbumFeed: (AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
@@ -485,6 +494,44 @@ fun SettingsScreen(
                         onClick = { onUpdateThemeStyle(ThemeStyle.MATERIAL_EXPRESSIVE) },
                         label = { Text(stringResource(R.string.settings_theme_style_material_expressive)) },
                     )
+                }
+                if (currentThemeStyle == ThemeStyle.MATERIAL_EXPRESSIVE) {
+                    val currentSeedKey = uiState.appPreferences.themeSeedKey
+                    Text(
+                        text = stringResource(R.string.settings_theme_seed_label),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        SakiThemePresets.forEach { preset ->
+                            val selected = preset.key == currentSeedKey
+                            val presetName = stringResource(preset.nameRes)
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(preset.seed)
+                                    .border(
+                                        width = if (selected) 3.dp else 1.dp,
+                                        color = if (selected) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.outlineVariant
+                                        },
+                                        shape = CircleShape,
+                                    )
+                                    .selectable(
+                                        selected = selected,
+                                        role = Role.RadioButton,
+                                        onClick = { onUpdateThemeSeed(preset.key) },
+                                    )
+                                    .semantics { contentDescription = presetName },
+                            )
+                        }
+                    }
                 }
             }
         }

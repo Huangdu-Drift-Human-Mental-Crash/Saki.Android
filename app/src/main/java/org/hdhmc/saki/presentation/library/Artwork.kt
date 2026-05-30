@@ -39,6 +39,7 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.toBitmap
+import com.materialkolor.ktx.harmonize
 import androidx.palette.graphics.Palette
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -210,7 +211,7 @@ fun AdaptiveBlurArtwork(
  * Coil at palette resolution.
  */
 @Composable
-fun rememberArtworkAccentColor(model: Any?, fallback: Color): Color {
+fun rememberArtworkAccentColor(model: Any?, fallback: Color, harmonizeTarget: Color = fallback): Color {
     val context = LocalContext.current
     var accent by remember(model) { mutableStateOf(fallback) }
     LaunchedEffect(model) {
@@ -233,7 +234,7 @@ fun rememberArtworkAccentColor(model: Any?, fallback: Color): Color {
                 null
             }
         }
-        if (extracted != null) accent = extracted
+        if (extracted != null) accent = extracted.harmonize(harmonizeTarget)
     }
     return accent
 }

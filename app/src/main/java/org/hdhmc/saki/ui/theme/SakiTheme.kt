@@ -80,7 +80,7 @@ internal val MaterialExpressiveSakiVisualTokens = SakiVisualTokens(
     backgroundTertiaryOverlayAlpha = 0.16f,
     cardContainerAlpha = 0.98f,
     subtleCardContainerAlpha = 0.96f,
-    selectedContainerAlpha = 0.86f,
+    selectedContainerAlpha = 0.45f,
     tonalContainerAlpha = 0.72f,
     useExpressiveSurfaceContainers = true,
     chromeIconButtonContainerAlpha = 1f,
@@ -142,21 +142,11 @@ object SakiTheme {
 
 @Composable
 @ReadOnlyComposable
-fun sakiCardContainerColor(): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = SakiTheme.visuals.cardContainerAlpha)
-    } else {
-        MaterialTheme.colorScheme.surface.copy(alpha = SakiTheme.visuals.cardContainerAlpha)
-    }
+fun sakiCardContainerColor(): Color = MaterialTheme.colorScheme.surfaceContainerHigh
 
 @Composable
 @ReadOnlyComposable
-fun sakiSubtleCardContainerColor(): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        MaterialTheme.colorScheme.surfaceContainer.copy(alpha = SakiTheme.visuals.subtleCardContainerAlpha)
-    } else {
-        MaterialTheme.colorScheme.surface.copy(alpha = SakiTheme.visuals.subtleCardContainerAlpha)
-    }
+fun sakiSubtleCardContainerColor(): Color = MaterialTheme.colorScheme.surfaceContainer
 
 @Composable
 @ReadOnlyComposable
@@ -165,12 +155,7 @@ fun sakiSelectedContainerColor(): Color =
 
 @Composable
 @ReadOnlyComposable
-fun sakiTonalContainerColor(): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = SakiTheme.visuals.tonalContainerAlpha)
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = SakiTheme.visuals.tonalContainerAlpha)
-    }
+fun sakiTonalContainerColor(): Color = MaterialTheme.colorScheme.surfaceContainerHighest
 
 @Composable
 fun SakiChromeIconButton(
@@ -188,9 +173,7 @@ fun SakiChromeIconButton(
         Surface(
             modifier = modifier,
             shape = RoundedCornerShape(visuals.chromeIconButtonCornerRadius),
-            color = MaterialTheme.colorScheme.secondaryContainer.copy(
-                alpha = visuals.chromeIconButtonContainerAlpha,
-            ),
+            color = MaterialTheme.colorScheme.secondaryContainer,
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ) {
             IconButton(onClick = onClick) {

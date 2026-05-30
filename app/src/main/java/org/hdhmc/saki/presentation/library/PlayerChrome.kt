@@ -601,6 +601,7 @@ fun NowPlayingOverlay(
             Color(android.graphics.Color.HSVToColor(hsv))
         }
         val onPlayButtonColor = if (isDark) Color.White else Color.Black
+        val onArtwork = onPlayButtonColor
         val sliderActiveColor = remember(dominant, isDark) {
             val hsv = FloatArray(3)
             android.graphics.Color.colorToHSV(dominant.toArgb(), hsv)
@@ -742,7 +743,7 @@ fun NowPlayingOverlay(
                 )
             }
 
-            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+            CompositionLocalProvider(LocalContentColor provides onArtwork) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -758,13 +759,11 @@ fun NowPlayingOverlay(
                         Text(
                             text = stringResource(R.string.player_now_playing),
                             style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
+                            color = onArtwork,
                         )
                         Surface(
                             shape = MaterialTheme.shapes.large,
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(
-                                alpha = visuals.nowPlayingStatusContainerAlpha,
-                            ),
+                            color = (if (isDark) Color.Black else Color.White).copy(alpha = 0.28f),
                         ) {
                             Text(
                                 text = when {
@@ -774,7 +773,7 @@ fun NowPlayingOverlay(
                                 } + " • ${localizeQualityLabel(track.qualityLabel)}",
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = onArtwork,
                             )
                         }
                     }
@@ -897,6 +896,7 @@ fun NowPlayingOverlay(
                                     contentDescription = stringResource(R.string.player_more),
                                     onClick = { showMenu = true },
                                     compact = true,
+                                    tint = LocalContentColor.current,
                                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
                                         alpha = visuals.nowPlayingMoreControlContainerAlpha,
                                     ),
@@ -933,7 +933,7 @@ fun NowPlayingOverlay(
                         Text(
                             text = track.title,
                             style = titleStyle,
-                            color = MaterialTheme.colorScheme.onBackground,
+                            color = onArtwork,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .basicMarquee(iterations = Int.MAX_VALUE),
@@ -943,6 +943,7 @@ fun NowPlayingOverlay(
                         MetadataLinkRow(
                             track = track,
                             textStyle = metadataStyle,
+                            linkColor = sliderActiveColor,
                             canOpenArtist = canOpenArtist,
                             onOpenArtist = onOpenArtist,
                             onOpenAlbum = onOpenAlbum,
@@ -1023,8 +1024,8 @@ fun NowPlayingOverlay(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(text = formatDuration(sliderValue.roundToLong()), color = MaterialTheme.colorScheme.onBackground)
-                            Text(text = formatDuration(playbackProgress.durationMs), color = MaterialTheme.colorScheme.onBackground)
+                            Text(text = formatDuration(sliderValue.roundToLong()), color = onArtwork)
+                            Text(text = formatDuration(playbackProgress.durationMs), color = onArtwork)
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1375,7 +1376,7 @@ private fun PlayerActionButton(
             contentDescription = label,
             onClick = onClick,
             compact = compact,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = LocalContentColor.current,
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
                 alpha = visuals.nowPlayingSecondaryControlContainerAlpha,
             ),
@@ -1407,14 +1408,10 @@ private fun ToggleIconButton(
             (if (hasSelectedContainer) {
                 MaterialTheme.colorScheme.onSecondaryContainer
             } else {
-                MaterialTheme.colorScheme.onBackground
+                LocalContentColor.current
             }).copy(alpha = visuals.nowPlayingToggleSelectedIconAlpha)
         } else {
-            (if (hasInactiveContainer) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.onBackground
-            }).copy(alpha = visuals.nowPlayingToggleIconAlpha)
+            LocalContentColor.current.copy(alpha = visuals.nowPlayingToggleIconAlpha)
         },
         containerColor = when {
             active -> MaterialTheme.colorScheme.secondaryContainer.copy(
@@ -1513,6 +1510,7 @@ private fun PressScaleIconButton(
 private fun MetadataLinkRow(
     track: PlaybackQueueItem,
     textStyle: TextStyle,
+    linkColor: Color,
     canOpenArtist: (String?) -> Boolean,
     onOpenArtist: (String?) -> Unit,
     onOpenAlbum: () -> Unit,
@@ -1592,7 +1590,7 @@ private fun MetadataLinkRow(
                 MetadataLinkText(
                     text = artist.name,
                     style = textStyle,
-                    color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (canOpen) linkColor else MaterialTheme.colorScheme.onSurfaceVariant,
                     enabled = canOpen,
                     onClick = { onOpenArtist(artistId) },
                 )
@@ -1621,7 +1619,7 @@ private fun MetadataLinkRow(
                 MetadataLinkText(
                     text = album,
                     style = textStyle,
-                    color = if (track.albumId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (track.albumId != null) linkColor else MaterialTheme.colorScheme.onSurfaceVariant,
                     enabled = track.albumId != null,
                     onClick = onOpenAlbum,
                 )
