@@ -44,6 +44,7 @@ data class AppPreferences(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val themeStyle: ThemeStyle = ThemeStyle.SAKI,
     val themeSeedKey: String = DEFAULT_THEME_SEED_KEY,
+    val paletteStyle: SakiPaletteStyle = SakiPaletteStyle.TONAL_SPOT,
     val albumViewMode: AlbumViewMode = AlbumViewMode.GRID,
     val defaultBrowseTab: DefaultBrowseTab = DefaultBrowseTab.ARTISTS,
     val defaultAlbumFeed: AlbumListType = AlbumListType.NEWEST,
@@ -109,6 +110,22 @@ enum class ThemeStyle(val storageKey: String) {
     companion object {
         fun fromStorageKey(storageKey: String?): ThemeStyle =
             entries.firstOrNull { it.storageKey == storageKey } ?: SAKI
+    }
+}
+
+/**
+ * Palette style for the Material Expressive theme. Maps to MaterialKolor's `PaletteStyle`
+ * in the theme layer. TonalSpot = calm/analogous, Vibrant = vivid but harmonious,
+ * Expressive = high-vibrancy with unexpected (often complementary) accents.
+ */
+enum class SakiPaletteStyle(val storageKey: String) {
+    TONAL_SPOT("tonal_spot"),
+    VIBRANT("vibrant"),
+    EXPRESSIVE("expressive");
+
+    companion object {
+        fun fromStorageKey(storageKey: String?): SakiPaletteStyle =
+            entries.firstOrNull { it.storageKey == storageKey } ?: TONAL_SPOT
     }
 }
 

@@ -10,6 +10,7 @@ import org.hdhmc.saki.domain.model.AppPreferences
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.repository.AppPreferencesRepository
 import javax.inject.Inject
@@ -53,6 +54,10 @@ class DefaultAppPreferencesRepository @Inject constructor(
     }
 
     override suspend fun updateThemeSeed(seedKey: String) {
+        // Theme preference is only supported via DataStore; no-op here
+    }
+
+    override suspend fun updatePaletteStyle(style: SakiPaletteStyle) {
         // Theme preference is only supported via DataStore; no-op here
     }
 
