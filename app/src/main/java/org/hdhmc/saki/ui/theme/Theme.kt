@@ -37,7 +37,10 @@ fun SakiAndroidTheme(
     paletteStyle: SakiPaletteStyle = SakiPaletteStyle.TONAL_SPOT,
     content: @Composable () -> Unit
 ) {
-    CompositionLocalProvider(LocalSakiVisualTokens provides sakiVisualTokens(themeStyle)) {
+    CompositionLocalProvider(
+        LocalSakiVisualTokens provides sakiVisualTokens(themeStyle),
+        LocalSakiPaletteStyle provides paletteStyle,
+    ) {
         when (themeStyle) {
             ThemeStyle.SAKI -> {
                 MaterialTheme(
