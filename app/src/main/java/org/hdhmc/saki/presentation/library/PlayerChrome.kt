@@ -559,6 +559,7 @@ fun NowPlayingOverlay(
                 queue = visualSnapshot.queue,
                 serversById = serversById,
                 position = artworkMotionState.position,
+                currentIndex = visualSnapshot.currentIndex,
                 freezePresentationUpdates = artworkMotionState.isScrollInProgress,
                 fallbackDominant = colorScheme.primary,
                 fallbackAccent = colorScheme.tertiary,
@@ -1925,6 +1926,7 @@ private fun rememberMotionArtworkColors(
     queue: List<PlaybackQueueItem>,
     serversById: Map<Long, ServerConfig>,
     position: Float,
+    currentIndex: Int,
     freezePresentationUpdates: Boolean,
     fallbackDominant: Color,
     fallbackAccent: Color,
@@ -1937,7 +1939,25 @@ private fun rememberMotionArtworkColors(
     val context = LocalContext.current.applicationContext
     var presentations by remember { mutableStateOf<Map<String, ArtworkPresentation>>(emptyMap()) }
     var appliedPresentations by remember { mutableStateOf<Map<String, ArtworkPresentation>>(emptyMap()) }
-    val clampedPosition = position.coerceIn(0f, queue.lastIndex.toFloat())
+    // While the queue is reordered under us (e.g. toggling shuffle) the pager
+    // position briefly indexes a different song in the new order, which flashes
+    // the background gradient. Anchor sampling to the current track until the
+    // pager position resyncs. User swipes don't reorder the queue, so the live
+    // position is used as before and swipe/skip blending is unaffected.
+    val orderKeys = remember(queue) { queue.map { it.mediaId } }
+    val anchor = remember { ReorderColorAnchor() }
+    if (anchor.orderKeys != orderKeys) {
+        anchor.active = anchor.initialized
+        anchor.orderKeys = orderKeys
+        anchor.initialized = true
+    }
+    if (position.roundToInt() == currentIndex) anchor.active = false
+    val effectivePosition = if (anchor.active && !freezePresentationUpdates) {
+        currentIndex.toFloat()
+    } else {
+        position
+    }
+    val clampedPosition = effectivePosition.coerceIn(0f, queue.lastIndex.toFloat())
     val fromPage = floor(clampedPosition).toInt().coerceIn(0, queue.lastIndex)
     val toPage = ceil(clampedPosition).toInt().coerceIn(0, queue.lastIndex)
     val fraction = (clampedPosition - fromPage).coerceIn(0f, 1f)
@@ -2004,6 +2024,12 @@ private data class ArtworkPresentation(
 ) {
     val hasColors: Boolean
         get() = dominantColor != null || accentColor != null
+}
+
+private class ReorderColorAnchor {
+    var orderKeys: List<String> = emptyList()
+    var active = false
+    var initialized = false
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -2169,6 +2195,18 @@ private fun NowPlayingArtworkPagerHost(
             }
     }
 
+    // Content-stable, unique key per slot: keep the page index OUT of the key so
+    // reordering (e.g. shuffle) moves the existing artwork composable instead of
+    // recreating it (which would reload the image and flash). The occurrence count
+    // disambiguates duplicate mediaIds.
+    val queueKeyOccurrence = remember(stableQueue) {
+        val seen = HashMap<String, Int>()
+        IntArray(stableQueue.size) { i ->
+            val id = stableQueue[i].mediaId
+            (seen[id] ?: 0).also { seen[id] = it + 1 }
+        }
+    }
+
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center,
@@ -2181,7 +2219,7 @@ private fun NowPlayingArtworkPagerHost(
             pageSpacing = 16.dp,
             beyondViewportPageCount = 1,
             key = { page ->
-                stableQueue.getOrNull(page)?.let { "queue-${it.mediaId}-$page" } ?: "empty-$page"
+                stableQueue.getOrNull(page)?.let { "queue-${it.mediaId}-${queueKeyOccurrence.getOrElse(page) { 0 }}" } ?: "empty-$page"
             },
         ) { page ->
             NowPlayingArtworkFrame(
