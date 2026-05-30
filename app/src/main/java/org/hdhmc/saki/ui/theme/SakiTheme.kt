@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
@@ -132,6 +133,8 @@ internal val MaterialExpressiveSakiVisualTokens = SakiVisualTokens(
 )
 
 internal val LocalSakiVisualTokens = staticCompositionLocalOf { DefaultSakiVisualTokens }
+
+internal val LocalSakiPaletteStyle = staticCompositionLocalOf { SakiPaletteStyle.TONAL_SPOT }
 
 object SakiTheme {
     val visuals: SakiVisualTokens

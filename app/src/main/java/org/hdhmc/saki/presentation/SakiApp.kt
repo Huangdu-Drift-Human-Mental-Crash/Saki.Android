@@ -415,6 +415,7 @@ private fun RootShell(
                         },
                         onSkipToPrevious = onSkipToPrevious,
                         onSkipToNext = onSkipToNext,
+                        prewarmDynamicColors = rememberVisualEffectsPolicy().useNowPlayingDynamicArtworkColors,
                     )
                 }
             }

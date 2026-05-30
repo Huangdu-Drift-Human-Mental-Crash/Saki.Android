@@ -138,6 +138,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.palette.graphics.Palette
+import com.materialkolor.hct.Hct
+import com.materialkolor.quantize.QuantizerCelebi
+import com.materialkolor.score.Score
 import org.hdhmc.saki.R
 import org.hdhmc.saki.presentation.EndpointProbeInfo
 import org.hdhmc.saki.presentation.predictiveBackMotion
@@ -149,7 +152,9 @@ import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.RepeatModeSetting
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SongLyrics
+import org.hdhmc.saki.ui.theme.LocalSakiPaletteStyle
 import org.hdhmc.saki.ui.theme.SakiTheme
+import org.hdhmc.saki.ui.theme.rememberSakiExpressiveColorScheme
 import java.io.File
 import coil3.imageLoader
 import coil3.compose.rememberAsyncImagePainter
@@ -180,8 +185,19 @@ fun NowPlayingCapsule(
     onPlayPause: () -> Unit,
     onSkipToPrevious: () -> Unit,
     onSkipToNext: () -> Unit,
+    prewarmDynamicColors: Boolean = false,
 ) {
     val visuals = SakiTheme.visuals
+    // Warm the current track's artwork color into the cache while the mini player is
+    // shown, so opening Now Playing finds it ready instead of animating from the theme
+    // fallback to the artwork accent on first view.
+    if (prewarmDynamicColors) {
+        val prewarmContext = LocalContext.current.applicationContext
+        LaunchedEffect(track?.songId) {
+            val model = track?.queueArtworkModel(currentServer) ?: return@LaunchedEffect
+            prewarmArtworkPresentation(prewarmContext, model)
+        }
+    }
     val capsuleContainerColor = if (visuals.useExpressiveSurfaceContainers) {
         MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = visuals.nowPlayingCapsuleContainerAlpha)
     } else {
@@ -554,6 +570,24 @@ fun NowPlayingOverlay(
         ),
     ) {
         val colorScheme = MaterialTheme.colorScheme
+        val isDark = colorScheme.background.luminance() < 0.5f
+        val isExpressive = visuals.useExpressiveSurfaceContainers
+        val paletteStyle = LocalSakiPaletteStyle.current
+        // Build a scheme from the current track's seed using the same palette-style mapping
+        // as the app theme, so the unplayed bar (and any future role use) tracks the selected
+        // palette style automatically — new styles need no change here.
+        val artworkScheme = if (isExpressive && useDynamicArtworkColors) {
+            val model = remember(track.songId, serversById) {
+                track.queueArtworkModel(track.serverId?.let { serversById[it] })
+            }
+            rememberSakiExpressiveColorScheme(
+                seedColor = rememberArtworkSeed(model) ?: colorScheme.primary,
+                isDark = isDark,
+                paletteStyle = paletteStyle,
+            )
+        } else {
+            null
+        }
         val rawArtworkColors = if (useDynamicArtworkColors) {
             rememberMotionArtworkColors(
                 queue = visualSnapshot.queue,
@@ -561,6 +595,8 @@ fun NowPlayingOverlay(
                 position = artworkMotionState.position,
                 currentIndex = visualSnapshot.currentIndex,
                 freezePresentationUpdates = artworkMotionState.isScrollInProgress,
+                expressive = isExpressive,
+                isDark = isDark,
                 fallbackDominant = colorScheme.primary,
                 fallbackAccent = colorScheme.tertiary,
                 prewarmRadius = prewarmRadius,
@@ -593,7 +629,6 @@ fun NowPlayingOverlay(
                 SolidColor(colorScheme.background)
             }
         }
-        val isDark = colorScheme.background.luminance() < 0.5f
         val playButtonColor = remember(dominant, isDark) {
             val hsv = FloatArray(3)
             android.graphics.Color.colorToHSV(dominant.toArgb(), hsv)
@@ -603,14 +638,26 @@ fun NowPlayingOverlay(
         }
         val onPlayButtonColor = if (isDark) Color.White else Color.Black
         val onArtwork = onPlayButtonColor
-        val sliderActiveColor = remember(dominant, isDark) {
-            val hsv = FloatArray(3)
-            android.graphics.Color.colorToHSV(dominant.toArgb(), hsv)
-            hsv[1] = hsv[1].coerceIn(0.30f, 0.55f)
-            hsv[2] = if (isDark) 0.70f else 0.45f
-            Color(android.graphics.Color.HSVToColor(hsv))
+        val sliderActiveColor = remember(dominant, accent, isDark, isExpressive) {
+            if (isExpressive) {
+                accent
+            } else {
+                val hsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(dominant.toArgb(), hsv)
+                hsv[1] = hsv[1].coerceIn(0.30f, 0.55f)
+                hsv[2] = if (isDark) 0.70f else 0.45f
+                Color(android.graphics.Color.HSVToColor(hsv))
+            }
         }
-        val sliderInactiveColor = sliderActiveColor.copy(alpha = 0.25f)
+        val sliderInactiveColor = if (artworkScheme != null) {
+            // Take hue/chroma from the scheme's secondary (varies per palette style) but pin
+            // the tone to a visible band, so the unplayed track stays legible in dark mode
+            // instead of collapsing to the near-black secondaryContainer tone.
+            val sec = Hct.fromInt(artworkScheme.secondary.toArgb())
+            Color(Hct.from(sec.hue, sec.chroma.coerceAtMost(28.0), if (isDark) 52.0 else 80.0).toInt())
+        } else {
+            sliderActiveColor.copy(alpha = 0.25f)
+        }
         var sliderValue by remember(track.songId) {
             mutableFloatStateOf(playbackProgress.positionMs.toFloat())
         }
@@ -1922,12 +1969,25 @@ private fun rememberDisplayedArtworkColors(
 }
 
 @Composable
+private fun rememberArtworkSeed(model: Any?): Color? {
+    val context = LocalContext.current.applicationContext
+    var seed by remember(model) { mutableStateOf(model?.cachedArtworkPresentation()?.seedColor) }
+    LaunchedEffect(model) {
+        val target = model ?: return@LaunchedEffect
+        if (seed == null) seed = loadArtworkPresentation(context, target).seedColor
+    }
+    return seed
+}
+
+@Composable
 private fun rememberMotionArtworkColors(
     queue: List<PlaybackQueueItem>,
     serversById: Map<Long, ServerConfig>,
     position: Float,
     currentIndex: Int,
     freezePresentationUpdates: Boolean,
+    expressive: Boolean,
+    isDark: Boolean,
     fallbackDominant: Color,
     fallbackAccent: Color,
     prewarmRadius: Int,
@@ -2003,6 +2063,9 @@ private fun rememberMotionArtworkColors(
             ?.let { appliedPresentations[it]?.takeIf { presentation -> presentation.hasColors } }
             ?: cachedPresentation?.takeIf { presentation -> presentation.hasColors }
             ?: ArtworkPresentation()
+        if (expressive) {
+            presentation.seedColor?.let { return expressiveArtworkColors(it, isDark) }
+        }
         return ArtworkColors(
             dominant = presentation.dominantColor ?: fallbackDominant,
             accent = presentation.accentColor ?: fallbackAccent,
@@ -2021,9 +2084,20 @@ private fun rememberMotionArtworkColors(
 private data class ArtworkPresentation(
     val dominantColor: Color? = null,
     val accentColor: Color? = null,
+    val seedColor: Color? = null,
 ) {
     val hasColors: Boolean
-        get() = dominantColor != null || accentColor != null
+        get() = dominantColor != null || accentColor != null || seedColor != null
+}
+
+// Material Expressive: map the artwork seed to tonal roles via HCT. Chroma is clamped
+// (calmer than the raw swatch, vividness retained) and tones are fixed so contrast
+// between the accent, the background tint and on-surface text holds for any hue.
+private fun expressiveArtworkColors(seed: Color, isDark: Boolean): ArtworkColors {
+    val hct = Hct.fromInt(seed.toArgb())
+    val accent = Hct.from(hct.hue, hct.chroma.coerceIn(32.0, 64.0), if (isDark) 80.0 else 44.0)
+    val base = Hct.from(hct.hue, hct.chroma.coerceIn(8.0, 20.0), if (isDark) 26.0 else 92.0)
+    return ArtworkColors(dominant = Color(base.toInt()), accent = Color(accent.toInt()))
 }
 
 private class ReorderColorAnchor {
@@ -2342,6 +2416,7 @@ private fun NowPlayingLayeredArtwork(
 
 private const val ARTWORK_PRESENTATION_CACHE_ENTRIES = 64
 private const val ARTWORK_PREWARM_RADIUS_PAGES = 3
+private const val ARTWORK_SCORE_SAMPLE_COUNT = 16384
 private const val ARTWORK_BACKGROUND_SETTLE_MS = 180
 private const val ARTWORK_BUTTON_SKIP_CONFIRM_TIMEOUT_MS = 900L
 private const val ARTWORK_BUTTON_SKIP_INITIAL_VELOCITY_PAGES = 3.5f
@@ -2519,10 +2594,23 @@ private suspend fun decodeArtworkPresentation(
             ?: return@withContext ArtworkPresentation()
         val bitmap = image.toBitmap()
 
+        // Non-Expressive themes use the original Palette swatches (dominant + vibrant) at the
+        // original decode size, so their colors stay unchanged. Expressive additionally derives
+        // a seed via HCT quantize + Score (the Android 12 wallpaper-color algorithm): balances
+        // pixel population with chroma and filters near-grey / disliked hues. Score runs on a
+        // subsample (rather than a smaller decode) to keep quantize cost low; the fallback color
+        // is disabled so a fully-filtered (neutral) cover yields no seed and falls back to theme.
         val palette = Palette.from(bitmap).clearFilters().generate()
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val step = (pixels.size / ARTWORK_SCORE_SAMPLE_COUNT).coerceAtLeast(1)
+        val sampled = if (step <= 1) pixels else IntArray(pixels.size / step) { pixels[it * step] }
+        val seed = Score.score(QuantizerCelebi.quantize(sampled, 64), 4, null, true)
+            .firstOrNull()?.let(::Color)
         ArtworkPresentation(
             dominantColor = palette.getDominantColor(0).takeIf { it != 0 }?.let(::Color),
             accentColor = palette.getVibrantColor(0).takeIf { it != 0 }?.let(::Color),
+            seedColor = seed,
         )
     } catch (exception: CancellationException) {
         throw exception
