@@ -1173,7 +1173,7 @@ fun NowPlayingOverlay(
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth(),
                         state = queueListState,
-                        contentPadding = PaddingValues(bottom = 28.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
                         verticalArrangement = Arrangement.spacedBy(verticalSpacing),
                     ) {
                         itemsIndexed(playbackState.queue) { index, item ->
