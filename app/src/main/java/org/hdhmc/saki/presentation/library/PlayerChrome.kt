@@ -1002,7 +1002,12 @@ fun NowPlayingOverlay(
                         (playbackProgress.bufferedPositionMs.toFloat() / duration).coerceIn(0f, 1f)
                     } else 0f
                     val isCachedTrack = track.isCached || playbackState.isStreamCached
-                    val sliderColors = if (isCachedTrack) {
+                    // Once the buffer overlay reaches the end, switch to the solid "buffered" style
+                    // even if the disk cache isn't yet marked fully cached: the streaming overlay
+                    // (player + cache buffered position) and isStreamCached are different signals.
+                    val showCachedStyle = isCachedTrack ||
+                        (playbackProgress.durationMs > 0 && bufferFraction >= 0.999f)
+                    val sliderColors = if (showCachedStyle) {
                         SliderDefaults.colors(
                             thumbColor = sliderActiveColor,
                             activeTrackColor = sliderActiveColor,
@@ -1030,7 +1035,7 @@ fun NowPlayingOverlay(
                         },
                         valueRange = 0f..duration,
                         colors = sliderColors,
-                        modifier = if (!isCachedTrack) {
+                        modifier = if (!showCachedStyle) {
                             Modifier.drawBehind {
                                 val trackHeight = 4.dp.toPx()
                                 val y = size.height / 2
