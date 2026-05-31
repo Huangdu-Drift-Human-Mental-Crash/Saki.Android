@@ -204,8 +204,18 @@ class SakiPlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .apply {
-                preloadConfiguration =
+                preloadConfiguration = if (
+                    initialPrefs.bufferStrategy == BufferStrategy.CUSTOM &&
+                    initialPrefs.customBufferSeconds * 1_000L > CUSTOM_PLAYER_MAX_BUFFER_MS
+                ) {
+                    // Disk prefetch owns look-ahead in this mode. Next-item preload would hold the
+                    // same stream cache key and starve the prefetch, so the next track never fully
+                    // caches ahead (#292). Disable it; the fully-prefetched next track already gives
+                    // instant transitions from disk. NORMAL / short-CUSTOM keep preload (no prefetch).
+                    ExoPlayer.PreloadConfiguration.DEFAULT
+                } else {
                     ExoPlayer.PreloadConfiguration(10 * C.MICROS_PER_SECOND)
+                }
                 addListener(PlaybackRecoveryListener())
                 addListener(PlayQueueSaveListener())
                 addListener(NotificationMediaButtonListener())
@@ -574,8 +584,13 @@ class SakiPlaybackService : MediaSessionService() {
                 val isSatisfied = isStreamPrefetchSatisfied(request.serverId, request.songId, quality)
                 val isDeferred = isStreamPrefetchDeferred(targetKey, nowMs)
                 val trackEndFromCurrentMs = remainingTrackMs?.let { distanceFromCurrentMs + it }
+                // Only the current item is covered by the player's in-memory buffer. This planner
+                // runs only in the mode where next-item preload is disabled (#292), so upcoming
+                // tracks are NOT player-buffered and must be disk-prefetched even when their end
+                // falls within CUSTOM_PLAYER_MAX_BUFFER_MS.
                 val isHandledByPlayerBuffer =
-                    trackEndFromCurrentMs?.let { it <= CUSTOM_PLAYER_MAX_BUFFER_MS } == true
+                    index == currentIndex &&
+                        trackEndFromCurrentMs?.let { it <= CUSTOM_PLAYER_MAX_BUFFER_MS } == true
                 val targetState = when {
                     isSatisfied -> "done"
                     isDeferred -> "deferred"
