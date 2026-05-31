@@ -78,7 +78,13 @@ import okhttp3.OkHttpClient
 private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
 private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
 private const val STREAM_PREFETCH_REEVALUATION_MS = 30_000L
-private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
+// Backoff after a prefetch attempt cached 0 new bytes. This is only reached when the CacheWriter
+// returned without error but wrote nothing — i.e. the resource is momentarily locked by the player
+// caching the same track (the current item, or the next item being preloaded). Real failures throw
+// and are handled at the job level, so they never hit this path. Keep this short: the lock is held
+// only briefly, so a quick retry lets the prefetch fully cache the next track once it releases. A
+// long delay made the next track stall with just the ~10s preload instead of the configured buffer.
+private const val STREAM_PREFETCH_RETRY_DELAY_MS = 3_000L
 
 private fun Long.coerceKnownDuration(): Long? {
     return takeIf { it != C.TIME_UNSET && it > 0L }
