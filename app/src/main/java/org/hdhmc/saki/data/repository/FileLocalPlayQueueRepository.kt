@@ -8,6 +8,8 @@ import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.hdhmc.saki.di.IoDispatcher
 import org.hdhmc.saki.domain.model.ArtistRef
@@ -24,6 +26,7 @@ class FileLocalPlayQueueRepository internal constructor(
     private val ioDispatcher: CoroutineDispatcher,
 ) : LocalPlayQueueRepository {
     private val adapter = moshi.adapter(LocalPlayQueueSnapshotDto::class.java)
+    private val mutex = Mutex()
 
     @Inject
     constructor(
@@ -37,31 +40,37 @@ class FileLocalPlayQueueRepository internal constructor(
     )
 
     override suspend fun get(serverId: Long): LocalPlayQueueSnapshot? = withContext(ioDispatcher) {
-        val file = readableSnapshotFile(serverId) ?: return@withContext null
-        runCatching {
-            adapter.fromJson(file.readText())?.toDomain()
-        }.getOrNull()
+        mutex.withLock {
+            val file = readableSnapshotFile(serverId) ?: return@withLock null
+            runCatching {
+                adapter.fromJson(file.readText())?.toDomain()
+            }.getOrNull()
+        }
     }
 
     override suspend fun save(snapshot: LocalPlayQueueSnapshot): Unit = withContext(ioDispatcher) {
-        if (snapshot.songs.isEmpty()) {
-            snapshotFile(snapshot.serverId).delete()
-            snapshotBackupFile(snapshot.serverId).delete()
-            return@withContext
+        mutex.withLock {
+            if (snapshot.songs.isEmpty()) {
+                snapshotFile(snapshot.serverId).delete()
+                snapshotBackupFile(snapshot.serverId).delete()
+                return@withLock
+            }
+            directory.mkdirs()
+            val target = snapshotFile(snapshot.serverId)
+            writeSnapshotFile(
+                target = target,
+                backup = snapshotBackupFile(snapshot.serverId),
+                json = adapter.toJson(snapshot.toDto()),
+                serverId = snapshot.serverId,
+            )
         }
-        directory.mkdirs()
-        val target = snapshotFile(snapshot.serverId)
-        writeSnapshotFile(
-            target = target,
-            backup = snapshotBackupFile(snapshot.serverId),
-            json = adapter.toJson(snapshot.toDto()),
-            serverId = snapshot.serverId,
-        )
     }
 
     override suspend fun clear(serverId: Long): Unit = withContext(ioDispatcher) {
-        snapshotFile(serverId).delete()
-        snapshotBackupFile(serverId).delete()
+        mutex.withLock {
+            snapshotFile(serverId).delete()
+            snapshotBackupFile(serverId).delete()
+        }
     }
 
     private fun snapshotFile(serverId: Long): File = File(directory, "server_$serverId.json")
