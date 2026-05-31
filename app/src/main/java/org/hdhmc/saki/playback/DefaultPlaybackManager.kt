@@ -345,6 +345,19 @@ class DefaultPlaybackManager @Inject constructor(
         positionMs: Long,
     ) {
         if (songs.isEmpty()) return
+        // If a shuffle order was persisted, the queue was effectively concrete (enabling shuffle
+        // cancels virtual windowing), so restore it as a plain queue to re-apply the saved shuffle
+        // instead of dropping it and wiping the saved state.
+        if (playbackPreferencesRepository.getShuffleState() != null) {
+            val safeOffset = libraryOffset.coerceAtLeast(0)
+            restoreQueue(
+                serverId = serverId,
+                songs = songs,
+                startIndex = (currentLibraryIndex.coerceAtLeast(0) - safeOffset).coerceIn(songs.indices),
+                positionMs = positionMs.coerceAtLeast(0L),
+            )
+            return
+        }
         startLibraryQueue(
             serverId = serverId,
             seedSongs = songs,
