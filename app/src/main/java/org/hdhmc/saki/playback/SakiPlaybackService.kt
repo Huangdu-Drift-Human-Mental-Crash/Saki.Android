@@ -204,18 +204,7 @@ class SakiPlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .apply {
-                preloadConfiguration = if (
-                    initialPrefs.bufferStrategy == BufferStrategy.CUSTOM &&
-                    initialPrefs.customBufferSeconds * 1_000L > CUSTOM_PLAYER_MAX_BUFFER_MS
-                ) {
-                    // Disk prefetch owns look-ahead in this mode. Next-item preload would hold the
-                    // same stream cache key and starve the prefetch, so the next track never fully
-                    // caches ahead (#292). Disable it; the fully-prefetched next track already gives
-                    // instant transitions from disk. NORMAL / short-CUSTOM keep preload (no prefetch).
-                    ExoPlayer.PreloadConfiguration.DEFAULT
-                } else {
-                    ExoPlayer.PreloadConfiguration(10 * C.MICROS_PER_SECOND)
-                }
+                preloadConfiguration = preloadConfigurationFor(initialPrefs)
                 addListener(PlaybackRecoveryListener())
                 addListener(PlayQueueSaveListener())
                 addListener(NotificationMediaButtonListener())
@@ -262,8 +251,12 @@ class SakiPlaybackService : MediaSessionService() {
 
         // Keep playback prefs in memory for the non-suspend ResolvingDataSource resolver
         playerScope.launch {
-            playbackPreferencesRepository.observePreferences().collect {
-                cachedPlaybackPrefs = it
+            playbackPreferencesRepository.observePreferences().collect { prefs ->
+                cachedPlaybackPrefs = prefs
+                // Keep preload in sync with the same live state the prefetch planner uses, so a
+                // mid-session switch into CUSTOM-long mode can't run prefetch while preload is
+                // still on (which would reintroduce the cache-key contention).
+                player?.preloadConfiguration = preloadConfigurationFor(prefs)
                 syncCurrentStreamPrefetch()
             }
         }
@@ -537,12 +530,26 @@ class SakiPlaybackService : MediaSessionService() {
             .build()
     }
 
+    private fun usesDiskPrefetch(prefs: PlaybackPreferences): Boolean =
+        prefs.bufferStrategy == BufferStrategy.CUSTOM &&
+            prefs.customBufferSeconds * 1_000L > CUSTOM_PLAYER_MAX_BUFFER_MS
+
+    // Disk prefetch owns look-ahead in CUSTOM-long mode. Next-item preload would hold the same
+    // stream cache key and starve the prefetch, so the next track never fully caches ahead (#292).
+    // Disable preload there; the fully-prefetched next track gives instant transitions from disk.
+    // NORMAL / short-CUSTOM keep the 10s preload (no disk prefetch).
+    private fun preloadConfigurationFor(prefs: PlaybackPreferences): ExoPlayer.PreloadConfiguration =
+        if (usesDiskPrefetch(prefs)) {
+            ExoPlayer.PreloadConfiguration.DEFAULT
+        } else {
+            ExoPlayer.PreloadConfiguration(10 * C.MICROS_PER_SECOND)
+        }
+
     private fun ExoPlayer.buildStreamPrefetchPlan(prefs: PlaybackPreferences): StreamPrefetchPlan? {
         val customBufferMs = prefs.customBufferSeconds * 1_000L
         val currentIndex = currentMediaItemIndex
         if (
-            prefs.bufferStrategy != BufferStrategy.CUSTOM ||
-            customBufferMs <= CUSTOM_PLAYER_MAX_BUFFER_MS ||
+            !usesDiskPrefetch(prefs) ||
             playbackState == Player.STATE_IDLE ||
             playbackState == Player.STATE_ENDED ||
             currentIndex == C.INDEX_UNSET ||
