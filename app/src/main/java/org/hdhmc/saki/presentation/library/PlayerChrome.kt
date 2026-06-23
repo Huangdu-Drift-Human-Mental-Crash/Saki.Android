@@ -453,6 +453,7 @@ fun NowPlayingOverlay(
     useDynamicArtworkColors: Boolean = true,
     useGradientBackground: Boolean = true,
     useArtworkMotion: Boolean = true,
+    useArtworkBackdrop: Boolean = false,
     artworkPrewarmRadius: Int = ARTWORK_PREWARM_RADIUS_PAGES,
 ) {
     val visuals = SakiTheme.visuals
@@ -594,7 +595,7 @@ fun NowPlayingOverlay(
                 serversById = serversById,
                 position = artworkMotionState.position,
                 currentIndex = visualSnapshot.currentIndex,
-                freezePresentationUpdates = artworkMotionState.isScrollInProgress,
+                freezePresentationUpdates = artworkMotionState.isScrollInProgress || visualSkipRequest != null,
                 expressive = isExpressive,
                 isDark = isDark,
                 fallbackDominant = colorScheme.primary,
@@ -841,6 +842,7 @@ fun NowPlayingOverlay(
                             motionState = artworkMotionState,
                             visualSkipRequest = visualSkipRequest,
                             useProgrammaticMotion = useArtworkMotion,
+                            useArtworkBackdrop = useArtworkBackdrop,
                             modifier = Modifier.fillMaxSize(),
                             onArtworkClick = {
                                 if (showLyrics) showLyrics = false
@@ -2015,9 +2017,8 @@ private fun rememberMotionArtworkColors(
     var appliedPresentations by remember { mutableStateOf<Map<String, ArtworkPresentation>>(emptyMap()) }
     // While the queue is reordered under us (e.g. toggling shuffle) the pager
     // position briefly indexes a different song in the new order, which flashes
-    // the background gradient. Anchor sampling to the current track until the
-    // pager position resyncs. User swipes don't reorder the queue, so the live
-    // position is used as before and swipe/skip blending is unaffected.
+    // the background gradient. During artwork motion, keep the background fixed
+    // too, so the full player does not recompose on every pager offset tick.
     val orderKeys = remember(queue) { queue.map { it.mediaId } }
     val anchor = remember { ReorderColorAnchor() }
     if (anchor.orderKeys != orderKeys) {
@@ -2026,7 +2027,7 @@ private fun rememberMotionArtworkColors(
         anchor.initialized = true
     }
     if (position.roundToInt() == currentIndex) anchor.active = false
-    val effectivePosition = if (anchor.active && !freezePresentationUpdates) {
+    val effectivePosition = if (freezePresentationUpdates || anchor.active) {
         currentIndex.toFloat()
     } else {
         position
@@ -2130,6 +2131,7 @@ private fun NowPlayingArtworkPagerHost(
     motionState: NowPlayingArtworkMotionState,
     visualSkipRequest: ArtworkPageRequest?,
     useProgrammaticMotion: Boolean,
+    useArtworkBackdrop: Boolean,
     modifier: Modifier = Modifier,
     onArtworkClick: () -> Unit,
     onUserSelectQueueItem: (Int) -> Unit,
@@ -2313,6 +2315,7 @@ private fun NowPlayingArtworkPagerHost(
             NowPlayingArtworkFrame(
                 item = stableQueue.getOrNull(page),
                 serversById = serversById,
+                showBackdrop = useArtworkBackdrop && !motionState.isScrollInProgress,
                 modifier = Modifier.fillMaxSize(),
                 onClick = { latestOnArtworkClick() },
             )
@@ -2324,6 +2327,7 @@ private fun NowPlayingArtworkPagerHost(
 private fun NowPlayingArtworkFrame(
     item: PlaybackQueueItem?,
     serversById: Map<Long, ServerConfig>,
+    showBackdrop: Boolean,
     modifier: Modifier = Modifier,
     contentModifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
@@ -2352,6 +2356,7 @@ private fun NowPlayingArtworkFrame(
             NowPlayingLayeredArtwork(
                 model = artworkModel,
                 contentDescription = item?.title,
+                showBackdrop = showBackdrop,
                 modifier = frameModifier,
             )
         } else {
@@ -2370,6 +2375,7 @@ private fun NowPlayingArtworkFrame(
 private fun NowPlayingLayeredArtwork(
     model: Any,
     contentDescription: String?,
+    showBackdrop: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -2381,8 +2387,8 @@ private fun NowPlayingLayeredArtwork(
             .build()
     }
     val painter = rememberAsyncImagePainter(model = imageRequest)
-    val backdropRenderEffect = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    val backdropRenderEffect = remember(showBackdrop) {
+        if (showBackdrop && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             RenderEffect.createBlurEffect(
                 NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX,
                 NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX,
@@ -2400,7 +2406,7 @@ private fun NowPlayingLayeredArtwork(
             ),
         ),
     ) {
-        if (backdropRenderEffect != null) {
+        if (showBackdrop && backdropRenderEffect != null) {
             Image(
                 painter = painter,
                 contentDescription = null,

@@ -26,6 +26,7 @@ data class VisualEffectsPolicy(
     val useNowPlayingDynamicArtworkColors: Boolean,
     val useNowPlayingGradientBackground: Boolean,
     val useNowPlayingArtworkMotion: Boolean,
+    val useNowPlayingArtworkBackdrop: Boolean,
     val nowPlayingArtworkPrewarmRadius: Int,
 )
 
@@ -47,10 +48,12 @@ private fun detectVisualEffectsPolicy(context: Context): VisualEffectsPolicy {
         useNowPlayingDynamicArtworkColors = richNowPlayingEffects,
         useNowPlayingGradientBackground = richNowPlayingEffects,
         useNowPlayingArtworkMotion = capability.tier != DeviceCapabilityTier.LOW,
+        useNowPlayingArtworkBackdrop = capability.tier == DeviceCapabilityTier.HIGH,
         nowPlayingArtworkPrewarmRadius = when (capability.tier) {
             DeviceCapabilityTier.LOW -> LOW_ARTWORK_PREWARM_RADIUS
             DeviceCapabilityTier.LEGACY -> LEGACY_ARTWORK_PREWARM_RADIUS
-            DeviceCapabilityTier.STANDARD, DeviceCapabilityTier.HIGH -> RICH_ARTWORK_PREWARM_RADIUS
+            DeviceCapabilityTier.STANDARD -> STANDARD_ARTWORK_PREWARM_RADIUS
+            DeviceCapabilityTier.HIGH -> HIGH_ARTWORK_PREWARM_RADIUS
         },
     )
 }
@@ -85,5 +88,6 @@ private const val UNKNOWN_MEMORY_CLASS_MB = 0
 private const val LOW_MEMORY_CLASS_MB = 128
 private const val HIGH_MEMORY_CLASS_MB = 384
 private const val LOW_ARTWORK_PREWARM_RADIUS = 0
-private const val LEGACY_ARTWORK_PREWARM_RADIUS = 1
-private const val RICH_ARTWORK_PREWARM_RADIUS = 3
+private const val LEGACY_ARTWORK_PREWARM_RADIUS = 0
+private const val STANDARD_ARTWORK_PREWARM_RADIUS = 1
+private const val HIGH_ARTWORK_PREWARM_RADIUS = 2
