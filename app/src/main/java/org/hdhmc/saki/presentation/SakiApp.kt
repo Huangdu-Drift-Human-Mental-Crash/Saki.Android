@@ -529,6 +529,7 @@ private fun NowPlayingOverlayHost(
         useDynamicArtworkColors = visualEffectsPolicy.useNowPlayingDynamicArtworkColors,
         useGradientBackground = visualEffectsPolicy.useNowPlayingGradientBackground,
         useArtworkMotion = visualEffectsPolicy.useNowPlayingArtworkMotion,
+        useArtworkBackdrop = visualEffectsPolicy.useNowPlayingArtworkBackdrop,
         artworkPrewarmRadius = visualEffectsPolicy.nowPlayingArtworkPrewarmRadius,
     )
 }
