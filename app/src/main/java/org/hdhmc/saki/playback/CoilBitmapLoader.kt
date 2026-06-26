@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.session.BitmapLoader
+import androidx.media3.common.util.BitmapLoader
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult

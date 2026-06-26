@@ -87,7 +87,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -714,7 +715,7 @@ fun NowPlayingOverlay(
             val showQueueAffordance = playbackState.queue.size > 1
 
             // Queue bottom sheet state
-            val queueSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+            val queueSheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
             var showQueueSheet by remember { mutableStateOf(false) }
             val latestOpenQueueSheet by rememberUpdatedState { showQueueSheet = true }
             val dismissSwipeModifier = Modifier.pointerInput(visible) {

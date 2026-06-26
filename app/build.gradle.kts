@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.gradle.api.tasks.compile.JavaCompile
 
 plugins {
     alias(libs.plugins.android.application)
@@ -64,7 +65,7 @@ android {
     defaultConfig {
         applicationId = "org.hdhmc.saki"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 37
         versionCode = versionCodeFromName(sakiVersionName)
         versionName = sakiVersionName
 
@@ -102,6 +103,25 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+    packaging {
+        jniLibs {
+            keepDebugSymbols += listOf(
+                "**/libandroidx.graphics.path.so",
+                "**/libdatastore_shared_counter.so",
+            )
+        }
+    }
+}
+// Moshi codegen is configured through KSP, but its artifact also exposes a
+// legacy javac processor service. Hilt's Java compile tasks need annotation
+// processing, so keep javac processing enabled and remove only the Moshi
+// processor jar to avoid the KAPT deprecation warning.
+afterEvaluate {
+    tasks.withType<JavaCompile>().configureEach {
+        options.annotationProcessorPath = options.annotationProcessorPath?.filter { file ->
+            !file.name.startsWith("moshi-kotlin-codegen")
+        }
     }
 }
 

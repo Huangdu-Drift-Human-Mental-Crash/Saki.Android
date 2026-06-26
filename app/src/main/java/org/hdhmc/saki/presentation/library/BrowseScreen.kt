@@ -49,6 +49,7 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.History
@@ -56,7 +57,6 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -1737,7 +1737,7 @@ private fun AlbumFeedControls(
             Icon(
                 imageVector = when (nextMode) {
                     AlbumViewMode.GRID -> Icons.Rounded.GridView
-                    AlbumViewMode.LIST -> Icons.Rounded.ViewList
+                    AlbumViewMode.LIST -> Icons.AutoMirrored.Rounded.ViewList
                 },
                 contentDescription = contentDescription,
             )
