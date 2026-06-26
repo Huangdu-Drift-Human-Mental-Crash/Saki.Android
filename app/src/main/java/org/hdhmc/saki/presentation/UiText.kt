@@ -16,7 +16,7 @@ sealed interface UiText {
     }
 
     data class Resource(
-        @StringRes val id: Int,
+        @param:StringRes val id: Int,
         val args: List<Any> = emptyList(),
     ) : UiText {
         override fun asString(context: Context): String {
@@ -30,7 +30,7 @@ sealed interface UiText {
     }
 
     data class Plural(
-        @PluralsRes
+        @param:PluralsRes
         val id: Int,
         val quantity: Int,
         val args: List<Any> = emptyList(),
@@ -62,7 +62,7 @@ fun Throwable.localizedOr(@StringRes fallback: Int): UiText {
     return if (detail != null) UiText.Dynamic(detail) else UiText.Resource(fallback)
 }
 
-enum class SnackbarAction(@StringRes val labelRes: Int) {
+enum class SnackbarAction(@param:StringRes val labelRes: Int) {
     RESTART(R.string.snackbar_restart),
 }
 

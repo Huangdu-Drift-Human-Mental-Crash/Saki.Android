@@ -16,7 +16,7 @@ import org.hdhmc.saki.R
  * [key] is the stable identifier persisted as the `themeSeedKey` preference; [nameRes] is
  * the localized display label shown by the Settings theme-color picker.
  */
-data class SakiThemePreset(val key: String, val seed: Color, @StringRes val nameRes: Int)
+data class SakiThemePreset(val key: String, val seed: Color, @param:StringRes val nameRes: Int)
 
 /**
  * Curated presets spanning the hue wheel. [HarborBlue] stays first as the brand default.

@@ -38,9 +38,9 @@ Saki.Android is an Android music player for subsonic compatible music servers in
 
 - [AndroidX Core KTX 1.18.0](https://developer.android.com/jetpack/androidx/releases/core), [AndroidX Lifecycle 2.10.0](https://developer.android.com/jetpack/androidx/releases/lifecycle), and [AndroidX Activity Compose 1.13.0](https://developer.android.com/jetpack/androidx/releases/activity)
 
-- [Hilt 2.57.1](https://dagger.dev/hilt/) for dependency injection
+- [Hilt 2.59.2](https://dagger.dev/hilt/) for dependency injection
 
-- [KSP (Kotlin Symbol Processing) 2.3.4](https://github.com/google/ksp) for code generation (Hilt, Room, Moshi)
+- [KSP (Kotlin Symbol Processing) 2.3.9](https://github.com/google/ksp) for code generation (Hilt, Room, Moshi)
 
 - [Room 2.8.4](https://developer.android.com/jetpack/androidx/releases/room) for local database/storage
 
