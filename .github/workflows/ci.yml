@@ -33,6 +33,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    env:
+      HAS_RELEASE_SIGNING: ${{ secrets.SAKI_RELEASE_KEYSTORE_BASE64 != '' && secrets.SAKI_RELEASE_STORE_PASSWORD != '' && secrets.SAKI_RELEASE_KEY_ALIAS != '' && secrets.SAKI_RELEASE_KEY_PASSWORD != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +51,21 @@ jobs:
       - name: Build debug
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Prepare release signing
+        if: env.HAS_RELEASE_SIGNING == 'true'
+        env:
+          SAKI_RELEASE_KEYSTORE_BASE64: ${{ secrets.SAKI_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$SAKI_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/saki-release.jks"
+
+      - name: Build release
+        env:
+          SAKI_RELEASE_STORE_FILE: ${{ runner.temp }}/saki-release.jks
+          SAKI_RELEASE_STORE_PASSWORD: ${{ secrets.SAKI_RELEASE_STORE_PASSWORD }}
+          SAKI_RELEASE_KEY_ALIAS: ${{ secrets.SAKI_RELEASE_KEY_ALIAS }}
+          SAKI_RELEASE_KEY_PASSWORD: ${{ secrets.SAKI_RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
@@ -58,5 +75,14 @@ jobs:
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload release APK
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30

@@ -1,9 +1,58 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.room)
+}
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.isFile) {
+        localPropertiesFile.inputStream().use(::load)
+    }
+}
+
+fun localProperty(name: String): String? =
+    localProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+
+fun releaseProperty(localName: String, environmentName: String): String? =
+    localProperty(localName) ?: providers.environmentVariable(environmentName).orNull
+        ?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = releaseProperty("releaseStoreFile", "SAKI_RELEASE_STORE_FILE")
+val releaseStorePassword = releaseProperty("releaseStorePassword", "SAKI_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = releaseProperty("releaseKeyAlias", "SAKI_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = releaseProperty("releaseKeyPassword", "SAKI_RELEASE_KEY_PASSWORD")
+
+val hasReleaseSigningProperties = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
+
+val sakiVersionName = providers.gradleProperty("saki.versionName")
+    .orElse("0.1.0")
+    .get()
+
+fun versionCodeFromName(versionName: String): Int {
+    val versionCore = versionName.substringBefore('-').substringBefore('+')
+    val parts = versionCore.split('.')
+    require(parts.size == 3) {
+        "saki.versionName must use MAJOR.MINOR.PATCH, but was '$versionName'"
+    }
+    val (major, minor, patch) = parts.mapIndexed { index, part ->
+        part.toIntOrNull() ?: error(
+            "saki.versionName component ${index + 1} must be numeric, but was '$versionName'"
+        )
+    }
+    require(major >= 0) { "saki.versionName major must be >= 0, but was '$versionName'" }
+    require(minor in 0..99) { "saki.versionName minor must be 0..99, but was '$versionName'" }
+    require(patch in 0..99) { "saki.versionName patch must be 0..99, but was '$versionName'" }
+    return major * 10_000 + minor * 100 + patch
 }
 
 android {
@@ -16,15 +65,30 @@ android {
         applicationId = "org.hdhmc.saki"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = versionCodeFromName(sakiVersionName)
+        versionName = sakiVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigningProperties) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            if (hasReleaseSigningProperties) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
