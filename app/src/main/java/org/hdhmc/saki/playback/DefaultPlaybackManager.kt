@@ -1060,7 +1060,7 @@ class DefaultPlaybackManager @Inject constructor(
     override suspend fun seekTo(positionMs: Long) {
         withController { activeController ->
             activeController.seekTo(positionMs.coerceAtLeast(0L))
-            syncState(activeController)
+            syncProgress(activeController)
         }
     }
 

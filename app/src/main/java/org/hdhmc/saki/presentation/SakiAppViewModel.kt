@@ -28,6 +28,8 @@ import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
 import org.hdhmc.saki.domain.model.regroupByLocale
 import org.hdhmc.saki.domain.model.PlaybackProgressState
+import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.PlaylistSummary
@@ -55,9 +57,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +70,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -73,6 +79,7 @@ private const val PLAYLIST_DETAIL_PREFETCH_LIMIT = 12
 private const val PLAYLIST_DETAIL_PREFETCH_MAX_SONGS = 500
 private const val SONG_METADATA_SYNC_PAGE_SIZE = 500
 private const val SONGS_DISPLAY_WINDOW_SIZE = 5_000
+private const val DEFERRED_STREAM_CACHE_SUMMARY_REFRESH_MS = 5_000L
 
 @HiltViewModel
 @OptIn(FlowPreview::class)
@@ -97,11 +104,40 @@ class SakiAppViewModel @Inject constructor(
     private val searchQueryFlow = MutableStateFlow("")
     private var lastLoadedServerId: Long? = null
     private var appliedDefaultBrowsePreference = false
+    private var deferredStreamCacheSummaryJob: Job? = null
 
     private val mutableEndpointStatus = MutableStateFlow(EndpointStatus())
     val endpointStatus: StateFlow<EndpointStatus> = mutableEndpointStatus.asStateFlow()
 
     val uiState = mutableUiState.asStateFlow()
+    val rootUiState: StateFlow<SakiRootUiState> = mutableUiState
+        .map(SakiAppUiState::toRootUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toRootUiState())
+    val browseUiState: StateFlow<SakiBrowseUiState> = mutableUiState
+        .map(SakiAppUiState::toBrowseUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toBrowseUiState())
+    val browsePlaybackUiState: StateFlow<SakiBrowsePlaybackUiState> = mutableUiState
+        .map(SakiAppUiState::toBrowsePlaybackUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toBrowsePlaybackUiState())
+    val browseAvailabilityUiState: StateFlow<SakiBrowseAvailabilityUiState> = mutableUiState
+        .map(SakiAppUiState::toBrowseAvailabilityUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toBrowseAvailabilityUiState())
+    val settingsUiState: StateFlow<SakiSettingsUiState> = mutableUiState
+        .map(SakiAppUiState::toSettingsUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toSettingsUiState())
+    val capsuleUiState: StateFlow<SakiCapsuleUiState> = mutableUiState
+        .map(SakiAppUiState::toCapsuleUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toCapsuleUiState())
+    val nowPlayingUiState: StateFlow<SakiNowPlayingUiState> = mutableUiState
+        .map(SakiAppUiState::toNowPlayingUiState)
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toNowPlayingUiState())
     val playbackProgress: StateFlow<PlaybackProgressState> = playbackManager.playbackProgress
     val messages = snackbarMessages.asSharedFlow()
     val openNowPlayingRequests = openNowPlayingRequestsFlow.asSharedFlow()
@@ -171,7 +207,9 @@ class SakiAppViewModel @Inject constructor(
 
         viewModelScope.launch {
             streamCacheRepository.observeCacheVersion().collectLatest {
-                refreshCacheStorageSummary(uiState.value.selectedServerId)
+                if (it > 0L) {
+                    scheduleStreamCacheStorageSummaryRefresh(uiState.value.selectedServerId, delayMs = 500L)
+                }
             }
         }
 
@@ -1196,7 +1234,7 @@ class SakiAppViewModel @Inject constructor(
                         UiText.resource(R.string.message_no_stream_cache_to_clear)
                     }),
                 )
-                refreshCacheStorageSummary(targetServerId)
+                refreshCacheStorageSummary(targetServerId, includeStreamCacheSummary = true)
             }.onFailure { throwable ->
                 snackbarMessages.emit(SnackbarMessage(throwable.localizedOr(R.string.error_clear_stream_cache)))
             }
@@ -1206,17 +1244,27 @@ class SakiAppViewModel @Inject constructor(
     fun clearImageCache() {
         viewModelScope.launch {
             runCatching {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                withContext(Dispatchers.IO) {
                     val dir = appContext.cacheDir.resolve("image_cache")
                     dir.deleteRecursively()
                     dir.mkdirs()
                 }
             }.onSuccess {
                 snackbarMessages.emit(SnackbarMessage(UiText.resource(R.string.message_cover_art_cache_cleared)))
-                refreshCacheStorageSummary(uiState.value.selectedServerId)
+                refreshCacheStorageSummary(uiState.value.selectedServerId, includeImageCacheBytes = true)
             }.onFailure { throwable ->
                 snackbarMessages.emit(SnackbarMessage(throwable.localizedOr(R.string.error_clear_cover_art_cache)))
             }
+        }
+    }
+
+    fun refreshSettingsCacheStorageSummary() {
+        viewModelScope.launch {
+            refreshCacheStorageSummary(
+                serverId = uiState.value.selectedServerId,
+                includeStreamCacheSummary = true,
+                includeImageCacheBytes = true,
+            )
         }
     }
 
@@ -1434,6 +1482,16 @@ class SakiAppViewModel @Inject constructor(
                 hasLoadedSongsFromNetwork = if (serverChanged) false else state.hasLoadedSongsFromNetwork,
                 isSongsLoadingPrevious = if (serverChanged) false else state.isSongsLoadingPrevious,
                 isSongsLoadingMore = if (serverChanged) false else state.isSongsLoadingMore,
+                cacheStorageSummary = if (serverChanged) {
+                    state.cacheStorageSummary.copy(
+                        streamCachedSongCount = 0,
+                        streamCacheBytes = 0,
+                        hasStreamingCache = false,
+                    )
+                } else {
+                    state.cacheStorageSummary
+                },
+                streamCachedSongIds = if (serverChanged) emptySet() else state.streamCachedSongIds,
             )
         }
         if (serverChanged) {
@@ -1443,6 +1501,7 @@ class SakiAppViewModel @Inject constructor(
         viewModelScope.launch {
             refreshCacheStorageSummary(selectedServerId)
         }
+        scheduleStreamCacheStorageSummaryRefresh(selectedServerId)
 
         if (selectedServerId != null && (serverChanged || lastLoadedServerId != selectedServerId)) {
             // Show cached content immediately, then probe + network refresh
@@ -1476,26 +1535,56 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
-    private suspend fun refreshCacheStorageSummary(serverId: Long?) {
+    private suspend fun refreshCacheStorageSummary(
+        serverId: Long?,
+        includeStreamCacheSummary: Boolean = false,
+        includeImageCacheBytes: Boolean = false,
+    ) {
         val downloadSummary = cachedSongRepository.getCacheStorageSummary(serverId)
-        val fullStreamSummary = streamCacheRepository.getStreamCacheSummary(serverId)
-        val imageCacheDir = appContext.cacheDir.resolve("image_cache")
-        val imageCacheBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            imageCacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        val fullStreamSummary = if (includeStreamCacheSummary) {
+            streamCacheRepository.getStreamCacheSummary(serverId)
+        } else {
+            null
+        }
+        val imageCacheBytes = if (includeImageCacheBytes) {
+            withContext(Dispatchers.IO) {
+                val imageCacheDir = appContext.cacheDir.resolve("image_cache")
+                imageCacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+            }
+        } else {
+            null
         }
         mutableUiState.update { state ->
             if (state.selectedServerId == serverId) {
+                val currentSummary = state.cacheStorageSummary
+                val currentImageCacheBytes = imageCacheBytes ?: state.cacheStorageSummary.imageCacheBytes
                 state.copy(
                     cacheStorageSummary = downloadSummary.copy(
-                        streamCachedSongCount = fullStreamSummary.cachedSongIds.size,
-                        streamCacheBytes = fullStreamSummary.bytes,
-                        hasStreamingCache = true,
-                        imageCacheBytes = imageCacheBytes,
+                        streamCachedSongCount = fullStreamSummary?.cachedSongIds?.size
+                            ?: currentSummary.streamCachedSongCount,
+                        streamCacheBytes = fullStreamSummary?.bytes
+                            ?: currentSummary.streamCacheBytes,
+                        hasStreamingCache = fullStreamSummary != null || currentSummary.hasStreamingCache,
+                        imageCacheBytes = currentImageCacheBytes,
                     ),
-                    streamCachedSongIds = fullStreamSummary.cachedSongIds,
+                    streamCachedSongIds = fullStreamSummary?.cachedSongIds ?: state.streamCachedSongIds,
                 )
             } else {
                 state
+            }
+        }
+    }
+
+    private fun scheduleStreamCacheStorageSummaryRefresh(
+        serverId: Long?,
+        delayMs: Long = DEFERRED_STREAM_CACHE_SUMMARY_REFRESH_MS,
+    ) {
+        deferredStreamCacheSummaryJob?.cancel()
+        if (serverId == null) return
+        deferredStreamCacheSummaryJob = viewModelScope.launch {
+            delay(delayMs)
+            if (uiState.value.selectedServerId == serverId) {
+                refreshCacheStorageSummary(serverId, includeStreamCacheSummary = true)
             }
         }
     }
@@ -2451,6 +2540,201 @@ data class SakiAppUiState(
     val albumsError: UiText?
         get() = selectedAlbumFeedState.error
 }
+
+data class SakiRootUiState(
+    val isAppReady: Boolean = false,
+    val textScale: TextScale = TextScale.DEFAULT,
+    val appPreferences: AppPreferences = AppPreferences(),
+)
+
+data class SakiCapsuleUiState(
+    val track: PlaybackQueueItem? = null,
+    val isPlaying: Boolean = false,
+    val currentServer: ServerConfig? = null,
+)
+
+data class SakiNowPlayingUiState(
+    val playbackState: PlaybackSessionState = PlaybackSessionState(),
+    val servers: List<ServerConfig> = emptyList(),
+    val selectedServerId: Long? = null,
+    val libraryIndexes: LibraryIndexes? = null,
+    val currentLyrics: SongLyrics? = null,
+)
+
+data class SakiBrowsePlaybackUiState(
+    val currentPlaybackSongId: String? = null,
+    val isPlaying: Boolean = false,
+)
+
+data class SakiBrowseAvailabilityUiState(
+    val selectedServerId: Long? = null,
+    val cachedSongs: List<CachedSong> = emptyList(),
+    val streamCachedSongIds: Set<String> = emptySet(),
+    val downloadingSongIds: Set<String> = emptySet(),
+)
+
+data class SakiBrowseUiState(
+    val appPreferences: AppPreferences = AppPreferences(),
+    val selectedBrowseSection: BrowseSection = BrowseSection.ARTISTS,
+    val servers: List<ServerConfig> = emptyList(),
+    val selectedServerId: Long? = null,
+    val selectedAlbumFeed: AlbumListType = AlbumListType.NEWEST,
+    val libraryIndexes: LibraryIndexes? = null,
+    val isArtistsLoading: Boolean = false,
+    val artistsError: UiText? = null,
+    val selectedArtist: Artist? = null,
+    val selectedArtistSongs: List<Song> = emptyList(),
+    val selectedArtistSongsAreTopSongs: Boolean = true,
+    val isArtistLoading: Boolean = false,
+    val artistError: UiText? = null,
+    val albumFeeds: Map<AlbumListType, AlbumFeedState> = emptyAlbumFeedStates(),
+    val selectedAlbum: Album? = null,
+    val isAlbumLoading: Boolean = false,
+    val albumError: UiText? = null,
+    val playlists: List<PlaylistSummary> = emptyList(),
+    val isPlaylistsLoading: Boolean = false,
+    val playlistsError: UiText? = null,
+    val selectedPlaylist: Playlist? = null,
+    val isPlaylistLoading: Boolean = false,
+    val playlistError: UiText? = null,
+    val songs: List<Song> = emptyList(),
+    val songsOffset: Int = 0,
+    val hasPreviousSongs: Boolean = false,
+    val hasMoreSongs: Boolean = true,
+    val isSongsLoading: Boolean = false,
+    val isSongsLoadingPrevious: Boolean = false,
+    val isSongsLoadingMore: Boolean = false,
+    val songsError: UiText? = null,
+    val isSearchActive: Boolean = false,
+    val searchQuery: String = "",
+    val searchResults: SearchResults = SearchResults(),
+    val isSearchLoading: Boolean = false,
+    val searchError: UiText? = null,
+    val recentSearchQueries: List<String> = emptyList(),
+) {
+    fun albumFeedState(type: AlbumListType): AlbumFeedState {
+        return albumFeeds[type] ?: AlbumFeedState(hasMore = type.supportsPagination())
+    }
+
+    val selectedAlbumFeedState: AlbumFeedState
+        get() = albumFeedState(selectedAlbumFeed)
+    val albums: List<AlbumSummary>
+        get() = selectedAlbumFeedState.albums
+    val isAlbumsLoading: Boolean
+        get() = selectedAlbumFeedState.isLoading
+    val hasMoreAlbums: Boolean
+        get() = selectedAlbumFeedState.hasMore
+    val isLoadingMoreAlbums: Boolean
+        get() = selectedAlbumFeedState.isLoadingMore
+    val albumsError: UiText?
+        get() = selectedAlbumFeedState.error
+}
+
+data class SakiSettingsUiState(
+    val appPreferences: AppPreferences = AppPreferences(),
+    val textScale: TextScale = TextScale.DEFAULT,
+    val servers: List<ServerConfig> = emptyList(),
+    val selectedServerId: Long? = null,
+    val cachedSongs: List<CachedSong> = emptyList(),
+    val cacheStorageSummary: CacheStorageSummary = CacheStorageSummary(),
+    val playbackPreferences: PlaybackPreferences = PlaybackPreferences(),
+    val isSongMetadataSyncing: Boolean = false,
+    val songMetadataSyncCount: Int = 0,
+)
+
+private fun SakiAppUiState.toRootUiState(): SakiRootUiState = SakiRootUiState(
+    isAppReady = isAppReady,
+    textScale = textScale,
+    appPreferences = appPreferences,
+)
+
+private fun SakiAppUiState.toCapsuleUiState(): SakiCapsuleUiState {
+    val track = playbackState.currentItem ?: playbackState.queue.firstOrNull()
+    return SakiCapsuleUiState(
+        track = track,
+        isPlaying = playbackState.isPlaying,
+        currentServer = track?.serverId?.let { sid -> servers.firstOrNull { it.id == sid } },
+    )
+}
+
+private fun SakiAppUiState.toNowPlayingUiState(): SakiNowPlayingUiState = SakiNowPlayingUiState(
+    playbackState = playbackState,
+    servers = servers,
+    selectedServerId = selectedServerId,
+    libraryIndexes = libraryIndexes,
+    currentLyrics = currentLyrics,
+)
+
+private fun SakiAppUiState.toBrowsePlaybackUiState(): SakiBrowsePlaybackUiState {
+    val currentPlaybackSongId = playbackState.currentItem?.songId
+        ?: playbackState.queue.getOrNull(playbackState.currentIndex)?.songId
+    return SakiBrowsePlaybackUiState(
+        currentPlaybackSongId = currentPlaybackSongId,
+        isPlaying = playbackState.isPlaying,
+    )
+}
+
+private fun SakiAppUiState.toBrowseAvailabilityUiState(): SakiBrowseAvailabilityUiState =
+    SakiBrowseAvailabilityUiState(
+        selectedServerId = selectedServerId,
+        cachedSongs = cachedSongs,
+        streamCachedSongIds = streamCachedSongIds,
+        downloadingSongIds = downloadingSongIds,
+    )
+
+private fun SakiAppUiState.toBrowseUiState(): SakiBrowseUiState {
+    return SakiBrowseUiState(
+        appPreferences = appPreferences,
+        selectedBrowseSection = selectedBrowseSection,
+        servers = servers,
+        selectedServerId = selectedServerId,
+        selectedAlbumFeed = selectedAlbumFeed,
+        libraryIndexes = libraryIndexes,
+        isArtistsLoading = isArtistsLoading,
+        artistsError = artistsError,
+        selectedArtist = selectedArtist,
+        selectedArtistSongs = selectedArtistSongs,
+        selectedArtistSongsAreTopSongs = selectedArtistSongsAreTopSongs,
+        isArtistLoading = isArtistLoading,
+        artistError = artistError,
+        albumFeeds = albumFeeds,
+        selectedAlbum = selectedAlbum,
+        isAlbumLoading = isAlbumLoading,
+        albumError = albumError,
+        playlists = playlists,
+        isPlaylistsLoading = isPlaylistsLoading,
+        playlistsError = playlistsError,
+        selectedPlaylist = selectedPlaylist,
+        isPlaylistLoading = isPlaylistLoading,
+        playlistError = playlistError,
+        songs = songs,
+        songsOffset = songsOffset,
+        hasPreviousSongs = hasPreviousSongs,
+        hasMoreSongs = hasMoreSongs,
+        isSongsLoading = isSongsLoading,
+        isSongsLoadingPrevious = isSongsLoadingPrevious,
+        isSongsLoadingMore = isSongsLoadingMore,
+        songsError = songsError,
+        isSearchActive = isSearchActive,
+        searchQuery = searchQuery,
+        searchResults = searchResults,
+        isSearchLoading = isSearchLoading,
+        searchError = searchError,
+        recentSearchQueries = appPreferences.recentSearchQueries,
+    )
+}
+
+private fun SakiAppUiState.toSettingsUiState(): SakiSettingsUiState = SakiSettingsUiState(
+    appPreferences = appPreferences,
+    textScale = textScale,
+    servers = servers,
+    selectedServerId = selectedServerId,
+    cachedSongs = cachedSongs,
+    cacheStorageSummary = cacheStorageSummary,
+    playbackPreferences = playbackState.preferences,
+    isSongMetadataSyncing = isSongMetadataSyncing,
+    songMetadataSyncCount = songMetadataSyncCount,
+)
 
 private fun SakiAppUiState.findArtistSummary(artistId: String): ArtistSummary? {
     val indexes = libraryIndexes ?: return null

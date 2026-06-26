@@ -94,8 +94,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -137,6 +137,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.palette.graphics.Palette
 import com.materialkolor.hct.Hct
 import com.materialkolor.quantize.QuantizerCelebi
@@ -173,6 +174,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -426,7 +428,7 @@ private fun MiniPlayerIconButton(
 fun NowPlayingOverlay(
     visible: Boolean,
     playbackState: PlaybackSessionState,
-    playbackProgress: PlaybackProgressState,
+    playbackProgressFlow: StateFlow<PlaybackProgressState>,
     track: PlaybackQueueItem,
     onDismiss: () -> Unit,
     canOpenArtist: (String?) -> Boolean,
@@ -659,17 +661,6 @@ fun NowPlayingOverlay(
         } else {
             sliderActiveColor.copy(alpha = 0.25f)
         }
-        var sliderValue by remember(track.songId) {
-            mutableFloatStateOf(playbackProgress.positionMs.toFloat())
-        }
-        var isDragging by remember(track.songId) { mutableStateOf(false) }
-
-        LaunchedEffect(playbackProgress.positionMs, track.songId) {
-            if (!isDragging) {
-                sliderValue = playbackProgress.positionMs.toFloat()
-            }
-        }
-
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -866,7 +857,7 @@ fun NowPlayingOverlay(
                                 if (lyrics != null && lyrics.lines.isNotEmpty()) {
                                     SyncedLyricsView(
                                         lyrics = lyrics,
-                                        positionMs = playbackProgress.positionMs,
+                                        playbackProgressFlow = playbackProgressFlow,
                                         isPlaying = playbackState.isPlaying,
                                         onSeekTo = onSeekTo,
                                         modifier = Modifier
@@ -999,75 +990,16 @@ fun NowPlayingOverlay(
                             onOpenAlbum = onOpenAlbum,
                         )
                     }
-                    val duration = playbackProgress.durationMs.coerceAtLeast(1L).toFloat()
-                    val bufferFraction = if (playbackProgress.durationMs > 0) {
-                        (playbackProgress.bufferedPositionMs.toFloat() / duration).coerceIn(0f, 1f)
-                    } else 0f
                     val isCachedTrack = track.isCached || playbackState.isStreamCached
-                    // Once the buffer overlay reaches the end, switch to the solid "buffered" style
-                    // even if the disk cache isn't yet marked fully cached: the streaming overlay
-                    // (player + cache buffered position) and isStreamCached are different signals.
-                    val showCachedStyle = isCachedTrack ||
-                        (playbackProgress.durationMs > 0 && bufferFraction >= 0.999f)
-                    val sliderColors = if (showCachedStyle) {
-                        SliderDefaults.colors(
-                            thumbColor = sliderActiveColor,
-                            activeTrackColor = sliderActiveColor,
-                            inactiveTrackColor = sliderInactiveColor,
-                        )
-                    } else {
-                        SliderDefaults.colors(
-                            thumbColor = sliderActiveColor,
-                            activeTrackColor = sliderActiveColor,
-                            inactiveTrackColor = Color.Transparent,
-                        )
-                    }
-                    val bufferColor = sliderActiveColor.copy(alpha = 0.3f)
-                    val trackBgColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-                    Slider(
-                        value = sliderValue.coerceIn(0f, duration),
-                        onValueChange = {
-                            isDragging = true
-                            sliderValue = it
-                        },
-                        onValueChangeFinished = {
-                            isDragging = false
-                            onSeekTo(sliderValue.roundToLong())
-                        },
-                        valueRange = 0f..duration,
-                        colors = sliderColors,
-                        modifier = if (!showCachedStyle) {
-                            Modifier.drawBehind {
-                                val trackHeight = 4.dp.toPx()
-                                val y = size.height / 2
-                                val padding = 6.dp.toPx()
-                                val trackWidth = size.width - padding * 2
-                                val start = if (isRtl) size.width - padding else padding
-                                val end = if (isRtl) padding else size.width - padding
-                                drawLine(
-                                    color = trackBgColor,
-                                    start = Offset(start, y),
-                                    end = Offset(end, y),
-                                    strokeWidth = trackHeight,
-                                    cap = StrokeCap.Round,
-                                )
-                                if (bufferFraction > 0f) {
-                                    val bufferEnd = if (isRtl) {
-                                        start - trackWidth * bufferFraction
-                                    } else {
-                                        start + trackWidth * bufferFraction
-                                    }
-                                    drawLine(
-                                        color = bufferColor,
-                                        start = Offset(start, y),
-                                        end = Offset(bufferEnd, y),
-                                        strokeWidth = trackHeight,
-                                        cap = StrokeCap.Round,
-                                    )
-                                }
-                            }
-                        } else Modifier,
+                    NowPlayingProgressSection(
+                        playbackProgressFlow = playbackProgressFlow,
+                        trackId = track.songId,
+                        isCachedTrack = isCachedTrack,
+                        sliderActiveColor = sliderActiveColor,
+                        sliderInactiveColor = sliderInactiveColor,
+                        onArtwork = onArtwork,
+                        verticalSpacing = verticalSpacing,
+                        onSeekTo = onSeekTo,
                     )
                     Column(
                         modifier = Modifier
@@ -1075,13 +1007,6 @@ fun NowPlayingOverlay(
                             .then(queueSwipeModifier),
                         verticalArrangement = Arrangement.spacedBy(verticalSpacing),
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Text(text = formatDuration(sliderValue.roundToLong()), color = onArtwork)
-                            Text(text = formatDuration(playbackProgress.durationMs), color = onArtwork)
-                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
@@ -1407,6 +1332,113 @@ fun NowPlayingOverlay(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun NowPlayingProgressSection(
+    playbackProgressFlow: StateFlow<PlaybackProgressState>,
+    trackId: String,
+    isCachedTrack: Boolean,
+    sliderActiveColor: Color,
+    sliderInactiveColor: Color,
+    onArtwork: Color,
+    verticalSpacing: Dp,
+    onSeekTo: (Long) -> Unit,
+) {
+    val playbackProgress by playbackProgressFlow.collectAsStateWithLifecycle()
+    val duration = playbackProgress.durationMs.coerceAtLeast(1L).toFloat()
+    val bufferFraction = if (playbackProgress.durationMs > 0) {
+        (playbackProgress.bufferedPositionMs.toFloat() / duration).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    // Once the buffer overlay reaches the end, switch to the solid "buffered" style
+    // even if the disk cache isn't yet marked fully cached: the streaming overlay
+    // (player + cache buffered position) and isStreamCached are different signals.
+    val showCachedStyle = isCachedTrack ||
+        (playbackProgress.durationMs > 0 && bufferFraction >= 0.999f)
+    val sliderColors = if (showCachedStyle) {
+        SliderDefaults.colors(
+            thumbColor = sliderActiveColor,
+            activeTrackColor = sliderActiveColor,
+            inactiveTrackColor = sliderInactiveColor,
+        )
+    } else {
+        SliderDefaults.colors(
+            thumbColor = sliderActiveColor,
+            activeTrackColor = sliderActiveColor,
+            inactiveTrackColor = Color.Transparent,
+        )
+    }
+    val bufferColor = sliderActiveColor.copy(alpha = 0.3f)
+    val trackBgColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    var sliderValue by remember(trackId) {
+        mutableFloatStateOf(playbackProgress.positionMs.toFloat())
+    }
+    var isDragging by remember(trackId) { mutableStateOf(false) }
+
+    LaunchedEffect(playbackProgress.positionMs, trackId) {
+        if (!isDragging) {
+            sliderValue = playbackProgress.positionMs.toFloat()
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(verticalSpacing)) {
+        Slider(
+            value = sliderValue.coerceIn(0f, duration),
+            onValueChange = {
+                isDragging = true
+                sliderValue = it
+            },
+            onValueChangeFinished = {
+                isDragging = false
+                onSeekTo(sliderValue.roundToLong())
+            },
+            valueRange = 0f..duration,
+            colors = sliderColors,
+            modifier = if (!showCachedStyle) {
+                Modifier.drawBehind {
+                    val trackHeight = 4.dp.toPx()
+                    val y = size.height / 2
+                    val padding = 6.dp.toPx()
+                    val trackWidth = size.width - padding * 2
+                    val start = if (isRtl) size.width - padding else padding
+                    val end = if (isRtl) padding else size.width - padding
+                    drawLine(
+                        color = trackBgColor,
+                        start = Offset(start, y),
+                        end = Offset(end, y),
+                        strokeWidth = trackHeight,
+                        cap = StrokeCap.Round,
+                    )
+                    if (bufferFraction > 0f) {
+                        val bufferEnd = if (isRtl) {
+                            start - trackWidth * bufferFraction
+                        } else {
+                            start + trackWidth * bufferFraction
+                        }
+                        drawLine(
+                            color = bufferColor,
+                            start = Offset(start, y),
+                            end = Offset(bufferEnd, y),
+                            strokeWidth = trackHeight,
+                            cap = StrokeCap.Round,
+                        )
+                    }
+                }
+            } else {
+                Modifier
+            },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(text = formatDuration(sliderValue.roundToLong()), color = onArtwork)
+            Text(text = formatDuration(playbackProgress.durationMs), color = onArtwork)
+        }
     }
 }
 
@@ -2442,6 +2474,7 @@ private const val ARTWORK_BUTTON_SKIP_CONFIRM_TIMEOUT_MS = 900L
 private const val ARTWORK_BUTTON_SKIP_INITIAL_VELOCITY_PAGES = 3.5f
 private const val COMPACT_TECH_INFO_SETTLE_MS = 700L
 private const val COMPACT_TECH_INFO_FADE_MS = 700
+private const val KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS = 1_200L
 private const val METADATA_LINK_SCROLL_EDGE_PAUSE_MS = 1_200L
 private const val METADATA_LINK_SCROLL_MIN_DURATION_MS = 350
 private const val METADATA_LINK_SCROLL_SPEED_DP_PER_SECOND = 32f
@@ -2780,49 +2813,60 @@ private fun formatSampleRate(sampleRate: Int): String = "$sampleRate Hz"
 @Composable
 private fun SyncedLyricsView(
     lyrics: SongLyrics,
-    positionMs: Long,
+    playbackProgressFlow: StateFlow<PlaybackProgressState>,
     isPlaying: Boolean,
     onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
 ) {
+    val playbackProgress by playbackProgressFlow.collectAsStateWithLifecycle()
+    val positionMs = playbackProgress.positionMs
     val lines = lyrics.lines
     val hasWordLevelTiming = lyrics.synced && lines.any { it.words != null }
+    var lyricPositionMs by remember(lyrics) { mutableLongStateOf(positionMs) }
 
-    // High-frequency position: interpolate between 500ms global updates (only for karaoke)
-    val smoothPositionMs by produceState(
-        initialValue = positionMs,
-        key1 = positionMs,
-        key2 = isPlaying,
-        key3 = hasWordLevelTiming,
-    ) {
-        value = positionMs
-        if (!isPlaying || !hasWordLevelTiming) return@produceState
-        var lastFrame = withFrameNanos { it }
-        while (true) {
-            val now = withFrameNanos { it }
-            val delta = (now - lastFrame) / 1_000_000
-            lastFrame = now
-            value += delta
+    LaunchedEffect(positionMs, isPlaying, lyrics) {
+        val deltaFromLyricPosition = positionMs - lyricPositionMs
+        lyricPositionMs = when {
+            !isPlaying -> positionMs
+            deltaFromLyricPosition > KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS -> positionMs
+            deltaFromLyricPosition < -KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS -> positionMs
+            else -> maxOf(lyricPositionMs, positionMs)
         }
     }
 
     val activeIndex = if (lyrics.synced) {
-        lines.indexOfLast { it.startMs <= positionMs }.coerceAtLeast(0)
+        lines.activeLyricLineIndex(lyricPositionMs)
     } else {
         -1
     }
 
-    val lyricsListState = rememberLazyListState()
+    val initialActiveIndex = remember(lyrics) {
+        if (lyrics.synced) {
+            lines.activeLyricLineIndex(lyricPositionMs).coerceAtLeast(0)
+        } else {
+            0
+        }
+    }
+    val lyricsListState = rememberLazyListState(initialFirstVisibleItemIndex = initialActiveIndex)
+    var hasPositionedInitialLine by remember(lyrics) { mutableStateOf(false) }
     val density = LocalDensity.current
 
-    if (lyrics.synced && activeIndex >= 0 && isPlaying) {
-        LaunchedEffect(activeIndex) {
+    if (lyrics.synced && activeIndex >= 0) {
+        LaunchedEffect(activeIndex, isPlaying) {
             val offsetPx = with(density) { 80.dp.roundToPx() }
-            lyricsListState.animateScrollToItem(
-                index = activeIndex,
-                scrollOffset = -offsetPx,
-            )
+            when {
+                !hasPositionedInitialLine -> {
+                    hasPositionedInitialLine = true
+                    lyricsListState.scrollToItem(activeIndex, -offsetPx)
+                }
+                isPlaying -> {
+                    lyricsListState.animateScrollToItem(
+                        index = activeIndex,
+                        scrollOffset = -offsetPx,
+                    )
+                }
+            }
         }
     }
 
@@ -2845,29 +2889,23 @@ private fun SyncedLyricsView(
                 val lineEndMs = lines.getOrNull(index + 1)?.startMs ?: (line.words.last().startMs + 1000)
                 val lineDurationMs = lineEndMs - line.startMs
                 if (lineDurationMs > 0) {
-                    val progress = ((smoothPositionMs - line.startMs).toFloat() / lineDurationMs.toFloat()).coerceIn(0f, 1f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (lyrics.synced && line.startMs >= 0) {
-                                    Modifier.clickable { onSeekTo(line.startMs) }
-                                } else {
-                                    Modifier
-                                },
-                            )
-                            .padding(vertical = 4.dp),
-                    ) {
-                        Text(text = line.text, style = style, color = dimColor)
-                        Text(
-                            text = line.text,
-                            style = style,
-                            color = textColor,
-                            modifier = Modifier.drawWithContent {
-                                clipRect(right = size.width * progress) { this@drawWithContent.drawContent() }
-                            },
-                        )
-                    }
+                    KaraokeLyricLine(
+                        text = line.text,
+                        lineStartMs = line.startMs,
+                        lineDurationMs = lineDurationMs,
+                        positionMs = positionMs,
+                        isPlaying = isPlaying && hasWordLevelTiming,
+                        style = style,
+                        textColor = textColor,
+                        dimColor = dimColor,
+                        onClick = if (lyrics.synced && line.startMs >= 0) {
+                            {
+                                onSeekTo(line.startMs)
+                            }
+                        } else {
+                            null
+                        },
+                    )
                 } else {
                     Text(
                         text = line.text.ifBlank { "♪" },
@@ -2877,7 +2915,9 @@ private fun SyncedLyricsView(
                             .fillMaxWidth()
                             .then(
                                 if (lyrics.synced && line.startMs >= 0) {
-                                    Modifier.clickable { onSeekTo(line.startMs) }
+                                    Modifier.clickable {
+                                        onSeekTo(line.startMs)
+                                    }
                                 } else {
                                     Modifier
                                 },
@@ -2894,7 +2934,9 @@ private fun SyncedLyricsView(
                         .fillMaxWidth()
                         .then(
                             if (lyrics.synced && line.startMs >= 0) {
-                                Modifier.clickable { onSeekTo(line.startMs) }
+                                Modifier.clickable {
+                                    onSeekTo(line.startMs)
+                                }
                             } else {
                                 Modifier
                             },
@@ -2904,4 +2946,87 @@ private fun SyncedLyricsView(
             }
         }
     }
+}
+
+@Composable
+private fun KaraokeLyricLine(
+    text: String,
+    lineStartMs: Long,
+    lineDurationMs: Long,
+    positionMs: Long,
+    isPlaying: Boolean,
+    style: TextStyle,
+    textColor: Color,
+    dimColor: Color,
+    onClick: (() -> Unit)?,
+) {
+    // Keep per-frame karaoke interpolation scoped to the active row. Do not key the
+    // interpolator by every player progress tick: those ticks are only sampled every
+    // ~500ms and can arrive behind the locally interpolated value, which makes the
+    // highlight visibly jump backward. Normal playback stays monotonic; large
+    // discontinuities still snap to the player position for seek/track changes.
+    var smoothPositionMs by remember(lineStartMs) { mutableLongStateOf(positionMs) }
+    val latestPositionMs = rememberUpdatedState(positionMs)
+
+    LaunchedEffect(positionMs, isPlaying, lineStartMs) {
+        val deltaFromSmooth = positionMs - smoothPositionMs
+        when {
+            !isPlaying -> smoothPositionMs = positionMs
+            deltaFromSmooth > KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS -> smoothPositionMs = positionMs
+            deltaFromSmooth < -KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS -> smoothPositionMs = positionMs
+            positionMs > smoothPositionMs -> smoothPositionMs = positionMs
+        }
+    }
+
+    LaunchedEffect(isPlaying, lineStartMs) {
+        if (!isPlaying) return@LaunchedEffect
+        var lastFrame = withFrameNanos { it }
+        while (true) {
+            val now = withFrameNanos { it }
+            val delta = (now - lastFrame) / 1_000_000
+            lastFrame = now
+            val playerPositionMs = latestPositionMs.value
+            val predictedPositionMs = smoothPositionMs + delta
+            smoothPositionMs = when {
+                playerPositionMs > predictedPositionMs + KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS -> playerPositionMs
+                playerPositionMs < smoothPositionMs - KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS -> playerPositionMs
+                else -> maxOf(predictedPositionMs, playerPositionMs)
+            }
+        }
+    }
+
+    val progress = ((smoothPositionMs - lineStartMs).toFloat() / lineDurationMs.toFloat()).coerceIn(0f, 1f)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 4.dp),
+    ) {
+        Text(text = text, style = style, color = dimColor)
+        Text(
+            text = text,
+            style = style,
+            color = textColor,
+            modifier = Modifier.drawWithContent {
+                clipRect(right = size.width * progress) { this@drawWithContent.drawContent() }
+            },
+        )
+    }
+}
+
+private fun List<org.hdhmc.saki.domain.model.LyricLine>.activeLyricLineIndex(positionMs: Long): Int {
+    if (isEmpty()) return -1
+    var low = 0
+    var high = lastIndex
+    var result = -1
+    while (low <= high) {
+        val mid = (low + high) ushr 1
+        if (this[mid].startMs <= positionMs) {
+            result = mid
+            low = mid + 1
+        } else {
+            high = mid - 1
+        }
+    }
+    return result.coerceAtLeast(0)
 }

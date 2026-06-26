@@ -7,7 +7,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,7 +89,7 @@ import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.model.TextScale
-import org.hdhmc.saki.presentation.SakiAppUiState
+import org.hdhmc.saki.presentation.SakiSettingsUiState
 import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.presentation.library.ArtworkCard
 import org.hdhmc.saki.presentation.library.THUMBNAIL_COVER_ART_SIZE_PX
@@ -96,16 +98,16 @@ import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiThemePresets
-import org.hdhmc.saki.ui.theme.rememberSakiExpressiveColorScheme
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSelectedContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
+import com.materialkolor.hct.Hct
 import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(
-    uiState: SakiAppUiState,
+    uiState: SakiSettingsUiState,
     contentPadding: PaddingValues,
     bottomOverlayPadding: Dp = 0.dp,
     onClose: () -> Unit,
@@ -143,15 +145,17 @@ fun SettingsScreen(
 ) {
     val background = rememberBrowseBackgroundBrush()
     val selectedServer = uiState.servers.firstOrNull { it.id == uiState.selectedServerId }
-    val visibleCachedSongs = uiState.cachedSongs.filter { song ->
-        uiState.selectedServerId == null || song.serverId == uiState.selectedServerId
+    val visibleCachedSongs = remember(uiState.cachedSongs, uiState.selectedServerId) {
+        uiState.cachedSongs.filter { song ->
+            uiState.selectedServerId == null || song.serverId == uiState.selectedServerId
+        }
     }
     val storageSummary = uiState.cacheStorageSummary
-    val configuredStreamCacheSizeMb = uiState.playbackState.preferences.streamCacheSizeMb
+    val configuredStreamCacheSizeMb = uiState.playbackPreferences.streamCacheSizeMb
     var streamCacheSliderValue by remember(configuredStreamCacheSizeMb) {
         mutableFloatStateOf(configuredStreamCacheSizeMb.toFloat())
     }
-    val configuredImageCacheSizeMb = uiState.playbackState.preferences.imageCacheSizeMb
+    val configuredImageCacheSizeMb = uiState.playbackPreferences.imageCacheSizeMb
     var imageCacheSliderValue by remember(configuredImageCacheSizeMb) {
         mutableFloatStateOf(configuredImageCacheSizeMb.toFloat())
     }
@@ -232,7 +236,7 @@ fun SettingsScreen(
         }
 
         item {
-            val prefs = uiState.playbackState.preferences
+            val prefs = uiState.playbackPreferences
             SettingsSectionCard(
                 title = stringResource(R.string.settings_stream_quality_title),
                 body = stringResource(R.string.settings_stream_quality_body),
@@ -305,7 +309,7 @@ fun SettingsScreen(
                 ) {
                     SoundBalancingMode.entries.forEach { mode ->
                         FilterChip(
-                            selected = uiState.playbackState.preferences.soundBalancingMode == mode,
+                            selected = uiState.playbackPreferences.soundBalancingMode == mode,
                             onClick = { onUpdateSoundBalancing(mode) },
                             label = { Text(mode.localizedLabel()) },
                         )
@@ -315,7 +319,7 @@ fun SettingsScreen(
         }
 
         item {
-            val prefs = uiState.playbackState.preferences
+            val prefs = uiState.playbackPreferences
             val configuredSeconds = prefs.customBufferSeconds
             var bufferSliderValue by remember(configuredSeconds) {
                 mutableFloatStateOf(configuredSeconds.toFloat())
@@ -531,6 +535,15 @@ fun SettingsScreen(
                     // Preview follows the current light/dark mode and uses the container roles, so the
                     // swatches stay pleasant pastels in light and deep tones in dark (KSU-style).
                     val previewDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                    val swatchColors = remember(previewDark, currentPaletteStyle) {
+                        SakiThemePresets.associate { preset ->
+                            preset.key to themeSeedSwatchColors(
+                                seed = preset.seed,
+                                isDark = previewDark,
+                                paletteStyle = currentPaletteStyle,
+                            )
+                        }
+                    }
                     Text(
                         text = stringResource(R.string.settings_theme_seed_label),
                         style = MaterialTheme.typography.labelLarge,
@@ -543,18 +556,7 @@ fun SettingsScreen(
                         SakiThemePresets.forEach { preset ->
                             val selected = preset.key == currentSeedKey
                             val presetName = stringResource(preset.nameRes)
-                            // Preview the actual generated pairing (top = primary, bottom = secondary)
-                            // under the active palette style, so the theme's two tones read at a glance.
-                            val previewScheme = rememberSakiExpressiveColorScheme(
-                                seedColor = preset.seed,
-                                isDark = previewDark,
-                                paletteStyle = currentPaletteStyle,
-                            )
-                            // Pick tonally balanced roles per mode so both halves read as similar
-                            // lightness (containers are pale + balanced in light; in dark the accent
-                            // pair stays balanced whereas SPEC_2025 Expressive containers go extreme).
-                            val topColor = if (previewDark) previewScheme.primary else previewScheme.primaryContainer
-                            val bottomColor = if (previewDark) previewScheme.secondary else previewScheme.secondaryContainer
+                            val colors = swatchColors.getValue(preset.key)
                             Box(
                                 modifier = Modifier
                                     .size(44.dp)
@@ -576,8 +578,8 @@ fun SettingsScreen(
                                     .semantics { contentDescription = presetName },
                             ) {
                                 Canvas(modifier = Modifier.fillMaxSize()) {
-                                    drawArc(color = topColor, startAngle = 180f, sweepAngle = 180f, useCenter = true)
-                                    drawArc(color = bottomColor, startAngle = 0f, sweepAngle = 180f, useCenter = true)
+                                    drawArc(color = colors.top, startAngle = 180f, sweepAngle = 180f, useCenter = true)
+                                    drawArc(color = colors.bottom, startAngle = 0f, sweepAngle = 180f, useCenter = true)
                                 }
                             }
                         }
@@ -878,7 +880,7 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    val currentDownloadQuality = uiState.playbackState.preferences.downloadQuality
+                    val currentDownloadQuality = uiState.playbackPreferences.downloadQuality
                     StreamQuality.entries.forEach { quality ->
                         FilterChip(
                             selected = currentDownloadQuality == quality,
@@ -933,7 +935,7 @@ fun SettingsScreen(
                 body = stringResource(R.string.settings_experimental_body),
                 action = null,
             ) {
-                val checked = uiState.playbackState.preferences.bluetoothLyricsEnabled
+                val checked = uiState.playbackPreferences.bluetoothLyricsEnabled
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1202,6 +1204,36 @@ private fun formatStorageSize(bytes: Long): String {
     } else {
         String.format(Locale.getDefault(), "%.1f %s", value, units[unitIndex])
     }
+}
+
+private data class ThemeSeedSwatchColors(
+    val top: Color,
+    val bottom: Color,
+)
+
+private fun themeSeedSwatchColors(
+    seed: Color,
+    isDark: Boolean,
+    paletteStyle: SakiPaletteStyle,
+): ThemeSeedSwatchColors {
+    val hct = Hct.fromInt(seed.toArgb())
+    val hueShift = when (paletteStyle) {
+        SakiPaletteStyle.TONAL_SPOT -> 24.0
+        SakiPaletteStyle.VIBRANT -> 36.0
+        SakiPaletteStyle.EXPRESSIVE -> 58.0
+    }
+    val primaryTone = if (isDark) 70.0 else 88.0
+    val secondaryTone = if (isDark) 62.0 else 92.0
+    val primaryChroma = (hct.chroma * 0.70).coerceIn(18.0, if (isDark) 42.0 else 32.0)
+    val secondaryChroma = (hct.chroma * when (paletteStyle) {
+        SakiPaletteStyle.TONAL_SPOT -> 0.42
+        SakiPaletteStyle.VIBRANT -> 0.58
+        SakiPaletteStyle.EXPRESSIVE -> 0.70
+    }).coerceIn(12.0, if (isDark) 34.0 else 26.0)
+    return ThemeSeedSwatchColors(
+        top = Color(Hct.from(hct.hue, primaryChroma, primaryTone).toInt()),
+        bottom = Color(Hct.from((hct.hue + hueShift) % 360.0, secondaryChroma, secondaryTone).toInt()),
+    )
 }
 
 private const val STREAM_CACHE_SLIDER_STEPS =
