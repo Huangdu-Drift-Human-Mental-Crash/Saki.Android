@@ -162,6 +162,7 @@ private fun RootShell(
     val settingsBackModifier = Modifier.predictiveBackMotion(
         enabled = showSettings,
         onBack = { onShowSettingsChange(false) },
+        targetAlpha = 0.35f,
     )
 
     Box(
@@ -252,11 +253,9 @@ private fun BrowseRoute(
         onLoadMoreSongs = viewModel::loadMoreSongs,
         onUpdateAlbumViewMode = viewModel::updateAlbumViewMode,
         onOpenArtist = viewModel::openArtist,
-        onCloseArtist = viewModel::closeArtist,
         onOpenAlbum = viewModel::openAlbum,
-        onCloseAlbum = viewModel::closeAlbum,
         onOpenPlaylist = viewModel::openPlaylist,
-        onClosePlaylist = viewModel::closePlaylist,
+        onPopDetail = viewModel::popBrowseRoute,
         onPlaySongs = viewModel::playSongs,
         onPlayLibrarySongs = viewModel::playLibrarySongs,
         onQueueSong = viewModel::queueSong,

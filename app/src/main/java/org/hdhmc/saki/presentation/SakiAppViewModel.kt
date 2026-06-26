@@ -7,6 +7,7 @@ import org.hdhmc.saki.R
 import org.hdhmc.saki.data.remote.EndpointSelector
 import org.hdhmc.saki.data.repository.ConfigBackupManager
 import org.hdhmc.saki.data.repository.ImportResult
+import org.hdhmc.saki.presentation.library.BrowseNavRoute
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AlbumViewMode
@@ -445,6 +446,7 @@ class SakiAppViewModel @Inject constructor(
         if (uiState.value.selectedServerId != serverId) {
             selectServer(serverId)
         }
+        mutableUiState.update { it.copy(browseStack = listOf(BrowseNavRoute.Root)) }
         openArtist(artistId)
     }
 
@@ -457,6 +459,7 @@ class SakiAppViewModel @Inject constructor(
         if (uiState.value.selectedServerId != serverId) {
             selectServer(serverId)
         }
+        mutableUiState.update { it.copy(browseStack = listOf(BrowseNavRoute.Root)) }
         openAlbum(albumId)
     }
 
@@ -469,6 +472,7 @@ class SakiAppViewModel @Inject constructor(
         mutableUiState.update { state ->
             state.copy(
                 selectedServerId = serverId,
+                browseStack = listOf(BrowseNavRoute.Root),
                 selectedArtist = null,
                 selectedArtistSongs = emptyList(),
                 selectedArtistSongsAreTopSongs = true,
@@ -803,6 +807,7 @@ class SakiAppViewModel @Inject constructor(
                 isArtistLoading = true,
                 artistError = null,
                 selectedAlbum = null,
+                browseStack = state.browseStack.pushed(BrowseNavRoute.ArtistDetail(artistId)),
             )
         }
 
@@ -881,16 +886,36 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
-    fun closeArtist() {
+    private fun List<BrowseNavRoute>.pushed(route: BrowseNavRoute): List<BrowseNavRoute> =
+        if (lastOrNull() == route) this else this + route
+
+    /** Pops the top Browse route and clears that page's detail data. No-op at the root. */
+    fun popBrowseRoute() {
         mutableUiState.update { state ->
-            state.copy(
-                selectedArtist = null,
-                selectedArtistSongs = emptyList(),
-                selectedArtistSongsAreTopSongs = true,
-                selectedAlbum = null,
-                artistError = null,
-                albumError = null,
-            )
+            if (state.browseStack.size <= 1) return@update state
+            val newStack = state.browseStack.dropLast(1)
+            when (state.browseStack.last()) {
+                is BrowseNavRoute.AlbumDetail -> state.copy(
+                    browseStack = newStack,
+                    selectedAlbum = null,
+                    albumError = null,
+                )
+                is BrowseNavRoute.ArtistDetail -> state.copy(
+                    browseStack = newStack,
+                    selectedArtist = null,
+                    selectedArtistSongs = emptyList(),
+                    selectedArtistSongsAreTopSongs = true,
+                    selectedAlbum = null,
+                    artistError = null,
+                    albumError = null,
+                )
+                is BrowseNavRoute.PlaylistDetail -> state.copy(
+                    browseStack = newStack,
+                    selectedPlaylist = null,
+                    playlistError = null,
+                )
+                BrowseNavRoute.Root -> state.copy(browseStack = newStack)
+            }
         }
     }
 
@@ -902,6 +927,7 @@ class SakiAppViewModel @Inject constructor(
                 selectedAlbum = fallbackAlbum,
                 isAlbumLoading = true,
                 albumError = null,
+                browseStack = state.browseStack.pushed(BrowseNavRoute.AlbumDetail(albumId)),
             )
         }
 
@@ -959,15 +985,6 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
-    fun closeAlbum() {
-        mutableUiState.update { state ->
-            state.copy(
-                selectedAlbum = null,
-                albumError = null,
-            )
-        }
-    }
-
     fun openPlaylist(playlistId: String) {
         val serverId = uiState.value.selectedServerId ?: return
         val fallbackPlaylist = uiState.value.findPlaylistSummary(playlistId)?.toPlaylist()
@@ -976,6 +993,7 @@ class SakiAppViewModel @Inject constructor(
                 selectedPlaylist = fallbackPlaylist,
                 isPlaylistLoading = true,
                 playlistError = null,
+                browseStack = state.browseStack.pushed(BrowseNavRoute.PlaylistDetail(playlistId)),
             )
         }
 
@@ -1030,15 +1048,6 @@ class SakiAppViewModel @Inject constructor(
                     }
                 }
             }
-        }
-    }
-
-    fun closePlaylist() {
-        mutableUiState.update { state ->
-            state.copy(
-                selectedPlaylist = null,
-                playlistError = null,
-            )
         }
     }
 
@@ -1468,6 +1477,7 @@ class SakiAppViewModel @Inject constructor(
             state.copy(
                 servers = servers,
                 selectedServerId = selectedServerId,
+                browseStack = if (serverChanged) listOf(BrowseNavRoute.Root) else state.browseStack,
                 selectedArtist = if (serverChanged) null else state.selectedArtist,
                 selectedArtistSongs = if (serverChanged) emptyList() else state.selectedArtistSongs,
                 selectedArtistSongsAreTopSongs = if (serverChanged) true else state.selectedArtistSongsAreTopSongs,
@@ -2478,6 +2488,7 @@ data class SakiAppUiState(
     val textScale: TextScale = TextScale.DEFAULT,
     val appPreferences: AppPreferences = AppPreferences(),
     val selectedBrowseSection: BrowseSection = BrowseSection.ARTISTS,
+    val browseStack: List<BrowseNavRoute> = listOf(BrowseNavRoute.Root),
     val servers: List<ServerConfig> = emptyList(),
     val selectedServerId: Long? = null,
     val selectedAlbumFeed: AlbumListType = AlbumListType.NEWEST,
@@ -2576,6 +2587,7 @@ data class SakiBrowseAvailabilityUiState(
 data class SakiBrowseUiState(
     val appPreferences: AppPreferences = AppPreferences(),
     val selectedBrowseSection: BrowseSection = BrowseSection.ARTISTS,
+    val browseStack: List<BrowseNavRoute> = listOf(BrowseNavRoute.Root),
     val servers: List<ServerConfig> = emptyList(),
     val selectedServerId: Long? = null,
     val selectedAlbumFeed: AlbumListType = AlbumListType.NEWEST,
@@ -2686,6 +2698,7 @@ private fun SakiAppUiState.toBrowseUiState(): SakiBrowseUiState {
     return SakiBrowseUiState(
         appPreferences = appPreferences,
         selectedBrowseSection = selectedBrowseSection,
+        browseStack = browseStack,
         servers = servers,
         selectedServerId = selectedServerId,
         selectedAlbumFeed = selectedAlbumFeed,
