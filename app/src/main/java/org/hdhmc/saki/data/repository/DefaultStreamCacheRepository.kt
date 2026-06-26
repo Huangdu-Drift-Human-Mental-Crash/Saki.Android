@@ -13,6 +13,7 @@ import org.hdhmc.saki.domain.repository.StreamCacheRepository
 import org.hdhmc.saki.playback.ConfigurableLeastRecentlyUsedCacheEvictor
 import org.hdhmc.saki.playback.buildStreamCacheKey
 import org.hdhmc.saki.playback.parseStreamCacheKey
+import dagger.Lazy
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,7 +34,7 @@ import kotlinx.coroutines.withContext
 @Singleton
 @UnstableApi
 class DefaultStreamCacheRepository @Inject constructor(
-    private val streamCache: SimpleCache,
+    private val streamCacheProvider: Lazy<SimpleCache>,
     private val cacheEvictor: ConfigurableLeastRecentlyUsedCacheEvictor,
     private val playbackPreferencesRepository: PlaybackPreferencesRepository,
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
@@ -41,6 +42,9 @@ class DefaultStreamCacheRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val cacheVersion = MutableStateFlow(0L)
     private var lastSnapshot = StreamCacheSnapshot()
+    private var hasAppliedInitialCacheSize = false
+    private val streamCache: SimpleCache
+        get() = streamCacheProvider.get()
 
     init {
         scope.launch {
@@ -49,13 +53,18 @@ class DefaultStreamCacheRepository @Inject constructor(
                 .distinctUntilChanged()
                 .collectLatest { maxBytes ->
                     cacheEvictor.updateMaxBytes(maxBytes)
-                    refreshSnapshot(forceEmit = true)
+                    if (hasAppliedInitialCacheSize) {
+                        refreshSnapshot(forceEmit = true)
+                    } else {
+                        hasAppliedInitialCacheSize = true
+                    }
                 }
         }
         scope.launch {
+            delay(STREAM_CACHE_SNAPSHOT_INITIAL_DELAY_MS)
             refreshSnapshot(forceEmit = true)
             while (isActive) {
-                delay(2_500L)
+                delay(STREAM_CACHE_SNAPSHOT_REFRESH_MS)
                 refreshSnapshot()
             }
         }
@@ -211,6 +220,9 @@ private data class StreamCacheSnapshot(
     val cachedSongIdsByServerAndQuality: Map<Long, Map<String, Set<String>>> = emptyMap(),
     val bytesByServer: Map<Long, Long> = emptyMap(),
 )
+
+private const val STREAM_CACHE_SNAPSHOT_INITIAL_DELAY_MS = 5_000L
+private const val STREAM_CACHE_SNAPSHOT_REFRESH_MS = 30_000L
 
 private fun Collection<Set<String>>.flattenToSet(): Set<String> {
     return mutableSetOf<String>().apply {

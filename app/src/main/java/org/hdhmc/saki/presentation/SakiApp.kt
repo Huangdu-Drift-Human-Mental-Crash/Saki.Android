@@ -31,6 +31,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -42,8 +43,6 @@ import org.hdhmc.saki.domain.model.PlaybackProgressState
 import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SongLyrics
-import org.hdhmc.saki.domain.model.ThemeMode
-import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.presentation.library.BrowseScreen
 import org.hdhmc.saki.presentation.library.NowPlayingCapsule
 import org.hdhmc.saki.presentation.library.NowPlayingOverlay
@@ -57,18 +56,17 @@ fun SakiApp(
     modifier: Modifier = Modifier,
     viewModel: SakiAppViewModel = viewModel(),
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val endpointStatus by viewModel.endpointStatus.collectAsStateWithLifecycle()
+    val rootUiState by viewModel.rootUiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     var showServerManager by rememberSaveable { mutableStateOf(false) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     val density = LocalDensity.current
-    val appDensity = remember(density, uiState.textScale) {
+    val appDensity = remember(density, rootUiState.textScale) {
         Density(
             density = density.density,
-            fontScale = density.fontScale * uiState.textScale.multiplier,
+            fontScale = density.fontScale * rootUiState.textScale.multiplier,
         )
     }
 
@@ -97,113 +95,38 @@ fun SakiApp(
         }
     }
 
+    LaunchedEffect(showSettings) {
+        if (showSettings) {
+            viewModel.refreshSettingsCacheStorageSummary()
+        }
+    }
+
     SakiAndroidTheme(
-        themeStyle = uiState.appPreferences.themeStyle,
-        seedColor = seedColorForKey(uiState.appPreferences.themeSeedKey),
-        paletteStyle = uiState.appPreferences.paletteStyle,
+        themeStyle = rootUiState.appPreferences.themeStyle,
+        seedColor = seedColorForKey(rootUiState.appPreferences.themeSeedKey),
+        paletteStyle = rootUiState.appPreferences.paletteStyle,
     ) {
         CompositionLocalProvider(LocalDensity provides appDensity) {
         Box(modifier = modifier.fillMaxSize()) {
             when {
-                !uiState.isAppReady -> {
+                !rootUiState.isAppReady -> {
                     Surface(modifier = Modifier.fillMaxSize()) {}
                 }
 
                 else -> {
                     RootShell(
-                        uiState = uiState,
-                        endpointStatus = endpointStatus,
+                        viewModel = viewModel,
                         snackbarHostState = snackbarHostState,
                         showSettings = showSettings,
                         onShowSettingsChange = { showSettings = it },
                         onManageServers = { showServerManager = true },
-                        onOpenNowPlaying = {
-                            if (uiState.playbackState.currentItem != null) {
-                                showNowPlaying = true
-                            }
-                        },
-                        onSelectBrowseSection = viewModel::selectBrowseSection,
-                        onSelectServer = viewModel::selectServer,
-                        onSetSearchActive = viewModel::setSearchActive,
-                        onUpdateSearchQuery = viewModel::updateSearchQuery,
-                        onRemoveRecentSearchQuery = viewModel::removeRecentSearchQuery,
-                        onClearRecentSearchQueries = viewModel::clearRecentSearchQueries,
-                        onRefreshCurrentTab = viewModel::refreshCurrentTab,
-                        onSelectAlbumFeed = viewModel::selectAlbumFeed,
-                        onLoadMoreAlbums = viewModel::loadMoreAlbums,
-                        onLoadPreviousSongs = viewModel::loadPreviousSongs,
-                        onLoadMoreSongs = viewModel::loadMoreSongs,
-                        onUpdateAlbumViewMode = viewModel::updateAlbumViewMode,
-                        onOpenArtist = viewModel::openArtist,
-                        onCloseArtist = viewModel::closeArtist,
-                        onOpenAlbum = viewModel::openAlbum,
-                        onCloseAlbum = viewModel::closeAlbum,
-                        onOpenPlaylist = viewModel::openPlaylist,
-                        onClosePlaylist = viewModel::closePlaylist,
-                        onPlaySongs = viewModel::playSongs,
-                        onPlayLibrarySongs = viewModel::playLibrarySongs,
-                        onQueueSong = viewModel::queueSong,
-                        onPlaySongNext = viewModel::playSongNext,
-                        onOfflineSongUnavailable = viewModel::showOfflineSongUnavailable,
-                        onToggleSongDownload = viewModel::toggleSongDownload,
-                        onPlayCachedSong = viewModel::playCachedSong,
-                        onPlayCachedQueue = viewModel::playCachedQueue,
-                        onDeleteCachedSong = viewModel::deleteCachedSong,
-                        onClearCachedSongs = viewModel::clearCachedSongs,
-                        onUpdateStreamQuality = viewModel::updateStreamQuality,
-                        onUpdateDownloadQuality = viewModel::updateDownloadQuality,
-                        onUpdateAdaptiveQuality = viewModel::updateAdaptiveQuality,
-                        onUpdateWifiStreamQuality = viewModel::updateWifiStreamQuality,
-                        onUpdateMobileStreamQuality = viewModel::updateMobileStreamQuality,
-                        onUpdateSoundBalancing = viewModel::updateSoundBalancing,
-                        onUpdateStreamCacheSizeMb = viewModel::updateStreamCacheSizeMb,
-                        onClearStreamCache = viewModel::clearStreamCache,
-                        onUpdateImageCacheSizeMb = viewModel::updateImageCacheSizeMb,
-                        onClearImageCache = viewModel::clearImageCache,
-                        onUpdateSongMetadata = viewModel::updateAllSongMetadata,
-                        onUpdateTextScale = viewModel::updateTextScale,
-                        onUpdateLanguage = viewModel::updateLanguage,
-                        onUpdateThemeMode = viewModel::updateThemeMode,
-                        onUpdateThemeStyle = viewModel::updateThemeStyle,
-                        onUpdateThemeSeed = viewModel::updateThemeSeed,
-                        onUpdatePaletteStyle = viewModel::updatePaletteStyle,
-                        onUpdateDefaultBrowseTab = viewModel::updateDefaultBrowseTab,
-                        onUpdateDefaultAlbumFeed = viewModel::updateDefaultAlbumFeed,
-                        onUpdateSongsPageSize = viewModel::updateSongsPageSize,
-                        onUpdateBluetoothLyrics = viewModel::updateBluetoothLyrics,
-                        onUpdateBufferStrategy = viewModel::updateBufferStrategy,
-                        onUpdateCustomBufferSeconds = viewModel::updateCustomBufferSeconds,
-                        onExportConfig = viewModel::exportConfig,
-                        onImportConfig = { uri -> viewModel.importConfig(uri) },
-                        onPausePlayback = viewModel::pausePlayback,
-                        onResumePlayback = viewModel::resumePlayback,
-                        onSkipToNext = viewModel::skipToNext,
-                        onSkipToPrevious = viewModel::skipToPrevious,
+                        onOpenNowPlaying = { showNowPlaying = true },
                     )
-                    NowPlayingOverlayHost(
+                    NowPlayingOverlayHostRoute(
                         visible = showNowPlaying,
-                        playbackState = uiState.playbackState,
-                        playbackProgressFlow = viewModel.playbackProgress,
-                        servers = uiState.servers,
-                        selectedServerId = uiState.selectedServerId,
-                        libraryIndexes = uiState.libraryIndexes,
-                        endpointStatus = endpointStatus,
-                        lyrics = uiState.currentLyrics,
+                        viewModel = viewModel,
                         onDismiss = { showNowPlaying = false },
                         onCloseSettings = { showSettings = false },
-                        onOpenArtistFromPlayback = viewModel::openArtistFromPlayback,
-                        onOpenAlbumFromPlayback = viewModel::openAlbumFromPlayback,
-                        onPausePlayback = viewModel::pausePlayback,
-                        onResumePlayback = viewModel::resumePlayback,
-                        onSkipToNext = viewModel::skipToNext,
-                        onSkipToPrevious = viewModel::skipToPrevious,
-                        onSeekTo = viewModel::seekTo,
-                        onCycleRepeatMode = viewModel::cycleRepeatMode,
-                        onToggleShuffle = viewModel::toggleShuffle,
-                        onSkipToQueueItem = viewModel::skipToQueueItem,
-                        onRemoveQueueItem = viewModel::removeQueueItem,
-                        onReprobeEndpoints = viewModel::reprobeEndpoints,
-                        onForceEndpoint = viewModel::forceEndpoint,
                     )
                 }
             }
@@ -223,72 +146,13 @@ fun SakiApp(
 
 @Composable
 private fun RootShell(
-    uiState: SakiAppUiState,
-    endpointStatus: EndpointStatus,
+    viewModel: SakiAppViewModel,
     snackbarHostState: SnackbarHostState,
     showSettings: Boolean,
     onShowSettingsChange: (Boolean) -> Unit,
     onManageServers: () -> Unit,
     onOpenNowPlaying: () -> Unit,
-    onSelectBrowseSection: (BrowseSection) -> Unit,
-    onSelectServer: (Long) -> Unit,
-    onSetSearchActive: (Boolean) -> Unit,
-    onUpdateSearchQuery: (String) -> Unit,
-    onRemoveRecentSearchQuery: (String) -> Unit,
-    onClearRecentSearchQueries: () -> Unit,
-    onRefreshCurrentTab: () -> Unit,
-    onSelectAlbumFeed: (org.hdhmc.saki.domain.model.AlbumListType) -> Unit,
-    onLoadMoreAlbums: () -> Unit,
-    onLoadPreviousSongs: () -> Unit,
-    onLoadMoreSongs: () -> Unit,
-    onUpdateAlbumViewMode: (org.hdhmc.saki.domain.model.AlbumViewMode) -> Unit,
-    onOpenArtist: (String) -> Unit,
-    onCloseArtist: () -> Unit,
-    onOpenAlbum: (String) -> Unit,
-    onCloseAlbum: () -> Unit,
-    onOpenPlaylist: (String) -> Unit,
-    onClosePlaylist: () -> Unit,
-    onPlaySongs: (List<org.hdhmc.saki.domain.model.Song>, Int) -> Unit,
-    onPlayLibrarySongs: (Int) -> Unit,
-    onQueueSong: (org.hdhmc.saki.domain.model.Song) -> Unit,
-    onPlaySongNext: (org.hdhmc.saki.domain.model.Song) -> Unit,
-    onOfflineSongUnavailable: () -> Unit,
-    onToggleSongDownload: (org.hdhmc.saki.domain.model.Song) -> Unit,
-    onPlayCachedSong: (org.hdhmc.saki.domain.model.CachedSong) -> Unit,
-    onPlayCachedQueue: (List<org.hdhmc.saki.domain.model.CachedSong>, Int) -> Unit,
-    onDeleteCachedSong: (String) -> Unit,
-    onClearCachedSongs: () -> Unit,
-    onUpdateStreamQuality: (org.hdhmc.saki.domain.model.StreamQuality) -> Unit,
-    onUpdateDownloadQuality: (org.hdhmc.saki.domain.model.StreamQuality) -> Unit,
-    onUpdateAdaptiveQuality: (Boolean) -> Unit,
-    onUpdateWifiStreamQuality: (org.hdhmc.saki.domain.model.StreamQuality) -> Unit,
-    onUpdateMobileStreamQuality: (org.hdhmc.saki.domain.model.StreamQuality) -> Unit,
-    onUpdateSoundBalancing: (org.hdhmc.saki.domain.model.SoundBalancingMode) -> Unit,
-    onUpdateStreamCacheSizeMb: (Int) -> Unit,
-    onClearStreamCache: () -> Unit,
-    onUpdateImageCacheSizeMb: (Int) -> Unit,
-    onClearImageCache: () -> Unit,
-    onUpdateSongMetadata: () -> Unit,
-    onUpdateTextScale: (org.hdhmc.saki.domain.model.TextScale) -> Unit,
-    onUpdateLanguage: (org.hdhmc.saki.domain.model.AppLanguage) -> Unit,
-    onUpdateThemeMode: (ThemeMode) -> Unit,
-    onUpdateThemeStyle: (ThemeStyle) -> Unit,
-    onUpdateThemeSeed: (String) -> Unit,
-    onUpdatePaletteStyle: (org.hdhmc.saki.domain.model.SakiPaletteStyle) -> Unit,
-    onUpdateDefaultBrowseTab: (org.hdhmc.saki.domain.model.DefaultBrowseTab) -> Unit,
-    onUpdateDefaultAlbumFeed: (org.hdhmc.saki.domain.model.AlbumListType) -> Unit,
-    onUpdateSongsPageSize: (Int) -> Unit,
-    onUpdateBluetoothLyrics: (Boolean) -> Unit,
-    onUpdateBufferStrategy: (org.hdhmc.saki.domain.model.BufferStrategy) -> Unit,
-    onUpdateCustomBufferSeconds: (Int) -> Unit,
-    onExportConfig: (android.net.Uri) -> Unit,
-    onImportConfig: (android.net.Uri) -> Unit,
-    onPausePlayback: () -> Unit,
-    onResumePlayback: () -> Unit,
-    onSkipToNext: () -> Unit,
-    onSkipToPrevious: () -> Unit,
 ) {
-    val currentOrQueuedTrack = uiState.playbackState.currentItem ?: uiState.playbackState.queue.firstOrNull()
     val shellBackgroundBrush = rememberBrowseBackgroundBrush()
     val density = LocalDensity.current
     val defaultCapsuleHeightPx = with(density) { 72.dp.roundToPx() }
@@ -307,37 +171,12 @@ private fun RootShell(
     ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
             Box(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
-                BrowseScreen(
-                    uiState = uiState,
-                    isOfflineDegraded = endpointStatus.isOfflineDegraded,
+                BrowseRoute(
+                    viewModel = viewModel,
                     contentPadding = PaddingValues(),
                     bottomOverlayPadding = capsuleOverlayPadding,
                     onManageServers = onManageServers,
-                    onSelectBrowseSection = onSelectBrowseSection,
-                    onSetSearchActive = onSetSearchActive,
-                    onUpdateSearchQuery = onUpdateSearchQuery,
-                    onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
-                    onClearRecentSearchQueries = onClearRecentSearchQueries,
-                    onRefreshCurrentTab = onRefreshCurrentTab,
-                    onSelectAlbumFeed = onSelectAlbumFeed,
-                    onLoadMoreAlbums = onLoadMoreAlbums,
-                    onLoadPreviousSongs = onLoadPreviousSongs,
-                    onLoadMoreSongs = onLoadMoreSongs,
-                    onUpdateAlbumViewMode = onUpdateAlbumViewMode,
-                    onOpenArtist = onOpenArtist,
-                    onCloseArtist = onCloseArtist,
-                    onOpenAlbum = onOpenAlbum,
-                    onCloseAlbum = onCloseAlbum,
-                    onOpenPlaylist = onOpenPlaylist,
-                    onClosePlaylist = onClosePlaylist,
-                    onPlaySongs = onPlaySongs,
-                    onPlayLibrarySongs = onPlayLibrarySongs,
-                    onQueueSong = onQueueSong,
-                    onPlaySongNext = onPlaySongNext,
-                    onOfflineSongUnavailable = onOfflineSongUnavailable,
-                    onToggleSongDownload = onToggleSongDownload,
                     onOpenSettings = { onShowSettingsChange(true) },
-                    onImportConfig = onImportConfig,
                 )
 
                 AnimatedVisibility(
@@ -346,42 +185,12 @@ private fun RootShell(
                     exit = fadeOut(spring(stiffness = Spring.StiffnessMediumLow)),
                 ) {
                     Box(modifier = Modifier.fillMaxSize().then(settingsBackModifier)) {
-                        SettingsScreen(
-                            uiState = uiState,
+                        SettingsRoute(
+                            viewModel = viewModel,
                             contentPadding = PaddingValues(),
                             bottomOverlayPadding = capsuleOverlayPadding,
                             onClose = { onShowSettingsChange(false) },
                             onManageServers = onManageServers,
-                            onSelectServer = onSelectServer,
-                            onUpdateStreamQuality = onUpdateStreamQuality,
-                            onUpdateDownloadQuality = onUpdateDownloadQuality,
-                            onUpdateAdaptiveQuality = onUpdateAdaptiveQuality,
-                            onUpdateWifiStreamQuality = onUpdateWifiStreamQuality,
-                            onUpdateMobileStreamQuality = onUpdateMobileStreamQuality,
-                            onUpdateSoundBalancing = onUpdateSoundBalancing,
-                            onUpdateStreamCacheSizeMb = onUpdateStreamCacheSizeMb,
-                            onClearStreamCache = onClearStreamCache,
-                            onUpdateImageCacheSizeMb = onUpdateImageCacheSizeMb,
-                            onClearImageCache = onClearImageCache,
-                            onUpdateSongMetadata = onUpdateSongMetadata,
-                            onUpdateTextScale = onUpdateTextScale,
-                            onUpdateLanguage = onUpdateLanguage,
-                            onUpdateThemeMode = onUpdateThemeMode,
-                            onUpdateThemeStyle = onUpdateThemeStyle,
-                            onUpdateThemeSeed = onUpdateThemeSeed,
-                            onUpdatePaletteStyle = onUpdatePaletteStyle,
-                            onUpdateDefaultBrowseTab = onUpdateDefaultBrowseTab,
-                            onUpdateDefaultAlbumFeed = onUpdateDefaultAlbumFeed,
-                            onUpdateSongsPageSize = onUpdateSongsPageSize,
-                            onUpdateBluetoothLyrics = onUpdateBluetoothLyrics,
-                            onUpdateBufferStrategy = onUpdateBufferStrategy,
-                            onUpdateCustomBufferSeconds = onUpdateCustomBufferSeconds,
-                            onExportConfig = onExportConfig,
-                            onImportConfig = onImportConfig,
-                            onPlayCachedSong = onPlayCachedSong,
-                            onPlayCachedQueue = onPlayCachedQueue,
-                            onDeleteCachedSong = onDeleteCachedSong,
-                            onClearCachedSongs = onClearCachedSongs,
                         )
                     }
                 }
@@ -403,24 +212,166 @@ private fun RootShell(
                             }
                         },
                 ) {
-                    NowPlayingCapsule(
-                        track = currentOrQueuedTrack,
-                        isPlaying = uiState.playbackState.isPlaying,
-                        currentServer = currentOrQueuedTrack?.serverId?.let { sid ->
-                            uiState.servers.firstOrNull { it.id == sid }
-                        },
-                        onExpand = onOpenNowPlaying,
-                        onPlayPause = {
-                            if (uiState.playbackState.isPlaying) onPausePlayback() else onResumePlayback()
-                        },
-                        onSkipToPrevious = onSkipToPrevious,
-                        onSkipToNext = onSkipToNext,
-                        prewarmDynamicColors = rememberVisualEffectsPolicy().useNowPlayingDynamicArtworkColors,
+                    NowPlayingCapsuleRoute(
+                        viewModel = viewModel,
+                        onOpenNowPlaying = onOpenNowPlaying,
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun BrowseRoute(
+    viewModel: SakiAppViewModel,
+    contentPadding: PaddingValues,
+    bottomOverlayPadding: Dp,
+    onManageServers: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val uiState by viewModel.browseUiState.collectAsStateWithLifecycle()
+    val endpointStatus by viewModel.endpointStatus.collectAsStateWithLifecycle()
+    BrowseScreen(
+        uiState = uiState,
+        playbackUiStateFlow = viewModel.browsePlaybackUiState,
+        availabilityUiStateFlow = viewModel.browseAvailabilityUiState,
+        isOfflineDegraded = endpointStatus.isOfflineDegraded,
+        contentPadding = contentPadding,
+        bottomOverlayPadding = bottomOverlayPadding,
+        onManageServers = onManageServers,
+        onSelectBrowseSection = viewModel::selectBrowseSection,
+        onSetSearchActive = viewModel::setSearchActive,
+        onUpdateSearchQuery = viewModel::updateSearchQuery,
+        onRemoveRecentSearchQuery = viewModel::removeRecentSearchQuery,
+        onClearRecentSearchQueries = viewModel::clearRecentSearchQueries,
+        onRefreshCurrentTab = viewModel::refreshCurrentTab,
+        onSelectAlbumFeed = viewModel::selectAlbumFeed,
+        onLoadMoreAlbums = viewModel::loadMoreAlbums,
+        onLoadPreviousSongs = viewModel::loadPreviousSongs,
+        onLoadMoreSongs = viewModel::loadMoreSongs,
+        onUpdateAlbumViewMode = viewModel::updateAlbumViewMode,
+        onOpenArtist = viewModel::openArtist,
+        onCloseArtist = viewModel::closeArtist,
+        onOpenAlbum = viewModel::openAlbum,
+        onCloseAlbum = viewModel::closeAlbum,
+        onOpenPlaylist = viewModel::openPlaylist,
+        onClosePlaylist = viewModel::closePlaylist,
+        onPlaySongs = viewModel::playSongs,
+        onPlayLibrarySongs = viewModel::playLibrarySongs,
+        onQueueSong = viewModel::queueSong,
+        onPlaySongNext = viewModel::playSongNext,
+        onOfflineSongUnavailable = viewModel::showOfflineSongUnavailable,
+        onToggleSongDownload = viewModel::toggleSongDownload,
+        onOpenSettings = onOpenSettings,
+        onImportConfig = { uri -> viewModel.importConfig(uri) },
+    )
+}
+
+@Composable
+private fun SettingsRoute(
+    viewModel: SakiAppViewModel,
+    contentPadding: PaddingValues,
+    bottomOverlayPadding: Dp,
+    onClose: () -> Unit,
+    onManageServers: () -> Unit,
+) {
+    val uiState by viewModel.settingsUiState.collectAsStateWithLifecycle()
+    SettingsScreen(
+        uiState = uiState,
+        contentPadding = contentPadding,
+        bottomOverlayPadding = bottomOverlayPadding,
+        onClose = onClose,
+        onManageServers = onManageServers,
+        onSelectServer = viewModel::selectServer,
+        onUpdateStreamQuality = viewModel::updateStreamQuality,
+        onUpdateDownloadQuality = viewModel::updateDownloadQuality,
+        onUpdateAdaptiveQuality = viewModel::updateAdaptiveQuality,
+        onUpdateWifiStreamQuality = viewModel::updateWifiStreamQuality,
+        onUpdateMobileStreamQuality = viewModel::updateMobileStreamQuality,
+        onUpdateSoundBalancing = viewModel::updateSoundBalancing,
+        onUpdateStreamCacheSizeMb = viewModel::updateStreamCacheSizeMb,
+        onClearStreamCache = viewModel::clearStreamCache,
+        onUpdateImageCacheSizeMb = viewModel::updateImageCacheSizeMb,
+        onClearImageCache = viewModel::clearImageCache,
+        onUpdateSongMetadata = viewModel::updateAllSongMetadata,
+        onUpdateTextScale = viewModel::updateTextScale,
+        onUpdateLanguage = viewModel::updateLanguage,
+        onUpdateThemeMode = viewModel::updateThemeMode,
+        onUpdateThemeStyle = viewModel::updateThemeStyle,
+        onUpdateThemeSeed = viewModel::updateThemeSeed,
+        onUpdatePaletteStyle = viewModel::updatePaletteStyle,
+        onUpdateDefaultBrowseTab = viewModel::updateDefaultBrowseTab,
+        onUpdateDefaultAlbumFeed = viewModel::updateDefaultAlbumFeed,
+        onUpdateSongsPageSize = viewModel::updateSongsPageSize,
+        onUpdateBluetoothLyrics = viewModel::updateBluetoothLyrics,
+        onUpdateBufferStrategy = viewModel::updateBufferStrategy,
+        onUpdateCustomBufferSeconds = viewModel::updateCustomBufferSeconds,
+        onExportConfig = viewModel::exportConfig,
+        onImportConfig = { uri -> viewModel.importConfig(uri) },
+        onPlayCachedSong = viewModel::playCachedSong,
+        onPlayCachedQueue = viewModel::playCachedQueue,
+        onDeleteCachedSong = viewModel::deleteCachedSong,
+        onClearCachedSongs = viewModel::clearCachedSongs,
+    )
+}
+
+@Composable
+private fun NowPlayingCapsuleRoute(
+    viewModel: SakiAppViewModel,
+    onOpenNowPlaying: () -> Unit,
+) {
+    val uiState by viewModel.capsuleUiState.collectAsStateWithLifecycle()
+    NowPlayingCapsule(
+        track = uiState.track,
+        isPlaying = uiState.isPlaying,
+        currentServer = uiState.currentServer,
+        onExpand = {
+            if (uiState.track != null) onOpenNowPlaying()
+        },
+        onPlayPause = {
+            if (uiState.isPlaying) viewModel.pausePlayback() else viewModel.resumePlayback()
+        },
+        onSkipToPrevious = viewModel::skipToPrevious,
+        onSkipToNext = viewModel::skipToNext,
+        prewarmDynamicColors = rememberVisualEffectsPolicy().useNowPlayingDynamicArtworkColors,
+    )
+}
+
+@Composable
+private fun NowPlayingOverlayHostRoute(
+    visible: Boolean,
+    viewModel: SakiAppViewModel,
+    onDismiss: () -> Unit,
+    onCloseSettings: () -> Unit,
+) {
+    val uiState by viewModel.nowPlayingUiState.collectAsStateWithLifecycle()
+    val endpointStatus by viewModel.endpointStatus.collectAsStateWithLifecycle()
+    NowPlayingOverlayHost(
+        visible = visible,
+        playbackState = uiState.playbackState,
+        playbackProgressFlow = viewModel.playbackProgress,
+        servers = uiState.servers,
+        selectedServerId = uiState.selectedServerId,
+        libraryIndexes = uiState.libraryIndexes,
+        endpointStatus = endpointStatus,
+        lyrics = uiState.currentLyrics,
+        onDismiss = onDismiss,
+        onCloseSettings = onCloseSettings,
+        onOpenArtistFromPlayback = viewModel::openArtistFromPlayback,
+        onOpenAlbumFromPlayback = viewModel::openAlbumFromPlayback,
+        onPausePlayback = viewModel::pausePlayback,
+        onResumePlayback = viewModel::resumePlayback,
+        onSkipToNext = viewModel::skipToNext,
+        onSkipToPrevious = viewModel::skipToPrevious,
+        onSeekTo = viewModel::seekTo,
+        onCycleRepeatMode = viewModel::cycleRepeatMode,
+        onToggleShuffle = viewModel::toggleShuffle,
+        onSkipToQueueItem = viewModel::skipToQueueItem,
+        onRemoveQueueItem = viewModel::removeQueueItem,
+        onReprobeEndpoints = viewModel::reprobeEndpoints,
+        onForceEndpoint = viewModel::forceEndpoint,
+    )
 }
 
 /**
@@ -484,15 +435,10 @@ private fun NowPlayingOverlayHost(
                 artistId in availableArtistIds
             )
     }
-    val progress = if (visible) {
-        playbackProgressFlow.collectAsStateWithLifecycle().value
-    } else {
-        playbackState.toProgressState()
-    }
     NowPlayingOverlay(
         visible = visible,
         playbackState = playbackState,
-        playbackProgress = progress,
+        playbackProgressFlow = playbackProgressFlow,
         track = track,
         onDismiss = onDismiss,
         canOpenArtist = ::canOpenArtist,
@@ -531,13 +477,5 @@ private fun NowPlayingOverlayHost(
         useArtworkMotion = visualEffectsPolicy.useNowPlayingArtworkMotion,
         useArtworkBackdrop = visualEffectsPolicy.useNowPlayingArtworkBackdrop,
         artworkPrewarmRadius = visualEffectsPolicy.nowPlayingArtworkPrewarmRadius,
-    )
-}
-
-private fun PlaybackSessionState.toProgressState(): PlaybackProgressState {
-    return PlaybackProgressState(
-        positionMs = positionMs,
-        durationMs = durationMs,
-        bufferedPositionMs = bufferedPositionMs,
     )
 }
