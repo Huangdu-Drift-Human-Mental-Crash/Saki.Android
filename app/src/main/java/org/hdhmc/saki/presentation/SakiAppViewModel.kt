@@ -38,6 +38,7 @@ import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.domain.model.SongFeedType
 import org.hdhmc.saki.domain.model.SongLyrics
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
@@ -78,6 +79,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val ALBUMS_PAGE_SIZE = 36
+private const val RANDOM_SONGS_FEED_SIZE = 200
 private const val PLAYLIST_DETAIL_PREFETCH_LIMIT = 12
 private const val PLAYLIST_DETAIL_PREFETCH_MAX_SONGS = 500
 private const val SONG_METADATA_SYNC_PAGE_SIZE = 500
@@ -1100,6 +1102,48 @@ class SakiAppViewModel @Inject constructor(
                 openNowPlayingRequestsFlow.emit(Unit)
             }.onFailure { throwable ->
                 snackbarMessages.emit(SnackbarMessage(throwable.localizedOr(R.string.error_start_playback)))
+            }
+        }
+    }
+
+    fun selectSongFeed(feed: SongFeedType) {
+        val serverId = uiState.value.selectedServerId ?: return
+        mutableUiState.update { it.copy(selectedSongFeed = feed) }
+        if (
+            feed == SongFeedType.RANDOM &&
+            uiState.value.randomSongs.isEmpty() &&
+            !uiState.value.isRandomSongsLoading
+        ) {
+            loadRandomSongs(serverId)
+        }
+    }
+
+    fun refreshRandomSongs() {
+        val serverId = uiState.value.selectedServerId ?: return
+        if (uiState.value.isRandomSongsLoading) return
+        loadRandomSongs(serverId)
+    }
+
+    private fun loadRandomSongs(serverId: Long) {
+        mutableUiState.update { it.copy(isRandomSongsLoading = true, randomSongsError = null) }
+        viewModelScope.launch {
+            val songs = runCatching {
+                subsonicRepository.getRandomSongs(serverId, size = RANDOM_SONGS_FEED_SIZE).data
+            }.getOrElse { emptyList() }
+                .distinctBy(Song::id)
+                .ifEmpty {
+                    runCatching { libraryCacheRepository.getSongs(serverId) }
+                        .getOrDefault(emptyList())
+                        .shuffled()
+                        .take(RANDOM_SONGS_FEED_SIZE)
+                }
+            if (uiState.value.selectedServerId != serverId) return@launch
+            mutableUiState.update {
+                it.copy(
+                    randomSongs = songs,
+                    isRandomSongsLoading = false,
+                    randomSongsError = if (songs.isEmpty()) UiText.resource(R.string.browse_no_songs) else null,
+                )
             }
         }
     }
@@ -2522,6 +2566,10 @@ data class SakiAppUiState(
     val isSongsLoadingPrevious: Boolean = false,
     val isSongsLoadingMore: Boolean = false,
     val songsError: UiText? = null,
+    val selectedSongFeed: SongFeedType = SongFeedType.DEFAULT,
+    val randomSongs: List<Song> = emptyList(),
+    val isRandomSongsLoading: Boolean = false,
+    val randomSongsError: UiText? = null,
     val isSongMetadataSyncing: Boolean = false,
     val songMetadataSyncCount: Int = 0,
     val isSearchActive: Boolean = false,
@@ -2619,6 +2667,10 @@ data class SakiBrowseUiState(
     val isSongsLoadingPrevious: Boolean = false,
     val isSongsLoadingMore: Boolean = false,
     val songsError: UiText? = null,
+    val selectedSongFeed: SongFeedType = SongFeedType.DEFAULT,
+    val randomSongs: List<Song> = emptyList(),
+    val isRandomSongsLoading: Boolean = false,
+    val randomSongsError: UiText? = null,
     val isSearchActive: Boolean = false,
     val searchQuery: String = "",
     val searchResults: SearchResults = SearchResults(),
@@ -2730,6 +2782,10 @@ private fun SakiAppUiState.toBrowseUiState(): SakiBrowseUiState {
         isSongsLoadingPrevious = isSongsLoadingPrevious,
         isSongsLoadingMore = isSongsLoadingMore,
         songsError = songsError,
+        selectedSongFeed = selectedSongFeed,
+        randomSongs = randomSongs,
+        isRandomSongsLoading = isRandomSongsLoading,
+        randomSongsError = randomSongsError,
         isSearchActive = isSearchActive,
         searchQuery = searchQuery,
         searchResults = searchResults,

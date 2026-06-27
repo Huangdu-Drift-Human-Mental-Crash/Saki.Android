@@ -253,6 +253,7 @@ private fun BrowseRoute(
         onClearRecentSearchQueries = viewModel::clearRecentSearchQueries,
         onRefreshCurrentTab = viewModel::refreshCurrentTab,
         onSelectAlbumFeed = viewModel::selectAlbumFeed,
+        onSelectSongFeed = viewModel::selectSongFeed,
         onLoadMoreAlbums = viewModel::loadMoreAlbums,
         onLoadPreviousSongs = viewModel::loadPreviousSongs,
         onLoadMoreSongs = viewModel::loadMoreSongs,

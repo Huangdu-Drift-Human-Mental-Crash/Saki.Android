@@ -28,6 +28,7 @@ data class SubsonicResponseDto(
     val playlists: PlaylistsDto? = null,
     val playlist: PlaylistDto? = null,
     val searchResult3: SearchResult3Dto? = null,
+    val randomSongs: RandomSongsDto? = null,
     val lyricsList: LyricsListDto? = null,
     val playQueue: PlayQueueDto? = null,
 )
@@ -159,6 +160,11 @@ data class PlaylistDto(
 data class SearchResult3Dto(
     val artist: List<ArtistDto> = emptyList(),
     val album: List<AlbumDto> = emptyList(),
+    val song: List<SongDto> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class RandomSongsDto(
     val song: List<SongDto> = emptyList(),
 )
 

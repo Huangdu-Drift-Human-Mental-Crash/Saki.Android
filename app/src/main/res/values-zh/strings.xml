@@ -146,6 +146,8 @@
     <string name="library_artist_songs">歌曲</string>
     <string name="library_artist_songs_subtitle">%1$s 的歌曲</string>
     <string name="library_albums">专辑</string>
+    <string name="browse_song_feed_default">默认</string>
+    <string name="browse_song_feed_random">随机</string>
     <string name="library_albums_subtitle_full_release">查看完整专辑页面</string>
     <string name="library_loading_album">正在加载专辑</string>
     <string name="library_track_list">曲目列表</string>

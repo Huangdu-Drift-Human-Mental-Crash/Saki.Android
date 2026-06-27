@@ -137,6 +137,10 @@ internal fun SubsonicResponseDto.toSearchResults(): SearchResults {
     )
 }
 
+internal fun SubsonicResponseDto.toRandomSongs(): List<Song> {
+    return randomSongs?.song.orEmpty().map(SongDto::toSong)
+}
+
 internal fun SubsonicResponseDto.toSavedPlayQueue(): SavedPlayQueue {
     val payload = playQueue ?: return SavedPlayQueue(emptyList(), null, 0)
     return SavedPlayQueue(

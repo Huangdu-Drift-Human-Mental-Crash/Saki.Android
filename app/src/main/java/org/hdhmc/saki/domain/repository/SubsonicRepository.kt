@@ -77,6 +77,12 @@ interface SubsonicRepository {
         musicFolderId: String? = null,
     ): SubsonicCallResult<SearchResults>
 
+    suspend fun getRandomSongs(
+        serverId: Long,
+        size: Int = 50,
+        musicFolderId: String? = null,
+    ): SubsonicCallResult<List<Song>>
+
     suspend fun buildStreamRequest(
         serverId: Long,
         songId: String,

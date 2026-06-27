@@ -83,6 +83,11 @@ enum class AlbumListType(val apiValue: String) {
     }
 }
 
+enum class SongFeedType {
+    DEFAULT,
+    RANDOM,
+}
+
 data class AlbumSummary(
     val id: String,
     val name: String,
