@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -108,6 +109,7 @@ import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.domain.model.SongFeedType
 import org.hdhmc.saki.presentation.BrowseSection
 import org.hdhmc.saki.presentation.AlbumFeedState
 import org.hdhmc.saki.presentation.labelRes
@@ -145,6 +147,7 @@ fun BrowseScreen(
     onClearRecentSearchQueries: () -> Unit,
     onRefreshCurrentTab: () -> Unit,
     onSelectAlbumFeed: (AlbumListType) -> Unit,
+    onSelectSongFeed: (SongFeedType) -> Unit,
     onLoadMoreAlbums: () -> Unit,
     onLoadPreviousSongs: () -> Unit,
     onLoadMoreSongs: () -> Unit,
@@ -234,6 +237,7 @@ fun BrowseScreen(
                                 onClearRecentSearchQueries = onClearRecentSearchQueries,
                                 onRefreshCurrentTab = onRefreshCurrentTab,
                                 onSelectAlbumFeed = onSelectAlbumFeed,
+                                onSelectSongFeed = onSelectSongFeed,
                                 onLoadMoreAlbums = onLoadMoreAlbums,
                                 onLoadPreviousSongs = onLoadPreviousSongs,
                                 onLoadMoreSongs = onLoadMoreSongs,
@@ -693,6 +697,7 @@ private fun BrowsePager(
     onClearRecentSearchQueries: () -> Unit,
     onRefreshCurrentTab: () -> Unit,
     onSelectAlbumFeed: (AlbumListType) -> Unit,
+    onSelectSongFeed: (SongFeedType) -> Unit,
     onLoadMoreAlbums: () -> Unit,
     onLoadPreviousSongs: () -> Unit,
     onLoadMoreSongs: () -> Unit,
@@ -744,7 +749,7 @@ private fun BrowsePager(
             )
             Box(modifier = Modifier.weight(1f)) {
                 val isRefreshing = uiState.isArtistsLoading || uiState.isAlbumsLoading ||
-                    uiState.isPlaylistsLoading || uiState.isSongsLoading
+                    uiState.isPlaylistsLoading || uiState.isSongsLoading || uiState.isRandomSongsLoading
                 val pullState = rememberPullToRefreshState()
                 val haptic = LocalHapticFeedback.current
                 val isOverThreshold = !isRefreshing && pullState.distanceFraction >= 1f
@@ -832,6 +837,7 @@ private fun BrowsePager(
                                 )
 
                                 BrowseSection.SONGS -> SongsPageRoute(
+                                    browsePagerState = pagerState,
                                     songs = uiState.songs,
                                     songsOffset = uiState.songsOffset,
                                     hasPrevious = uiState.hasPreviousSongs,
@@ -852,6 +858,11 @@ private fun BrowsePager(
                                     onPlayLibrarySongs = onPlayLibrarySongs,
                                     onOfflineSongUnavailable = onOfflineSongUnavailable,
                                     onShowSongActions = onShowSongActions,
+                                    selectedSongFeed = uiState.selectedSongFeed,
+                                    randomSongs = uiState.randomSongs,
+                                    isRandomSongsLoading = uiState.isRandomSongsLoading,
+                                    randomSongsError = uiState.randomSongsError?.asString(),
+                                    onSelectSongFeed = onSelectSongFeed,
                                 )
                             }
                         }
@@ -1523,7 +1534,7 @@ private fun AlbumsPage(
         state = browsePagerState,
         pagerSnapDistance = PagerSnapDistance.atMost(1),
     )
-    val feedBoundaryHandoffConnection = rememberAlbumFeedBoundaryHandoffConnection(
+    val feedBoundaryHandoffConnection = rememberFeedBoundaryHandoffConnection(
         feedPagerState = feedPagerState,
         browsePagerState = browsePagerState,
         browsePagerFlingBehavior = browsePagerFlingBehavior,
@@ -1589,7 +1600,7 @@ private fun AlbumsPage(
 }
 
 @Composable
-private fun rememberAlbumFeedBoundaryHandoffConnection(
+private fun rememberFeedBoundaryHandoffConnection(
     feedPagerState: PagerState,
     browsePagerState: PagerState,
     browsePagerFlingBehavior: TargetedFlingBehavior,
@@ -1606,7 +1617,7 @@ private fun rememberAlbumFeedBoundaryHandoffConnection(
                 }
 
                 val scrollDelta = -available.x
-                if (!feedPagerState.shouldHandOffAlbumFeedDelta(scrollDelta)) {
+                if (!feedPagerState.shouldHandOffFeedDelta(scrollDelta)) {
                     handedOffGesture = false
                     return Offset.Zero
                 }
@@ -1644,7 +1655,7 @@ private fun rememberAlbumFeedBoundaryHandoffConnection(
     }
 }
 
-private fun PagerState.shouldHandOffAlbumFeedDelta(scrollDelta: Float): Boolean {
+private fun PagerState.shouldHandOffFeedDelta(scrollDelta: Float): Boolean {
     val isSettledAtFeedBoundary = currentPage == settledPage &&
         currentPage == targetPage &&
         abs(currentPageOffsetFraction) <= PagerOffsetSettlingEpsilon
@@ -1931,6 +1942,7 @@ private fun PlaylistsPage(
 
 @Composable
 private fun SongsPageRoute(
+    browsePagerState: PagerState,
     songs: List<Song>,
     songsOffset: Int,
     hasPrevious: Boolean,
@@ -1951,39 +1963,118 @@ private fun SongsPageRoute(
     onPlayLibrarySongs: (Int) -> Unit,
     onOfflineSongUnavailable: () -> Unit,
     onShowSongActions: (Song) -> Unit,
+    selectedSongFeed: SongFeedType,
+    randomSongs: List<Song>,
+    isRandomSongsLoading: Boolean,
+    randomSongsError: String?,
+    onSelectSongFeed: (SongFeedType) -> Unit,
 ) {
     val playbackUiState by playbackUiStateFlow.collectAsStateWithLifecycle()
     val availabilityUiState by availabilityUiStateFlow.collectAsStateWithLifecycle()
     val cachedSongsBySongId = rememberCachedSongsBySongId(availabilityUiState)
-    SongsPage(
-        songs = songs,
-        songsOffset = songsOffset,
-        hasPrevious = hasPrevious,
-        hasMore = hasMore,
-        server = server,
-        cachedSongsBySongId = cachedSongsBySongId,
-        streamCachedSongIds = availabilityUiState.streamCachedSongIds,
-        downloadingSongIds = availabilityUiState.downloadingSongIds,
-        isOfflineDegraded = isOfflineDegraded,
-        isLoading = isLoading,
-        isLoadingPrevious = isLoadingPrevious,
-        isLoadingMore = isLoadingMore,
-        error = error,
-        bottomOverlayPadding = bottomOverlayPadding,
-        scrollPosition = scrollPosition,
-        currentPlaybackSongId = playbackUiState.currentPlaybackSongId,
-        isPlaying = playbackUiState.isPlaying,
-        onLoadPrevious = onLoadPrevious,
-        onLoadMore = onLoadMore,
-        onPlaySongs = onPlaySongs,
-        onPlayLibrarySongs = onPlayLibrarySongs,
-        onOfflineSongUnavailable = onOfflineSongUnavailable,
-        onShowSongActions = onShowSongActions,
+
+    val feeds = SongFeedType.entries
+    val selectedSongFeedState = rememberUpdatedState(selectedSongFeed)
+    val feedPagerState = rememberPagerState(
+        initialPage = feeds.indexOf(selectedSongFeed).coerceAtLeast(0),
+        pageCount = { feeds.size },
     )
+    val feedPagerFlingBehavior = PagerDefaults.flingBehavior(
+        state = feedPagerState,
+        pagerSnapDistance = PagerSnapDistance.atMost(1),
+    )
+    val browsePagerFlingBehavior = PagerDefaults.flingBehavior(
+        state = browsePagerState,
+        pagerSnapDistance = PagerSnapDistance.atMost(1),
+    )
+    val feedBoundaryHandoffConnection = rememberFeedBoundaryHandoffConnection(
+        feedPagerState = feedPagerState,
+        browsePagerState = browsePagerState,
+        browsePagerFlingBehavior = browsePagerFlingBehavior,
+    )
+    val coroutineScope = rememberCoroutineScope()
+    val highlightedFeed = feeds[feedPagerState.targetPage.coerceIn(0, feeds.lastIndex)]
+
+    LaunchedEffect(selectedSongFeed) {
+        val targetPage = feeds.indexOf(selectedSongFeed).coerceAtLeast(0)
+        if (feedPagerState.settledPage != targetPage && feedPagerState.targetPage != targetPage) {
+            feedPagerState.animateScrollToPage(targetPage)
+        }
+    }
+    LaunchedEffect(feedPagerState) {
+        snapshotFlow { feedPagerState.settledPage }
+            .distinctUntilChanged()
+            .map { feeds[it] }
+            .filter { it != selectedSongFeedState.value }
+            .collect { onSelectSongFeed(it) }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        SongFeedControls(
+            selected = highlightedFeed,
+            onSelect = { feed ->
+                val targetPage = feeds.indexOf(feed)
+                if (targetPage >= 0 && feedPagerState.targetPage != targetPage) {
+                    coroutineScope.launch { feedPagerState.animateScrollToPage(targetPage) }
+                }
+            },
+        )
+        HorizontalPager(
+            state = feedPagerState,
+            modifier = Modifier
+                .weight(1f)
+                .nestedScroll(feedBoundaryHandoffConnection),
+            flingBehavior = feedPagerFlingBehavior,
+        ) { page ->
+            when (feeds[page]) {
+                SongFeedType.DEFAULT -> DefaultSongsContent(
+                    songs = songs,
+                    songsOffset = songsOffset,
+                    hasPrevious = hasPrevious,
+                    hasMore = hasMore,
+                    server = server,
+                    cachedSongsBySongId = cachedSongsBySongId,
+                    streamCachedSongIds = availabilityUiState.streamCachedSongIds,
+                    downloadingSongIds = availabilityUiState.downloadingSongIds,
+                    isOfflineDegraded = isOfflineDegraded,
+                    isLoading = isLoading,
+                    isLoadingPrevious = isLoadingPrevious,
+                    isLoadingMore = isLoadingMore,
+                    error = error,
+                    bottomOverlayPadding = bottomOverlayPadding,
+                    scrollPosition = scrollPosition,
+                    currentPlaybackSongId = playbackUiState.currentPlaybackSongId,
+                    isPlaying = playbackUiState.isPlaying,
+                    onLoadPrevious = onLoadPrevious,
+                    onLoadMore = onLoadMore,
+                    onPlaySongs = onPlaySongs,
+                    onPlayLibrarySongs = onPlayLibrarySongs,
+                    onOfflineSongUnavailable = onOfflineSongUnavailable,
+                    onShowSongActions = onShowSongActions,
+                )
+                SongFeedType.RANDOM -> RandomSongsContent(
+                    songs = randomSongs,
+                    server = server,
+                    cachedSongsBySongId = cachedSongsBySongId,
+                    streamCachedSongIds = availabilityUiState.streamCachedSongIds,
+                    downloadingSongIds = availabilityUiState.downloadingSongIds,
+                    isOfflineDegraded = isOfflineDegraded,
+                    isLoading = isRandomSongsLoading,
+                    error = randomSongsError,
+                    bottomOverlayPadding = bottomOverlayPadding,
+                    currentPlaybackSongId = playbackUiState.currentPlaybackSongId,
+                    isPlaying = playbackUiState.isPlaying,
+                    onPlaySongs = onPlaySongs,
+                    onOfflineSongUnavailable = onOfflineSongUnavailable,
+                    onShowSongActions = onShowSongActions,
+                )
+            }
+        }
+    }
 }
 
 @Composable
-private fun SongsPage(
+private fun DefaultSongsContent(
     songs: List<Song>,
     songsOffset: Int,
     hasPrevious: Boolean,
@@ -2124,6 +2215,98 @@ private fun SongsPage(
             item {
                 LoadingStateCard(stringResource(R.string.browse_loading_songs))
             }
+        }
+    }
+}
+
+@Composable
+private fun SongFeedControls(
+    selected: SongFeedType,
+    onSelect: (SongFeedType) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilterChip(
+            selected = selected == SongFeedType.DEFAULT,
+            onClick = { onSelect(SongFeedType.DEFAULT) },
+            label = { Text(stringResource(R.string.browse_song_feed_default)) },
+        )
+        FilterChip(
+            selected = selected == SongFeedType.RANDOM,
+            onClick = { onSelect(SongFeedType.RANDOM) },
+            label = { Text(stringResource(R.string.browse_song_feed_random)) },
+        )
+    }
+}
+
+@Composable
+private fun RandomSongsContent(
+    songs: List<Song>,
+    server: ServerConfig,
+    cachedSongsBySongId: Map<String, CachedSong>,
+    streamCachedSongIds: Set<String>,
+    downloadingSongIds: Set<String>,
+    isOfflineDegraded: Boolean,
+    isLoading: Boolean,
+    error: String?,
+    bottomOverlayPadding: Dp,
+    currentPlaybackSongId: String? = null,
+    isPlaying: Boolean = false,
+    onPlaySongs: (List<Song>, Int) -> Unit,
+    onOfflineSongUnavailable: () -> Unit,
+    onShowSongActions: (Song) -> Unit,
+) {
+    if (isLoading && songs.isEmpty()) {
+        LoadingStateCard(stringResource(R.string.browse_loading_songs))
+        return
+    }
+    if (error != null && songs.isEmpty()) {
+        ErrorStateCard(error)
+        return
+    }
+    if (songs.isEmpty()) {
+        EmptyStateCard(
+            stringResource(R.string.browse_no_songs),
+            stringResource(R.string.browse_no_songs_body),
+        )
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = bottomContentPadding(bottomOverlayPadding),
+    ) {
+        itemsIndexed(songs, key = { index, s -> "random-$index-${s.id}" }) { index, song ->
+            AlbumTrackRow(
+                song = song,
+                index = index,
+                useTrackNumbers = false,
+                albumArtistLabel = null,
+                cachedSong = cachedSongsBySongId[song.id],
+                isStreamCached = song.id in streamCachedSongIds,
+                isDownloading = song.id in downloadingSongIds,
+                isOfflineDegraded = isOfflineDegraded,
+                isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds),
+                isCurrent = currentPlaybackSongId == song.id,
+                isPlaying = isPlaying,
+                accentColor = MaterialTheme.colorScheme.primary,
+                artworkModel = resolveArtworkModel(server, song.coverArtId, cachedSongsBySongId[song.id]),
+                onClick = {
+                    playOfflineAwareSongs(
+                        songs = songs,
+                        startIndex = index,
+                        isOfflineDegraded = isOfflineDegraded,
+                        cachedSongsBySongId = cachedSongsBySongId,
+                        streamCachedSongIds = streamCachedSongIds,
+                        onPlaySongs = onPlaySongs,
+                        onUnavailable = onOfflineSongUnavailable,
+                    )
+                },
+                onMore = { onShowSongActions(song) },
+            )
         }
     }
 }

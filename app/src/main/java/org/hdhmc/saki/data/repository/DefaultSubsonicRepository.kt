@@ -20,6 +20,7 @@ import org.hdhmc.saki.data.remote.subsonic.toPingResult
 import org.hdhmc.saki.data.remote.subsonic.toPlaylist
 import org.hdhmc.saki.data.remote.subsonic.toPlaylistSummaries
 import org.hdhmc.saki.data.remote.subsonic.toSavedPlayQueue
+import org.hdhmc.saki.data.remote.subsonic.toRandomSongs
 import org.hdhmc.saki.data.remote.subsonic.toSearchResults
 import org.hdhmc.saki.data.remote.subsonic.toSong
 import org.hdhmc.saki.di.IoDispatcher
@@ -244,6 +245,23 @@ class DefaultSubsonicRepository @Inject constructor(
             ),
         ) { response ->
             response.toSearchResults()
+        }
+    }
+
+    override suspend fun getRandomSongs(
+        serverId: Long,
+        size: Int,
+        musicFolderId: String?,
+    ): SubsonicCallResult<List<Song>> = withContext(ioDispatcher) {
+        executeWithFallback(
+            serverId = serverId,
+            path = "getRandomSongs.view",
+            extraQuery = mapOfNotNull(
+                "size" to size.coerceAtLeast(0).toString(),
+                "musicFolderId" to musicFolderId,
+            ),
+        ) { response ->
+            response.toRandomSongs()
         }
     }
 

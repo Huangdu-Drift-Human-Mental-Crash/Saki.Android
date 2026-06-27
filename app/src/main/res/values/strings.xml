@@ -153,6 +153,8 @@
     <string name="library_artist_songs">Songs</string>
     <string name="library_artist_songs_subtitle">Songs by %1$s</string>
     <string name="library_albums">Albums</string>
+    <string name="browse_song_feed_default">Default</string>
+    <string name="browse_song_feed_random">Random</string>
     <string name="library_albums_subtitle_full_release">Tap into the full release page</string>
     <string name="library_loading_album">Loading album</string>
     <string name="library_track_list">Track list</string>
