@@ -1,5 +1,6 @@
 package org.hdhmc.saki.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 
 @Entity(tableName = "cached_playlists", primaryKeys = ["serverId", "playlistId"])
@@ -14,4 +15,6 @@ data class CachedPlaylistEntity(
     val coverArtId: String?,
     val created: String?,
     val changed: String?,
+    @ColumnInfo(defaultValue = "0")
+    val cachedAt: Long,
 )

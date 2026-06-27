@@ -79,6 +79,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
     }
 
     override suspend fun saveArtists(serverId: Long, indexes: LibraryIndexes) = withContext(ioDispatcher) {
+        val cachedAt = System.currentTimeMillis()
         val entities = indexes.sections.flatMap { section ->
             section.artists.map { artist ->
                 CachedArtistEntity(
@@ -89,6 +90,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
                     albumCount = artist.albumCount,
                     coverArtId = artist.coverArtId,
                     artistImageUrl = artist.artistImageUrl,
+                    cachedAt = cachedAt,
                 )
             }
         }
@@ -102,6 +104,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
     }
 
     override suspend fun saveAlbums(serverId: Long, type: AlbumListType, albums: List<AlbumSummary>) = withContext(ioDispatcher) {
+        val cachedAt = System.currentTimeMillis()
         val entities = albums.withoutUnknownAlbumPlaceholders().mapIndexed { index, album ->
             CachedAlbumEntity(
                 serverId = serverId,
@@ -118,6 +121,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
                 genre = album.genre,
                 created = album.created,
                 sortOrder = index,
+                cachedAt = cachedAt,
             )
         }
         dao.replaceAlbums(serverId, type.apiValue, entities)
@@ -128,6 +132,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
     }
 
     override suspend fun savePlaylists(serverId: Long, playlists: List<PlaylistSummary>) = withContext(ioDispatcher) {
+        val cachedAt = System.currentTimeMillis()
         val entities = playlists.map { playlist ->
             CachedPlaylistEntity(
                 serverId = serverId,
@@ -140,6 +145,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
                 coverArtId = playlist.coverArtId,
                 created = playlist.created,
                 changed = playlist.changed,
+                cachedAt = cachedAt,
             )
         }
         dao.replacePlaylists(serverId, entities)
@@ -191,7 +197,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
 
     override suspend fun saveSongs(serverId: Long, songs: List<Song>) = withContext(ioDispatcher) {
         val cachedAt = System.currentTimeMillis()
-        replaceLibrarySongs(serverId, songs)
+        replaceLibrarySongs(serverId, songs, cachedAt)
         dao.pruneUnreferencedSongMetadata(serverId)
         dao.pruneOrphanedSongArtists(serverId)
         saveSongMetadataPageInternal(serverId, songs, cachedAt, startOrder = 0)
@@ -203,7 +209,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         cachedAt: Long,
         startOrder: Int?,
     ): Unit = withContext(ioDispatcher) {
-        replaceLibrarySongs(serverId, songs)
+        replaceLibrarySongs(serverId, songs, cachedAt)
         saveSongMetadataPageInternal(serverId, songs, cachedAt, startOrder)
     }
 
@@ -467,8 +473,8 @@ class DefaultLibraryCacheRepository @Inject constructor(
         created = created,
     )
 
-    private suspend fun replaceLibrarySongs(serverId: Long, songs: List<Song>) {
-        dao.replaceSongs(serverId, songs.map { song -> song.toLibraryEntity(serverId) })
+    private suspend fun replaceLibrarySongs(serverId: Long, songs: List<Song>, cachedAt: Long) {
+        dao.replaceSongs(serverId, songs.map { song -> song.toLibraryEntity(serverId, cachedAt) })
     }
 
     private suspend fun saveSongMetadataPageInternal(
@@ -509,7 +515,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         )
     }
 
-    private fun Song.toLibraryEntity(serverId: Long) = CachedLibrarySongEntity(
+    private fun Song.toLibraryEntity(serverId: Long, cachedAt: Long) = CachedLibrarySongEntity(
         serverId = serverId,
         songId = id,
         parentId = parentId,
@@ -532,6 +538,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         sizeBytes = sizeBytes,
         path = path,
         created = created,
+        cachedAt = cachedAt,
     )
 
     private fun Song.toSongArtistEntities(serverId: Long): List<CachedSongArtistEntity> {

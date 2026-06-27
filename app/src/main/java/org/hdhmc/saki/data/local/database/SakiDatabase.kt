@@ -47,7 +47,7 @@ import org.hdhmc.saki.data.local.entity.ServerEntity
         ServerEntity::class,
         ServerEndpointEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class SakiDatabase : RoomDatabase() {
