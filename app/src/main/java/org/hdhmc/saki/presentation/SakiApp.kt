@@ -118,6 +118,7 @@ fun SakiApp(
                         viewModel = viewModel,
                         snackbarHostState = snackbarHostState,
                         showSettings = showSettings,
+                        showNowPlaying = showNowPlaying,
                         onShowSettingsChange = { showSettings = it },
                         onManageServers = { showServerManager = true },
                         onOpenNowPlaying = { showNowPlaying = true },
@@ -149,6 +150,7 @@ private fun RootShell(
     viewModel: SakiAppViewModel,
     snackbarHostState: SnackbarHostState,
     showSettings: Boolean,
+    showNowPlaying: Boolean,
     onShowSettingsChange: (Boolean) -> Unit,
     onManageServers: () -> Unit,
     onOpenNowPlaying: () -> Unit,
@@ -160,7 +162,7 @@ private fun RootShell(
     val capsuleOverlayPadding = with(density) { capsuleHeightPx.toDp() }
 
     val settingsBackModifier = Modifier.predictiveBackMotion(
-        enabled = showSettings,
+        enabled = showSettings && !showNowPlaying,
         onBack = { onShowSettingsChange(false) },
         targetAlpha = 0.35f,
     )
@@ -176,6 +178,7 @@ private fun RootShell(
                     viewModel = viewModel,
                     contentPadding = PaddingValues(),
                     bottomOverlayPadding = capsuleOverlayPadding,
+                    backHandlersEnabled = !showSettings && !showNowPlaying,
                     onManageServers = onManageServers,
                     onOpenSettings = { onShowSettingsChange(true) },
                 )
@@ -228,6 +231,7 @@ private fun BrowseRoute(
     viewModel: SakiAppViewModel,
     contentPadding: PaddingValues,
     bottomOverlayPadding: Dp,
+    backHandlersEnabled: Boolean,
     onManageServers: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -240,6 +244,7 @@ private fun BrowseRoute(
         isOfflineDegraded = endpointStatus.isOfflineDegraded,
         contentPadding = contentPadding,
         bottomOverlayPadding = bottomOverlayPadding,
+        backHandlersEnabled = backHandlersEnabled,
         onManageServers = onManageServers,
         onSelectBrowseSection = viewModel::selectBrowseSection,
         onSetSearchActive = viewModel::setSearchActive,

@@ -137,6 +137,7 @@ fun BrowseScreen(
     isOfflineDegraded: Boolean,
     contentPadding: PaddingValues,
     bottomOverlayPadding: Dp = 0.dp,
+    backHandlersEnabled: Boolean = true,
     onManageServers: () -> Unit,
     onSelectBrowseSection: (BrowseSection) -> Unit,
     onSetSearchActive: (Boolean) -> Unit,
@@ -180,10 +181,10 @@ fun BrowseScreen(
     }
     val scrollState = rememberBrowseScrollState(uiState.selectedServerId)
 
-    BackHandler(enabled = uiState.browseStack.size > 1) {
+    BackHandler(enabled = backHandlersEnabled && uiState.browseStack.size > 1) {
         onPopDetail()
     }
-    BackHandler(enabled = uiState.browseStack.size <= 1 && uiState.isSearchActive) {
+    BackHandler(enabled = backHandlersEnabled && uiState.browseStack.size <= 1 && uiState.isSearchActive) {
         onSetSearchActive(false)
     }
 
@@ -226,6 +227,7 @@ fun BrowseScreen(
                                 availabilityUiStateFlow = availabilityUiStateFlow,
                                 isOfflineDegraded = isOfflineDegraded,
                                 bottomOverlayPadding = bottomOverlayPadding,
+                                backHandlersEnabled = backHandlersEnabled,
                                 onSelectBrowseSection = onSelectBrowseSection,
                                 onSetSearchActive = onSetSearchActive,
                                 onUpdateSearchQuery = onUpdateSearchQuery,
@@ -343,7 +345,7 @@ fun BrowseScreen(
                             else -> Modifier
                                 .fillMaxSize()
                                 .predictiveBackMotion(
-                                    enabled = true,
+                                    enabled = backHandlersEnabled,
                                     onBack = onPopDetail,
                                 )
                                 .background(background)
@@ -684,6 +686,7 @@ private fun BrowsePager(
     availabilityUiStateFlow: StateFlow<SakiBrowseAvailabilityUiState>,
     isOfflineDegraded: Boolean,
     bottomOverlayPadding: Dp,
+    backHandlersEnabled: Boolean,
     onSelectBrowseSection: (BrowseSection) -> Unit,
     onSetSearchActive: (Boolean) -> Unit,
     onUpdateSearchQuery: (String) -> Unit,
@@ -863,7 +866,7 @@ private fun BrowsePager(
                 modifier = Modifier
                     .fillMaxSize()
                     .predictiveBackMotion(
-                        enabled = true,
+                        enabled = backHandlersEnabled,
                         onBack = { onSetSearchActive(false) },
                         maxScaleReduction = 0.02f,
                         maxHorizontalShiftFraction = 0.12f,
