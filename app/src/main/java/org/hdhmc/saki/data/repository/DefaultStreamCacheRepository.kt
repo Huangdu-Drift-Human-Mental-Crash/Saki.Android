@@ -18,6 +18,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -29,6 +30,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 @Singleton
@@ -41,8 +44,10 @@ class DefaultStreamCacheRepository @Inject constructor(
 ) : StreamCacheRepository {
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val cacheVersion = MutableStateFlow(0L)
+    private val snapshotRefreshMutex = Mutex()
     private var lastSnapshot = StreamCacheSnapshot()
     private var hasAppliedInitialCacheSize = false
+    private var requestedSnapshotRefreshJob: Job? = null
     private val streamCache: SimpleCache
         get() = streamCacheProvider.get()
 
@@ -71,6 +76,14 @@ class DefaultStreamCacheRepository @Inject constructor(
     }
 
     override fun observeCacheVersion(): Flow<Long> = cacheVersion.asStateFlow()
+
+    override fun requestSnapshotRefresh() {
+        requestedSnapshotRefreshJob?.cancel()
+        requestedSnapshotRefreshJob = scope.launch {
+            delay(STREAM_CACHE_SNAPSHOT_REQUEST_DEBOUNCE_MS)
+            refreshSnapshot()
+        }
+    }
 
     override fun buildCacheKey(
         serverId: Long,
@@ -150,10 +163,12 @@ class DefaultStreamCacheRepository @Inject constructor(
     }
 
     private suspend fun refreshSnapshot(forceEmit: Boolean = false) {
-        val snapshot = buildSnapshot()
-        if (forceEmit || snapshot != lastSnapshot) {
-            lastSnapshot = snapshot
-            cacheVersion.update { version -> version + 1 }
+        snapshotRefreshMutex.withLock {
+            val snapshot = buildSnapshot()
+            if (forceEmit || snapshot != lastSnapshot) {
+                lastSnapshot = snapshot
+                cacheVersion.update { version -> version + 1 }
+            }
         }
     }
 
@@ -222,6 +237,7 @@ private data class StreamCacheSnapshot(
 )
 
 private const val STREAM_CACHE_SNAPSHOT_INITIAL_DELAY_MS = 5_000L
+private const val STREAM_CACHE_SNAPSHOT_REQUEST_DEBOUNCE_MS = 250L
 private const val STREAM_CACHE_SNAPSHOT_REFRESH_MS = 30_000L
 
 private fun Collection<Set<String>>.flattenToSet(): Set<String> {

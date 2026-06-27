@@ -709,6 +709,7 @@ class SakiPlaybackService : MediaSessionService() {
             if (result.cachedBytes > 0L) {
                 completedStreamPrefetchKeysByTarget[target.targetKey] = result.cacheKey
                 deferredStreamPrefetchTargets.remove(target.targetKey)
+                streamCacheRepository.requestSnapshotRefresh()
             } else {
                 deferredStreamPrefetchTargets[target.targetKey] =
                     SystemClock.elapsedRealtime() + STREAM_PREFETCH_RETRY_DELAY_MS

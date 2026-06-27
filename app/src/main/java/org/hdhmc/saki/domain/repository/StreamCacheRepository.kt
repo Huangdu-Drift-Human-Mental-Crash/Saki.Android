@@ -8,6 +8,15 @@ import kotlinx.coroutines.flow.Flow
 interface StreamCacheRepository {
     fun observeCacheVersion(): Flow<Long>
 
+    /**
+     * Request a debounced cache snapshot refresh after an external cache write completes.
+     *
+     * This is intentionally a hint rather than a per-span update path: callers should invoke it
+     * after a resource-level write completes so UI cache indicators can update promptly without
+     * replacing the periodic snapshot scan with frequent cache walks.
+     */
+    fun requestSnapshotRefresh()
+
     fun buildCacheKey(
         serverId: Long,
         songId: String,
