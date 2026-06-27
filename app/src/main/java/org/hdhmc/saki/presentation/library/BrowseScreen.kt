@@ -749,7 +749,7 @@ private fun BrowsePager(
             )
             Box(modifier = Modifier.weight(1f)) {
                 val isRefreshing = uiState.isArtistsLoading || uiState.isAlbumsLoading ||
-                    uiState.isPlaylistsLoading || uiState.isSongsLoading
+                    uiState.isPlaylistsLoading || uiState.isSongsLoading || uiState.isRandomSongsLoading
                 val pullState = rememberPullToRefreshState()
                 val haptic = LocalHapticFeedback.current
                 val isOverThreshold = !isRefreshing && pullState.distanceFraction >= 1f

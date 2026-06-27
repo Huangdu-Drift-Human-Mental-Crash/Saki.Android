@@ -796,7 +796,11 @@ class SakiAppViewModel @Inject constructor(
             BrowseSection.ARTISTS -> loadArtists(serverId, forceRefresh = true)
             BrowseSection.ALBUMS -> loadAlbums(serverId, uiState.value.selectedAlbumFeed, forceRefresh = true)
             BrowseSection.PLAYLISTS -> loadPlaylists(serverId, forceRefresh = true)
-            BrowseSection.SONGS -> loadSongs(serverId, forceRefresh = true)
+            BrowseSection.SONGS -> if (uiState.value.selectedSongFeed == SongFeedType.RANDOM) {
+                refreshRandomSongs()
+            } else {
+                loadSongs(serverId, forceRefresh = true)
+            }
         }
     }
 
@@ -1538,6 +1542,10 @@ class SakiAppViewModel @Inject constructor(
                 hasLoadedSongsFromNetwork = if (serverChanged) false else state.hasLoadedSongsFromNetwork,
                 isSongsLoadingPrevious = if (serverChanged) false else state.isSongsLoadingPrevious,
                 isSongsLoadingMore = if (serverChanged) false else state.isSongsLoadingMore,
+                selectedSongFeed = if (serverChanged) SongFeedType.DEFAULT else state.selectedSongFeed,
+                randomSongs = if (serverChanged) emptyList() else state.randomSongs,
+                isRandomSongsLoading = if (serverChanged) false else state.isRandomSongsLoading,
+                randomSongsError = if (serverChanged) null else state.randomSongsError,
                 cacheStorageSummary = if (serverChanged) {
                     state.cacheStorageSummary.copy(
                         streamCachedSongCount = 0,
