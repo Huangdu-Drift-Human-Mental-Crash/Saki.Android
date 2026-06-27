@@ -676,14 +676,14 @@ fun NowPlayingOverlay(
             val scope = rememberCoroutineScope()
             var snackbarJob by remember { mutableStateOf<Job?>(null) }
             fun showPlayerSnackbar(message: String) {
-                playerSnackbarHostState.currentSnackbarData?.dismiss()
                 snackbarJob?.cancel()
+                playerSnackbarHostState.currentSnackbarData?.dismiss()
                 snackbarJob = scope.launch {
-                    playerSnackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
-                }
-                scope.launch {
+                    val showJob = launch {
+                        playerSnackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
+                    }
                     delay(1500)
-                    snackbarJob?.cancel()
+                    showJob.cancel()
                     playerSnackbarHostState.currentSnackbarData?.dismiss()
                 }
             }
