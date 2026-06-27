@@ -9,6 +9,7 @@ import org.hdhmc.saki.domain.model.DEFAULT_SUBSONIC_API_VERSION
 import org.hdhmc.saki.domain.model.DEFAULT_SUBSONIC_CLIENT
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
+import org.hdhmc.saki.domain.repository.LibraryCacheRepository
 import org.hdhmc.saki.domain.repository.ServerConfigRepository
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,6 +21,7 @@ import kotlinx.coroutines.withContext
 @Singleton
 class DefaultServerConfigRepository @Inject constructor(
     private val serverConfigDao: ServerConfigDao,
+    private val libraryCacheRepository: LibraryCacheRepository,
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ServerConfigRepository {
     override fun observeServerConfigs(): Flow<List<ServerConfig>> {
@@ -65,6 +67,7 @@ class DefaultServerConfigRepository @Inject constructor(
     }
 
     override suspend fun deleteServerConfig(serverId: Long): Unit = withContext(ioDispatcher) {
+        libraryCacheRepository.clearServer(serverId)
         serverConfigDao.deleteServerAndEndpoints(serverId)
     }
 
