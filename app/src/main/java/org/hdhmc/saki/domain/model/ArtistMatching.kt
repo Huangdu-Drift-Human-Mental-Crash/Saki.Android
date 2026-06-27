@@ -105,11 +105,11 @@ private fun AlbumSummary.hasPrimaryArtistMismatch(artist: Artist): Boolean {
 }
 
 private fun Album.hasUnknownAlbumName(): Boolean {
-    return name.isUnknownAlbumName()
+    return isUnknownAlbumPlaceholder()
 }
 
 private fun AlbumSummary.hasUnknownAlbumName(): Boolean {
-    return name.isUnknownAlbumName()
+    return isUnknownAlbumPlaceholder()
 }
 
 private fun Song.hasArtistIdentity(): Boolean {
@@ -131,12 +131,4 @@ private fun String?.nameParts(): List<String> {
 
 private fun List<String>.matchesAny(targetNames: List<String>): Boolean {
     return any { candidate -> targetNames.any { target -> candidate.equals(target, ignoreCase = true) } }
-}
-
-private fun String.isUnknownAlbumName(): Boolean {
-    val normalized = trim()
-        .removePrefix("[")
-        .removeSuffix("]")
-        .trim()
-    return normalized.equals("Unknown Album", ignoreCase = true)
 }

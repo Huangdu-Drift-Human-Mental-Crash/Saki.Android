@@ -37,6 +37,7 @@ import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.visibleDetailAlbums
 import org.hdhmc.saki.domain.model.withVisibleDetailAlbums
+import org.hdhmc.saki.domain.model.withoutUnknownAlbumPlaceholders
 import org.hdhmc.saki.domain.repository.LibraryCacheRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -91,11 +92,13 @@ class DefaultLibraryCacheRepository @Inject constructor(
     }
 
     override suspend fun getAlbums(serverId: Long, type: AlbumListType): List<AlbumSummary> = withContext(ioDispatcher) {
-        dao.getAlbums(serverId, type.apiValue).map { it.toDomain() }
+        dao.getAlbums(serverId, type.apiValue)
+            .map { it.toDomain() }
+            .withoutUnknownAlbumPlaceholders()
     }
 
     override suspend fun saveAlbums(serverId: Long, type: AlbumListType, albums: List<AlbumSummary>) = withContext(ioDispatcher) {
-        val entities = albums.mapIndexed { index, album ->
+        val entities = albums.withoutUnknownAlbumPlaceholders().mapIndexed { index, album ->
             CachedAlbumEntity(
                 serverId = serverId,
                 albumId = album.id,
