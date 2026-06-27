@@ -1,6 +1,5 @@
 package org.hdhmc.saki.presentation.library
 
-import android.view.ViewConfiguration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.TargetedFlingBehavior
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.selection.selectable
@@ -89,7 +89,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -1520,14 +1519,14 @@ private fun AlbumsPage(
         state = feedPagerState,
         pagerSnapDistance = PagerSnapDistance.atMost(1),
     )
-    val context = LocalContext.current
-    val boundaryFlingVelocityThreshold = remember(context) {
-        ViewConfiguration.get(context).scaledMinimumFlingVelocity.toFloat()
-    }
+    val browsePagerFlingBehavior = PagerDefaults.flingBehavior(
+        state = browsePagerState,
+        pagerSnapDistance = PagerSnapDistance.atMost(1),
+    )
     val feedBoundaryHandoffConnection = rememberAlbumFeedBoundaryHandoffConnection(
         feedPagerState = feedPagerState,
         browsePagerState = browsePagerState,
-        boundaryFlingVelocityThreshold = boundaryFlingVelocityThreshold,
+        browsePagerFlingBehavior = browsePagerFlingBehavior,
     )
     val coroutineScope = rememberCoroutineScope()
     val highlightedFeed = feeds[feedPagerState.targetPage.coerceIn(0, feeds.lastIndex)]
@@ -1593,10 +1592,14 @@ private fun AlbumsPage(
 private fun rememberAlbumFeedBoundaryHandoffConnection(
     feedPagerState: PagerState,
     browsePagerState: PagerState,
-    boundaryFlingVelocityThreshold: Float,
+    browsePagerFlingBehavior: TargetedFlingBehavior,
 ): NestedScrollConnection {
-    return remember(feedPagerState, browsePagerState, boundaryFlingVelocityThreshold) {
+    return remember(feedPagerState, browsePagerState, browsePagerFlingBehavior) {
         object : NestedScrollConnection {
+            // Tracks whether the current gesture has started driving the browse
+            // pager, so the matching fling is only forwarded for that gesture.
+            private var handedOffGesture = false
+
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source != NestedScrollSource.UserInput || available.x == 0f) {
                     return Offset.Zero
@@ -1604,46 +1607,53 @@ private fun rememberAlbumFeedBoundaryHandoffConnection(
 
                 val scrollDelta = -available.x
                 if (!feedPagerState.shouldHandOffAlbumFeedDelta(scrollDelta)) {
+                    handedOffGesture = false
                     return Offset.Zero
                 }
 
+                // The inner pager is settled at its boundary, so forward the raw
+                // drag 1:1 to the browse pager. The inner pager already consumed
+                // touch slop, so no extra dead zone is applied here -- this makes
+                // dragging across tabs feel identical to dragging the browse pager
+                // directly.
+                handedOffGesture = true
                 val consumed = browsePagerState.dispatchRawDelta(scrollDelta)
                 return Offset(x = -consumed, y = 0f)
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                val scrollVelocity = -available.x
-                val browsePagerNeedsSettling = abs(browsePagerState.currentPageOffsetFraction) >
-                    PagerOffsetSettlingEpsilon
-                if (scrollVelocity != 0f && !feedPagerState.shouldHandOffAlbumFeedDelta(scrollVelocity)) {
+                if (!handedOffGesture) {
                     return Velocity.Zero
                 }
-                if (scrollVelocity == 0f && !browsePagerNeedsSettling) {
-                    return Velocity.Zero
-                }
+                handedOffGesture = false
 
-                val direction = if (scrollVelocity > 0f) 1 else -1
-                val targetPage = if (abs(scrollVelocity) > boundaryFlingVelocityThreshold) {
-                    browsePagerState.settledPage + direction
-                } else {
-                    browsePagerState.currentPage
-                }.coerceIn(0, browsePagerState.pageCount - 1)
-
-                val isAlreadySettled = targetPage == browsePagerState.currentPage &&
-                    abs(browsePagerState.currentPageOffsetFraction) <= PagerOffsetSettlingEpsilon
-                if (!isAlreadySettled) {
-                    browsePagerState.animateScrollToPage(targetPage)
+                // Settle the browse pager with its own fling behavior so the
+                // page-switch threshold (velocity + position) matches a normal
+                // browse-pager swipe, instead of a custom velocity threshold.
+                val flingVelocity = -available.x
+                var remainingVelocity = flingVelocity
+                browsePagerState.scroll {
+                    with(browsePagerFlingBehavior) {
+                        remainingVelocity = performFling(flingVelocity)
+                    }
                 }
-                return Velocity(x = available.x, y = 0f)
+                val consumedVelocity = flingVelocity - remainingVelocity
+                return Velocity(x = -consumedVelocity, y = 0f)
             }
         }
     }
 }
 
 private fun PagerState.shouldHandOffAlbumFeedDelta(scrollDelta: Float): Boolean {
+    val isSettledAtFeedBoundary = currentPage == settledPage &&
+        currentPage == targetPage &&
+        abs(currentPageOffsetFraction) <= PagerOffsetSettlingEpsilon
+    if (!isSettledAtFeedBoundary) {
+        return false
+    }
     return when {
-        scrollDelta > 0f -> !canScrollForward
-        scrollDelta < 0f -> !canScrollBackward
+        scrollDelta > 0f -> settledPage >= pageCount - 1
+        scrollDelta < 0f -> settledPage <= 0
         else -> false
     }
 }
