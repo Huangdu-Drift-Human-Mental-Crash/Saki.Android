@@ -15,6 +15,7 @@ PROCESS.md
 /captures
 .externalNativeBuild
 .cxx
+.kotlin/
 local.properties
 scripts/setup-env.sh
 scripts/deploy.sh

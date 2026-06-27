@@ -50,6 +50,10 @@ class DefaultLibraryCacheRepository @Inject constructor(
     moshi: Moshi,
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : LibraryCacheRepository {
+    override suspend fun clearServer(serverId: Long): Unit = withContext(ioDispatcher) {
+        dao.clearServer(serverId)
+    }
+
     private val artistRefsAdapter: JsonAdapter<List<CachedArtistRefJsonDto>> =
         moshi.adapter(Types.newParameterizedType(List::class.java, CachedArtistRefJsonDto::class.java))
 

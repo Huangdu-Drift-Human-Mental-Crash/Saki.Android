@@ -25,6 +25,23 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface LibraryCacheDao {
 
+    @Transaction
+    suspend fun clearServer(serverId: Long) {
+        clearAllArtistDetailAlbums(serverId)
+        clearAllArtistDetailSongs(serverId)
+        clearAllArtistDetails(serverId)
+        clearAllAlbumDetailSongs(serverId)
+        clearAllAlbumDetails(serverId)
+        clearAllPlaylistDetailSongs(serverId)
+        clearAllPlaylistDetails(serverId)
+        clearAllSongArtists(serverId)
+        clearAllSongMetadata(serverId)
+        clearSongs(serverId)
+        clearAllAlbums(serverId)
+        clearArtists(serverId)
+        clearPlaylists(serverId)
+    }
+
     @Query("SELECT * FROM cached_artists WHERE serverId = :serverId ORDER BY sectionName, name")
     suspend fun getArtists(serverId: Long): List<CachedArtistEntity>
 
@@ -83,6 +100,9 @@ interface LibraryCacheDao {
 
     @Query("DELETE FROM cached_albums WHERE serverId = :serverId AND listType = :listType")
     suspend fun clearAlbums(serverId: Long, listType: String)
+
+    @Query("DELETE FROM cached_albums WHERE serverId = :serverId")
+    suspend fun clearAllAlbums(serverId: Long)
 
     @Transaction
     suspend fun replaceAlbums(serverId: Long, listType: String, albums: List<CachedAlbumEntity>) {
@@ -252,6 +272,15 @@ interface LibraryCacheDao {
     @Query("DELETE FROM cached_artist_detail_songs WHERE serverId = :serverId AND artistId = :artistId")
     suspend fun clearArtistDetailSongs(serverId: Long, artistId: String)
 
+    @Query("DELETE FROM cached_artist_details WHERE serverId = :serverId")
+    suspend fun clearAllArtistDetails(serverId: Long)
+
+    @Query("DELETE FROM cached_artist_detail_albums WHERE serverId = :serverId")
+    suspend fun clearAllArtistDetailAlbums(serverId: Long)
+
+    @Query("DELETE FROM cached_artist_detail_songs WHERE serverId = :serverId")
+    suspend fun clearAllArtistDetailSongs(serverId: Long)
+
     @Transaction
     suspend fun replaceArtistDetail(
         detail: CachedArtistDetailEntity,
@@ -285,6 +314,12 @@ interface LibraryCacheDao {
 
     @Query("DELETE FROM cached_album_detail_songs WHERE serverId = :serverId AND albumId = :albumId")
     suspend fun clearAlbumDetailSongs(serverId: Long, albumId: String)
+
+    @Query("DELETE FROM cached_album_details WHERE serverId = :serverId")
+    suspend fun clearAllAlbumDetails(serverId: Long)
+
+    @Query("DELETE FROM cached_album_detail_songs WHERE serverId = :serverId")
+    suspend fun clearAllAlbumDetailSongs(serverId: Long)
 
     @Transaction
     suspend fun replaceAlbumDetail(
@@ -320,6 +355,12 @@ interface LibraryCacheDao {
     @Query("DELETE FROM cached_playlist_detail_songs WHERE serverId = :serverId AND playlistId = :playlistId")
     suspend fun clearPlaylistDetailSongs(serverId: Long, playlistId: String)
 
+    @Query("DELETE FROM cached_playlist_details WHERE serverId = :serverId")
+    suspend fun clearAllPlaylistDetails(serverId: Long)
+
+    @Query("DELETE FROM cached_playlist_detail_songs WHERE serverId = :serverId")
+    suspend fun clearAllPlaylistDetailSongs(serverId: Long)
+
     @Transaction
     suspend fun replacePlaylistDetail(
         detail: CachedPlaylistDetailEntity,
@@ -341,6 +382,9 @@ interface LibraryCacheDao {
 
     @Query("DELETE FROM cached_song_artists WHERE serverId = :serverId AND songId IN (:songIds)")
     suspend fun clearSongArtists(serverId: Long, songIds: List<String>)
+
+    @Query("DELETE FROM cached_song_artists WHERE serverId = :serverId")
+    suspend fun clearAllSongArtists(serverId: Long)
 
     @Query(
         """
@@ -365,6 +409,9 @@ interface LibraryCacheDao {
         clearSongArtists(serverId, songIds)
         if (artists.isNotEmpty()) insertSongArtists(artists)
     }
+
+    @Query("DELETE FROM cached_song_metadata WHERE serverId = :serverId")
+    suspend fun clearAllSongMetadata(serverId: Long)
 
     @Query(
         """
