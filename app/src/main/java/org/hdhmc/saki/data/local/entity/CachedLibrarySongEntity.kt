@@ -33,4 +33,6 @@ data class CachedLibrarySongEntity(
     val sizeBytes: Long?,
     val path: String?,
     val created: String?,
+    @ColumnInfo(defaultValue = "0")
+    val cachedAt: Long,
 )

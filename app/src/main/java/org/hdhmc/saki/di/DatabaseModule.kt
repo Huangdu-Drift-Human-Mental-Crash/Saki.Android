@@ -495,6 +495,15 @@ object DatabaseModule {
         }
     }
 
+    private val migration14To15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `cached_artists` ADD COLUMN `cachedAt` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `cached_albums` ADD COLUMN `cachedAt` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `cached_playlists` ADD COLUMN `cachedAt` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `cached_library_songs` ADD COLUMN `cachedAt` INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideSakiDatabase(
@@ -512,7 +521,7 @@ object DatabaseModule {
         migration1To2, migration2To3, migration3To4, migration4To5,
         migration5To6, migration6To7, migration7To8, migration8To9,
         migration9To10, migration10To11, migration11To12, migration12To13,
-        migration13To14,
+        migration13To14, migration14To15,
     )
 
     @Provides
