@@ -45,6 +45,7 @@ class DefaultStreamCacheRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val cacheVersion = MutableStateFlow(0L)
     private val snapshotRefreshMutex = Mutex()
+    private val requestedSnapshotRefreshLock = Any()
     private var lastSnapshot = StreamCacheSnapshot()
     private var hasAppliedInitialCacheSize = false
     private var requestedSnapshotRefreshJob: Job? = null
@@ -78,10 +79,21 @@ class DefaultStreamCacheRepository @Inject constructor(
     override fun observeCacheVersion(): Flow<Long> = cacheVersion.asStateFlow()
 
     override fun requestSnapshotRefresh() {
-        requestedSnapshotRefreshJob?.cancel()
-        requestedSnapshotRefreshJob = scope.launch {
+        val refreshJob = scope.launch {
             delay(STREAM_CACHE_SNAPSHOT_REQUEST_DEBOUNCE_MS)
-            refreshSnapshot()
+            try {
+                refreshSnapshot()
+            } finally {
+                synchronized(requestedSnapshotRefreshLock) {
+                    if (requestedSnapshotRefreshJob === coroutineContext[Job]) {
+                        requestedSnapshotRefreshJob = null
+                    }
+                }
+            }
+        }
+        synchronized(requestedSnapshotRefreshLock) {
+            requestedSnapshotRefreshJob?.cancel()
+            requestedSnapshotRefreshJob = refreshJob
         }
     }
 
