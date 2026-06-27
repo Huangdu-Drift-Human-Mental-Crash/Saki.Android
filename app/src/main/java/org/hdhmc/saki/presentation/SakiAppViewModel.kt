@@ -19,6 +19,7 @@ import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
 import org.hdhmc.saki.domain.model.ArtistSummary
+import org.hdhmc.saki.domain.model.belongsToArtistInAlbum
 import org.hdhmc.saki.domain.model.CacheStorageSummary
 import org.hdhmc.saki.domain.model.CachedArtistDetail
 import org.hdhmc.saki.domain.model.CachedSong
@@ -41,6 +42,7 @@ import org.hdhmc.saki.domain.model.SongLyrics
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.model.TextScale
+import org.hdhmc.saki.domain.model.withVisibleDetailAlbums
 import org.hdhmc.saki.domain.repository.AppPreferencesRepository
 import org.hdhmc.saki.domain.repository.CachedSongRepository
 import org.hdhmc.saki.domain.repository.LibraryCacheRepository
@@ -840,14 +842,14 @@ class SakiAppViewModel @Inject constructor(
                 val topSongs = buildArtistTopSongs(serverId, artist)
                 val relationshipDetail = libraryCacheRepository.getArtistDetail(serverId, artistId)
                 val relationshipSongs = relationshipDetail?.songs.orEmpty()
-                val displayArtist = relationshipDetail?.artist?.let { localArtist ->
+                val displayArtist = (relationshipDetail?.artist?.let { localArtist ->
                     artist.copy(
                         name = localArtist.name,
                         coverArtId = artist.coverArtId ?: localArtist.coverArtId,
                         artistImageUrl = artist.artistImageUrl ?: localArtist.artistImageUrl,
                         albumCount = artist.albumCount ?: localArtist.albumCount,
                     )
-                } ?: artist
+                } ?: artist).withVisibleDetailAlbums()
                 val songs = (topSongs + relationshipSongs).distinctBy(Song::id)
                 Triple(displayArtist, songs, false)
             }.onSuccess { (artist, songs, songsAreTopSongs) ->
@@ -2190,9 +2192,9 @@ class SakiAppViewModel @Inject constructor(
                     .map { it.await() }
             }
             .flatMap { album ->
-                album.songs.map { song ->
-                    song.withFallbackAlbumMetadata(album)
-                }
+                album.songs
+                    .filter { song -> song.belongsToArtistInAlbum(artist, album) }
+                    .map { song -> song.withFallbackAlbumMetadata(album) }
             }
             .distinctBy(Song::id)
     }

@@ -92,6 +92,7 @@ import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.domain.model.visibleDetailAlbums
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSubtleCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
@@ -117,7 +118,12 @@ fun ArtistDetailScreen(
     isPlaying: Boolean = false,
     onBack: () -> Unit = {},
 ) {
-    val albumCount = artist.albumCount
+    val visibleAlbums = artist.visibleDetailAlbums()
+    val albumCount = when {
+        artist.albumCount != null -> visibleAlbums.size
+        visibleAlbums.isNotEmpty() -> visibleAlbums.size
+        else -> null
+    }
     if (!SakiTheme.visuals.useExpressiveSurfaceContainers) {
         LibraryDetailScaffold(
             title = artist.name,
@@ -151,7 +157,7 @@ fun ArtistDetailScreen(
                             )
                         }
                     }
-                    if (artist.albums.isNotEmpty()) {
+                    if (visibleAlbums.isNotEmpty()) {
                         item {
                             SectionTitle(
                                 stringResource(R.string.library_albums),
@@ -160,7 +166,7 @@ fun ArtistDetailScreen(
                         }
                         item {
                             LazyRow {
-                                items(artist.albums, key = { it.id }) { album ->
+                                items(visibleAlbums, key = { it.id }) { album ->
                                     AlbumMiniCard(album = album, server = server, onOpenAlbum = onOpenAlbum)
                                 }
                             }
@@ -172,7 +178,7 @@ fun ArtistDetailScreen(
         return
     }
 
-    val heroArtwork = artist.albums.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, null) }
+    val heroArtwork = visibleAlbums.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, null) }
         ?: songs.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, cachedSongsBySongId[it.id]) }
     val accent = animateColorAsState(
         rememberArtworkAccentColor(
@@ -227,7 +233,7 @@ fun ArtistDetailScreen(
                         )
                     }
                 }
-                if (artist.albums.isNotEmpty()) {
+                if (visibleAlbums.isNotEmpty()) {
                     item {
                         SectionTitle(
                             stringResource(R.string.library_albums),
@@ -236,7 +242,7 @@ fun ArtistDetailScreen(
                     }
                     item {
                         LazyRow {
-                            items(artist.albums, key = { it.id }) { album ->
+                            items(visibleAlbums, key = { it.id }) { album ->
                                 AlbumMiniCard(album = album, server = server, onOpenAlbum = onOpenAlbum)
                             }
                         }

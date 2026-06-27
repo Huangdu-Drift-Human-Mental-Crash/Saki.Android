@@ -27,12 +27,16 @@ import org.hdhmc.saki.domain.model.Artist
 import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.ArtistSection
 import org.hdhmc.saki.domain.model.ArtistSummary
+import org.hdhmc.saki.domain.model.belongsToArtist
+import org.hdhmc.saki.domain.model.belongsToArtistInAlbum
 import org.hdhmc.saki.domain.model.CachedArtistDetail
 import org.hdhmc.saki.domain.model.LibraryIndexes
 import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.domain.model.visibleDetailAlbums
+import org.hdhmc.saki.domain.model.withVisibleDetailAlbums
 import org.hdhmc.saki.domain.repository.LibraryCacheRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -52,10 +56,15 @@ class DefaultLibraryCacheRepository @Inject constructor(
         val entities = dao.getArtists(serverId)
         val songArtistSummaries = dao.getSongArtistSummaries(serverId)
         if (entities.isEmpty() && songArtistSummaries.isEmpty()) return@withContext null
+        val detailAlbumsByArtistId = dao.getAllArtistDetailAlbums(serverId)
+            .groupBy { it.artistId }
+            .mapValues { (_, albums) -> albums.map { it.toDomain() } }
         val artists = mergeArtistSummaries(
             serverArtists = entities.map { it.toDomain() },
             songArtists = songArtistSummaries.map { it.toDomain() },
-        )
+        ).map { artist ->
+            artist.withDetailAlbumCount(detailAlbumsByArtistId[artist.id].orEmpty())
+        }
         LibraryIndexes(
             lastModified = null,
             ignoredArticles = null,
@@ -244,13 +253,13 @@ class DefaultLibraryCacheRepository @Inject constructor(
     ): CachedArtistDetail? = withContext(ioDispatcher) {
         val detail = dao.getArtistDetail(serverId, artistId)
         if (detail != null) {
-            val albums = dao.getArtistDetailAlbums(serverId, artistId).map { it.toDomain() }
+            val rawAlbums = dao.getArtistDetailAlbums(serverId, artistId).map { it.toDomain() }
             val topSongRefs = dao.getArtistDetailSongs(serverId, artistId)
             val topSongs = resolveSongs(serverId, topSongRefs.map { it.songId })
             val relationshipSongs = resolveSongsByArtistId(serverId, artistId)
             val songArtistSummary = dao.getSongArtistSummaries(serverId)
                 .firstOrNull { it.artistId == artistId }
-            val artist = detail.toDomain(albums).let { cachedArtist ->
+            val artist = detail.toDomain(rawAlbums).let { cachedArtist ->
                 songArtistSummary?.let { summary ->
                     cachedArtist.copy(
                         name = summary.name,
@@ -258,10 +267,19 @@ class DefaultLibraryCacheRepository @Inject constructor(
                         albumCount = cachedArtist.albumCount ?: summary.albumCount.takeIf { it > 0 },
                     )
                 } ?: cachedArtist
+            }.withVisibleDetailAlbums()
+            val albumsById = rawAlbums.associateBy(AlbumSummary::id)
+            val filteredTopSongs = topSongs.filter { song ->
+                val album = song.albumId?.let(albumsById::get)
+                if (album != null) {
+                    song.belongsToArtistInAlbum(artist, album)
+                } else {
+                    song.belongsToArtist(artist)
+                }
             }
             return@withContext CachedArtistDetail(
                 artist = artist,
-                songs = mergeSongs(topSongs, relationshipSongs),
+                songs = mergeSongs(filteredTopSongs, relationshipSongs),
                 songsAreTopSongs = relationshipSongs.isEmpty(),
             )
         }
@@ -372,9 +390,24 @@ class DefaultLibraryCacheRepository @Inject constructor(
         serverArtists: List<ArtistSummary>,
         songArtists: List<ArtistSummary>,
     ): List<ArtistSummary> {
-        return (songArtists + serverArtists)
+        // Keep the server artist index as authoritative; song-derived summaries only fill artists
+        // that are absent from getArtists/getIndexes.
+        return (serverArtists + songArtists)
             .distinctBy(ArtistSummary::id)
             .sortedBy { it.name.lowercase() }
+    }
+
+    private fun ArtistSummary.withDetailAlbumCount(albums: List<AlbumSummary>): ArtistSummary {
+        if (albums.isEmpty()) return this
+        val visibleAlbumCount = Artist(
+            id = id,
+            name = name,
+            coverArtId = coverArtId,
+            artistImageUrl = artistImageUrl,
+            albumCount = albumCount,
+            albums = albums,
+        ).visibleDetailAlbums().size
+        return copy(albumCount = visibleAlbumCount)
     }
 
     private fun CachedAlbumEntity.toDomain() = AlbumSummary(
@@ -535,7 +568,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         val summary = dao.getArtistSummary(serverId, artistId)
         val songArtistSummary = dao.getSongArtistSummaries(serverId)
             .firstOrNull { it.artistId == artistId }
-        val artist = summary?.toDomain(albums) ?: Artist(
+        val artist = (summary?.toDomain(albums) ?: Artist(
             id = artistId,
             name = songArtistSummary?.name ?: songs.firstOrNull()?.artist ?: albums.firstOrNull()?.artist ?: artistId,
             coverArtId = songArtistSummary?.coverArtId
@@ -544,7 +577,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
             artistImageUrl = null,
             albumCount = songArtistSummary?.albumCount?.takeIf { it > 0 } ?: albums.size.takeIf { it > 0 },
             albums = albums,
-        )
+        )).withVisibleDetailAlbums()
         return CachedArtistDetail(
             artist = artist,
             songs = songs,
