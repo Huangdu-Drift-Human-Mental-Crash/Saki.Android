@@ -43,6 +43,7 @@ import org.hdhmc.saki.domain.model.SongLyrics
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.model.TextScale
+import org.hdhmc.saki.domain.model.withoutUnknownAlbumPlaceholders
 import org.hdhmc.saki.domain.model.withVisibleDetailAlbums
 import org.hdhmc.saki.domain.repository.AppPreferencesRepository
 import org.hdhmc.saki.domain.repository.CachedSongRepository
@@ -559,14 +560,14 @@ class SakiAppViewModel @Inject constructor(
                     var mergedAlbums = emptyList<AlbumSummary>()
                     mutableUiState.update { current ->
                         val currentFeed = current.albumFeedState(type)
-                        mergedAlbums = (currentFeed.albums + page).distinctBy(AlbumSummary::id)
-                        val addedAny = mergedAlbums.size > currentFeed.albums.size
+                        val visiblePage = page.withoutUnknownAlbumPlaceholders()
+                        mergedAlbums = (currentFeed.albums + visiblePage).distinctBy(AlbumSummary::id)
                         current.copy(
                             albumFeeds = current.albumFeeds.updateFeed(type) {
                                 it.copy(
                                     albums = mergedAlbums,
-                                    offset = mergedAlbums.size,
-                                    hasMore = page.size >= ALBUMS_PAGE_SIZE && addedAny,
+                                    offset = offset + page.size,
+                                    hasMore = page.size >= ALBUMS_PAGE_SIZE,
                                     isLoadingMore = false,
                                     error = null,
                                 )
@@ -1894,13 +1895,14 @@ class SakiAppViewModel @Inject constructor(
         viewModelScope.launch {
             if (!forceRefresh) {
                 val cached = runCatching { libraryCacheRepository.getAlbums(serverId, type) }.getOrNull()
-                if (!cached.isNullOrEmpty() && uiState.value.selectedServerId == serverId) {
+                val visibleCached = cached?.withoutUnknownAlbumPlaceholders().orEmpty()
+                if (visibleCached.isNotEmpty() && uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
                         state.copy(
                             albumFeeds = state.albumFeeds.updateFeed(type) {
                                 it.copy(
-                                    albums = cached,
-                                    offset = cached.size,
+                                    albums = visibleCached,
+                                    offset = visibleCached.size,
                                     hasMore = type.supportsPagination(),
                                     error = null,
                                 )
@@ -1931,14 +1933,16 @@ class SakiAppViewModel @Inject constructor(
                     offset = 0,
                 ).data
             }.onSuccess { albums ->
-                val uniqueAlbums = albums.distinctBy(AlbumSummary::id)
+                val uniqueAlbums = albums
+                    .withoutUnknownAlbumPlaceholders()
+                    .distinctBy(AlbumSummary::id)
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
                         state.copy(
                             albumFeeds = state.albumFeeds.updateFeed(type) {
                                 it.copy(
                                     albums = uniqueAlbums,
-                                    offset = uniqueAlbums.size,
+                                    offset = albums.size,
                                     hasMore = type.supportsPagination() && albums.size >= ALBUMS_PAGE_SIZE,
                                     isLoading = false,
                                     isLoadingMore = false,
