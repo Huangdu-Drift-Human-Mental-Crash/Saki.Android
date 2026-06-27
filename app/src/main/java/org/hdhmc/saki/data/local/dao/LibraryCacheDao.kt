@@ -116,7 +116,19 @@ interface LibraryCacheDao {
         SELECT
             artist.artistId AS artistId,
             MIN(artist.name) AS name,
-            COUNT(DISTINCT song.albumId) AS albumCount,
+            COUNT(DISTINCT CASE
+                WHEN song.albumId IS NULL THEN NULL
+                WHEN LOWER(TRIM(REPLACE(REPLACE(song.album, '[', ''), ']', ''))) = 'unknown album'
+                    AND (
+                        (song.artistId IS NOT NULL AND song.artistId != artist.artistId)
+                        OR (
+                            song.artistId IS NULL
+                            AND song.artist IS NOT NULL
+                            AND LOWER(TRIM(song.artist)) != LOWER(TRIM(artist.name))
+                        )
+                    ) THEN NULL
+                ELSE song.albumId
+            END) AS albumCount,
             MIN(song.coverArtId) AS coverArtId
         FROM cached_song_artists AS artist
         LEFT JOIN cached_song_metadata AS song
@@ -215,6 +227,9 @@ interface LibraryCacheDao {
 
     @Query("SELECT * FROM cached_artist_detail_albums WHERE serverId = :serverId AND artistId = :artistId ORDER BY sortOrder")
     suspend fun getArtistDetailAlbums(serverId: Long, artistId: String): List<CachedArtistDetailAlbumEntity>
+
+    @Query("SELECT * FROM cached_artist_detail_albums WHERE serverId = :serverId ORDER BY artistId, sortOrder")
+    suspend fun getAllArtistDetailAlbums(serverId: Long): List<CachedArtistDetailAlbumEntity>
 
     @Query("SELECT * FROM cached_artist_detail_songs WHERE serverId = :serverId AND artistId = :artistId ORDER BY sortOrder")
     suspend fun getArtistDetailSongs(serverId: Long, artistId: String): List<CachedArtistDetailSongEntity>
