@@ -25,6 +25,7 @@ import org.hdhmc.saki.domain.model.CachedArtistDetail
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.DEFAULT_SONGS_PAGE_SIZE
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
+import org.hdhmc.saki.domain.model.indexingLocale
 import org.hdhmc.saki.domain.model.LibraryIndexes
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
@@ -78,6 +79,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import android.icu.text.Collator
+import java.util.Locale
 
 private const val ALBUMS_PAGE_SIZE = 36
 private const val SORTED_ALBUMS_PAGE_SIZE = 240
@@ -156,15 +159,47 @@ class SakiAppViewModel @Inject constructor(
         }
         viewModelScope.launch {
             appPreferencesRepository.observePreferences().collectLatest { preferences ->
+                val previousState = mutableUiState.value
                 val shouldApplyDefaultBrowse = !appliedDefaultBrowsePreference
+                val shouldRegroupIndexes = previousState.appPreferences.language != preferences.language
+                val indexingLocale = preferences.language.indexingLocale()
+                val regroupedLibraryIndexes = if (shouldRegroupIndexes) {
+                    withContext(Dispatchers.Default) {
+                        previousState.libraryIndexes?.regroupByLocale(indexingLocale)
+                    }
+                } else {
+                    previousState.libraryIndexes
+                }
+                val sortedAlbumFeeds = if (shouldRegroupIndexes) {
+                    previousState.albumFeeds.sortAlbumsForLocaleOnDefault(
+                        locale = indexingLocale,
+                        ignoredArticles = previousState.libraryIndexes?.ignoredArticles,
+                    )
+                } else {
+                    previousState.albumFeeds
+                }
                 if (shouldApplyDefaultBrowse) {
                     appliedDefaultBrowsePreference = true
                 }
                 mutableUiState.update { state ->
+                    val canApplyRegroupedContent = shouldRegroupIndexes &&
+                        state.appPreferences.language == previousState.appPreferences.language &&
+                        state.libraryIndexes === previousState.libraryIndexes &&
+                        state.albumFeeds === previousState.albumFeeds
                     state.copy(
                         isAppReady = true,
                         textScale = preferences.textScale,
                         appPreferences = preferences,
+                        libraryIndexes = if (canApplyRegroupedContent) {
+                            regroupedLibraryIndexes
+                        } else {
+                            state.libraryIndexes
+                        },
+                        albumFeeds = if (canApplyRegroupedContent) {
+                            sortedAlbumFeeds
+                        } else {
+                            state.albumFeeds
+                        },
                         selectedBrowseSection = if (shouldApplyDefaultBrowse) {
                             preferences.defaultBrowseTab.toBrowseSection()
                         } else {
@@ -389,6 +424,9 @@ class SakiAppViewModel @Inject constructor(
         ThemeMode.DARK -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
     }
 
+    private fun currentIndexingLocale(): Locale =
+        uiState.value.appPreferences.language.indexingLocale()
+
     fun updateThemeMode(themeMode: ThemeMode) {
         viewModelScope.launch {
             runCatching {
@@ -563,13 +601,19 @@ class SakiAppViewModel @Inject constructor(
                 ).data
             }.onSuccess { page ->
                 if (uiState.value.selectedServerId == serverId) {
-                    var mergedAlbums = emptyList<AlbumSummary>()
-                    mutableUiState.update { current ->
-                        val currentFeed = current.albumFeedState(type)
-                        val visiblePage = page.withoutUnknownAlbumPlaceholders()
-                        mergedAlbums = (currentFeed.albums + visiblePage).distinctBy(AlbumSummary::id)
-                        current.copy(
-                            albumFeeds = current.albumFeeds.updateFeed(type) {
+                    val current = uiState.value
+                    val currentFeed = current.albumFeedState(type)
+                    val visiblePage = page.withoutUnknownAlbumPlaceholders()
+                    val mergedAlbums = (currentFeed.albums + visiblePage)
+                        .distinctBy(AlbumSummary::id)
+                        .sortedForAlbumFeedOnDefault(
+                            type = type,
+                            locale = current.appPreferences.language.indexingLocale(),
+                            ignoredArticles = current.libraryIndexes?.ignoredArticles,
+                        )
+                    mutableUiState.update { latest ->
+                        latest.copy(
+                            albumFeeds = latest.albumFeeds.updateFeed(type) {
                                 it.copy(
                                     albums = mergedAlbums,
                                     offset = offset + page.size,
@@ -1789,17 +1833,25 @@ class SakiAppViewModel @Inject constructor(
 
             val artists = loadCachedOrNull { libraryCacheRepository.getArtists(serverId) }
             if (artists != null && uiState.value.selectedServerId == serverId) {
-                mutableUiState.update { it.copy(libraryIndexes = artists.regroupByLocale()) }
+                mutableUiState.update { it.copy(libraryIndexes = artists.regroupByLocale(currentIndexingLocale())) }
             }
             AlbumListType.entries.forEach { albumFeed ->
                 val albums = loadCachedOrNull { libraryCacheRepository.getAlbums(serverId, albumFeed) }
                 if (!albums.isNullOrEmpty() && uiState.value.selectedServerId == serverId) {
+                    val current = uiState.value
+                    val displayAlbums = albums
+                        .withoutUnknownAlbumPlaceholders()
+                        .sortedForAlbumFeedOnDefault(
+                            type = albumFeed,
+                            locale = current.appPreferences.language.indexingLocale(),
+                            ignoredArticles = current.libraryIndexes?.ignoredArticles,
+                        )
                     mutableUiState.update { state ->
                         state.copy(
                             albumFeeds = state.albumFeeds.updateFeed(albumFeed) {
                                 it.copy(
-                                    albums = albums,
-                                    offset = albums.size,
+                                    albums = displayAlbums,
+                                    offset = displayAlbums.size,
                                     hasMore = albumFeed.supportsPagination(),
                                 )
                             },
@@ -1861,7 +1913,7 @@ class SakiAppViewModel @Inject constructor(
             if (!forceRefresh) {
                 val cached = runCatching { libraryCacheRepository.getArtists(serverId) }.getOrNull()
                 if (cached != null && uiState.value.selectedServerId == serverId) {
-                    mutableUiState.update { it.copy(libraryIndexes = cached.regroupByLocale()) }
+                    mutableUiState.update { it.copy(libraryIndexes = cached.regroupByLocale(currentIndexingLocale())) }
                 }
             }
 
@@ -1876,7 +1928,7 @@ class SakiAppViewModel @Inject constructor(
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update {
                         it.copy(
-                            libraryIndexes = mergedIndexes.regroupByLocale(),
+                            libraryIndexes = mergedIndexes.regroupByLocale(currentIndexingLocale()),
                             hasLoadedArtistsFromNetwork = true,
                             isArtistsLoading = false,
                             artistsError = null,
@@ -1910,12 +1962,18 @@ class SakiAppViewModel @Inject constructor(
                 val cached = runCatching { libraryCacheRepository.getAlbums(serverId, type) }.getOrNull()
                 val visibleCached = cached?.withoutUnknownAlbumPlaceholders().orEmpty()
                 if (visibleCached.isNotEmpty() && uiState.value.selectedServerId == serverId) {
+                    val current = uiState.value
+                    val displayCached = visibleCached.sortedForAlbumFeedOnDefault(
+                        type = type,
+                        locale = current.appPreferences.language.indexingLocale(),
+                        ignoredArticles = current.libraryIndexes?.ignoredArticles,
+                    )
                     mutableUiState.update { state ->
                         state.copy(
                             albumFeeds = state.albumFeeds.updateFeed(type) {
                                 it.copy(
-                                    albums = visibleCached,
-                                    offset = visibleCached.size,
+                                    albums = displayCached,
+                                    offset = displayCached.size,
                                     hasMore = type.supportsPagination(),
                                     error = null,
                                 )
@@ -1949,12 +2007,18 @@ class SakiAppViewModel @Inject constructor(
                 val uniqueAlbums = albums
                     .withoutUnknownAlbumPlaceholders()
                     .distinctBy(AlbumSummary::id)
+                val current = uiState.value
+                val displayAlbums = uniqueAlbums.sortedForAlbumFeedOnDefault(
+                    type = type,
+                    locale = current.appPreferences.language.indexingLocale(),
+                    ignoredArticles = current.libraryIndexes?.ignoredArticles,
+                )
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
                         state.copy(
                             albumFeeds = state.albumFeeds.updateFeed(type) {
                                 it.copy(
-                                    albums = uniqueAlbums,
+                                    albums = displayAlbums,
                                     offset = albums.size,
                                     hasMore = type.supportsPagination() && albums.size >= pageSize,
                                     isLoading = false,
@@ -1966,7 +2030,7 @@ class SakiAppViewModel @Inject constructor(
                         )
                     }
                 }
-                runCatching { libraryCacheRepository.saveAlbums(serverId, type, uniqueAlbums) }
+                runCatching { libraryCacheRepository.saveAlbums(serverId, type, displayAlbums) }
                     .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
                 if (type.supportsAlbumFastScroll() && albums.size >= pageSize) {
                     startSortedAlbumPrefetch(serverId, type, pageSize)
@@ -2017,29 +2081,32 @@ class SakiAppViewModel @Inject constructor(
     ) {
         if (!type.supportsAlbumFastScroll()) return
 
-        var latestMergedAlbums: List<AlbumSummary>? = null
-        while (uiState.value.selectedServerId == serverId) {
-            val feedState = uiState.value.albumFeedState(type)
-            if (!feedState.hasMore || feedState.isLoadingMore) {
-                cacheSortedAlbumPrefetch(serverId, type, latestMergedAlbums)
-                return
-            }
+        val initialState = uiState.value
+        val initialFeed = initialState.albumFeedState(type)
+        if (!initialFeed.hasMore || initialFeed.isLoadingMore) {
+            cacheSortedAlbumPrefetch(serverId, type, initialFeed.albums)
+            return
+        }
 
-            val offset = feedState.offset
-            mutableUiState.update { current ->
-                current.copy(
-                    albumFeeds = current.albumFeeds.updateFeed(type) {
-                        it.copy(isLoadingMore = true, error = null)
-                    },
-                )
-            }
+        var rawOffset = initialFeed.offset
+        var mergedAlbums = initialFeed.albums
+        var shouldContinue = true
 
+        mutableUiState.update { current ->
+            current.copy(
+                albumFeeds = current.albumFeeds.updateFeed(type) {
+                    it.copy(isLoadingMore = true, error = null)
+                },
+            )
+        }
+
+        while (uiState.value.selectedServerId == serverId && shouldContinue) {
             val page = try {
                 subsonicRepository.getAlbumList(
                     serverId = serverId,
                     type = type,
                     size = pageSize,
-                    offset = offset,
+                    offset = rawOffset,
                 ).data
             } catch (exception: CancellationException) {
                 throw exception
@@ -2054,38 +2121,48 @@ class SakiAppViewModel @Inject constructor(
                     }
                     Log.w("SakiApp", "Failed to prefetch sorted album page", throwable)
                 }
-                cacheSortedAlbumPrefetch(serverId, type, latestMergedAlbums)
+                val current = uiState.value
+                val cachedPartialAlbums = mergedAlbums.sortedForAlbumFeedOnDefault(
+                    type = type,
+                    locale = current.appPreferences.language.indexingLocale(),
+                    ignoredArticles = current.libraryIndexes?.ignoredArticles,
+                )
+                cacheSortedAlbumPrefetch(serverId, type, cachedPartialAlbums)
                 return
             }
 
             if (uiState.value.selectedServerId != serverId) return
 
-            var mergedAlbums = emptyList<AlbumSummary>()
-            var shouldContinue = false
-            mutableUiState.update { current ->
-                val currentFeed = current.albumFeedState(type)
-                val visiblePage = page.withoutUnknownAlbumPlaceholders()
-                mergedAlbums = (currentFeed.albums + visiblePage).distinctBy(AlbumSummary::id)
-                shouldContinue = page.size >= pageSize
-                current.copy(
-                    albumFeeds = current.albumFeeds.updateFeed(type) {
-                        it.copy(
-                            albums = mergedAlbums,
-                            offset = offset + page.size,
-                            hasMore = shouldContinue,
-                            isLoadingMore = false,
-                            error = null,
-                        )
-                    },
-                )
+            val visiblePage = page.withoutUnknownAlbumPlaceholders()
+            mergedAlbums = withContext(Dispatchers.Default) {
+                (mergedAlbums + visiblePage).distinctBy(AlbumSummary::id)
             }
-            latestMergedAlbums = mergedAlbums
-
-            if (!shouldContinue) {
-                cacheSortedAlbumPrefetch(serverId, type, latestMergedAlbums)
-                return
-            }
+            rawOffset += page.size
+            shouldContinue = page.size >= pageSize
         }
+
+        if (uiState.value.selectedServerId != serverId) return
+
+        val current = uiState.value
+        val displayAlbums = mergedAlbums.sortedForAlbumFeedOnDefault(
+            type = type,
+            locale = current.appPreferences.language.indexingLocale(),
+            ignoredArticles = current.libraryIndexes?.ignoredArticles,
+        )
+        mutableUiState.update { latest ->
+            latest.copy(
+                albumFeeds = latest.albumFeeds.updateFeed(type) {
+                    it.copy(
+                        albums = displayAlbums,
+                        offset = rawOffset,
+                        hasMore = shouldContinue,
+                        isLoadingMore = false,
+                        error = null,
+                    )
+                },
+            )
+        }
+        cacheSortedAlbumPrefetch(serverId, type, displayAlbums)
     }
 
     private suspend fun cacheSortedAlbumPrefetch(
@@ -2304,7 +2381,7 @@ class SakiAppViewModel @Inject constructor(
         val artists = runCatching { libraryCacheRepository.getArtists(serverId) }.getOrNull() ?: return
         if (uiState.value.selectedServerId == serverId) {
             mutableUiState.update {
-                it.copy(libraryIndexes = artists.regroupByLocale())
+                it.copy(libraryIndexes = artists.regroupByLocale(currentIndexingLocale()))
             }
         }
     }
@@ -3015,6 +3092,95 @@ private fun Map<AlbumListType, AlbumFeedState>.updateFeed(
 ): Map<AlbumListType, AlbumFeedState> {
     val current = this[type] ?: AlbumFeedState(hasMore = type.supportsPagination())
     return this + (type to transform(current))
+}
+
+private fun Map<AlbumListType, AlbumFeedState>.sortAlbumsForLocale(
+    locale: Locale,
+    ignoredArticles: String?,
+): Map<AlbumListType, AlbumFeedState> {
+    return mapValues { (type, feedState) ->
+        if (feedState.albums.size < 2 || !type.supportsAlbumFastScroll()) {
+            feedState
+        } else {
+            feedState.copy(
+                albums = feedState.albums.sortedForAlbumFeed(
+                    type = type,
+                    locale = locale,
+                    ignoredArticles = ignoredArticles,
+                ),
+            )
+        }
+    }
+}
+
+private suspend fun Map<AlbumListType, AlbumFeedState>.sortAlbumsForLocaleOnDefault(
+    locale: Locale,
+    ignoredArticles: String?,
+): Map<AlbumListType, AlbumFeedState> {
+    if (none { (type, feedState) -> type.supportsAlbumFastScroll() && feedState.albums.size >= 2 }) return this
+    return withContext(Dispatchers.Default) {
+        sortAlbumsForLocale(locale, ignoredArticles)
+    }
+}
+
+private suspend fun List<AlbumSummary>.sortedForAlbumFeedOnDefault(
+    type: AlbumListType,
+    locale: Locale,
+    ignoredArticles: String?,
+): List<AlbumSummary> {
+    if (size < 2 || !type.supportsAlbumFastScroll()) return this
+    return withContext(Dispatchers.Default) {
+        sortedForAlbumFeed(type, locale, ignoredArticles)
+    }
+}
+
+private fun List<AlbumSummary>.sortedForAlbumFeed(
+    type: AlbumListType,
+    locale: Locale,
+    ignoredArticles: String?,
+): List<AlbumSummary> {
+    if (size < 2 || !type.supportsAlbumFastScroll()) return this
+
+    val articles = ignoredArticles.toIgnoredArticleList()
+    val collator = Collator.getInstance(locale)
+    val stringComparator = Comparator<String> { left, right -> collator.compare(left, right) }
+    return sortedWith(
+        compareBy<AlbumSummary, String>(stringComparator) {
+            it.albumFeedSortValue(type).stripIgnoredArticles(articles)
+        }
+            .thenBy(stringComparator) { it.name.stripIgnoredArticles(articles) }
+            .thenBy { it.id },
+    )
+}
+
+private fun AlbumSummary.albumFeedSortValue(type: AlbumListType): String {
+    return when (type) {
+        AlbumListType.ALPHABETICAL_BY_ARTIST -> artist
+            ?: artists.firstOrNull()?.name
+            ?: name
+
+        else -> name
+    }.trim()
+}
+
+private fun String?.toIgnoredArticleList(): List<String> {
+    return this?.split(' ')
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
+        ?: emptyList()
+}
+
+private fun String.stripIgnoredArticles(articles: List<String>): String {
+    val value = trim()
+    for (article in articles) {
+        if (value.startsWith(article, ignoreCase = true) &&
+            value.length > article.length &&
+            value[article.length].isWhitespace()
+        ) {
+            return value.substring(article.length + 1).trimStart()
+        }
+    }
+    return value
 }
 
 private fun Song.withFallbackAlbumMetadata(album: Album): Song {
