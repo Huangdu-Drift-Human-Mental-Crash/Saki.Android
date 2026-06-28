@@ -2030,8 +2030,8 @@ private fun AlbumFeedControls(
             contentPadding = PaddingValues(vertical = 10.dp),
         ) {
             items(feeds) { feed ->
-                AlbumFeedChip(
-                    feed = feed,
+                BrowseFeedChip(
+                    label = stringResource(feed.labelRes()),
                     selected = selectedFeed == feed,
                     onClick = { onSelectFeed(feed) },
                     modifier = Modifier.padding(end = 8.dp),
@@ -2052,14 +2052,13 @@ private fun AlbumFeedControls(
 }
 
 @Composable
-private fun AlbumFeedChip(
-    feed: AlbumListType,
+private fun BrowseFeedChip(
+    label: String,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val visuals = SakiTheme.visuals
-    val label = stringResource(feed.labelRes())
     if (visuals.browseSectionChipSelectedContainerAlpha <= 0f) {
         FilterChip(
             selected = selected,
@@ -2437,15 +2436,15 @@ private fun SongFeedControls(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        FilterChip(
+        BrowseFeedChip(
+            label = stringResource(R.string.browse_song_feed_default),
             selected = selected == SongFeedType.DEFAULT,
             onClick = { onSelect(SongFeedType.DEFAULT) },
-            label = { Text(stringResource(R.string.browse_song_feed_default)) },
         )
-        FilterChip(
+        BrowseFeedChip(
+            label = stringResource(R.string.browse_song_feed_random),
             selected = selected == SongFeedType.RANDOM,
             onClick = { onSelect(SongFeedType.RANDOM) },
-            label = { Text(stringResource(R.string.browse_song_feed_random)) },
         )
     }
 }
