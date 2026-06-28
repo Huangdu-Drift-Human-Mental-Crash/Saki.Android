@@ -12,6 +12,7 @@ import org.hdhmc.saki.data.local.entity.CachedArtistDetailAlbumEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistDetailSongEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistEntity
+import org.hdhmc.saki.data.local.entity.CachedArtistShortcutEntity
 import org.hdhmc.saki.data.local.entity.CachedLibrarySongEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailSongEntity
@@ -59,8 +60,9 @@ class DefaultLibraryCacheRepository @Inject constructor(
 
     override suspend fun getArtists(serverId: Long): LibraryIndexes? = withContext(ioDispatcher) {
         val entities = dao.getArtists(serverId)
+        val shortcutEntities = dao.getArtistShortcuts(serverId)
         val songArtistSummaries = dao.getSongArtistSummaries(serverId)
-        if (entities.isEmpty() && songArtistSummaries.isEmpty()) return@withContext null
+        if (entities.isEmpty() && shortcutEntities.isEmpty() && songArtistSummaries.isEmpty()) return@withContext null
         val detailAlbumsByArtistId = dao.getAllArtistDetailAlbums(serverId)
             .groupBy { it.artistId }
             .mapValues { (_, albums) -> albums.map { it.toDomain() } }
@@ -73,7 +75,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
         LibraryIndexes(
             lastModified = null,
             ignoredArticles = null,
-            shortcuts = emptyList(),
+            shortcuts = shortcutEntities.map { it.toDomain() },
             sections = listOf(ArtistSection(name = "#", artists = artists)),
         )
     }
@@ -94,7 +96,19 @@ class DefaultLibraryCacheRepository @Inject constructor(
                 )
             }
         }
-        dao.replaceArtists(serverId, entities)
+        val shortcuts = indexes.shortcuts.mapIndexed { index, artist ->
+            CachedArtistShortcutEntity(
+                serverId = serverId,
+                artistId = artist.id,
+                name = artist.name,
+                albumCount = artist.albumCount,
+                coverArtId = artist.coverArtId,
+                artistImageUrl = artist.artistImageUrl,
+                sortOrder = index,
+                cachedAt = cachedAt,
+            )
+        }
+        dao.replaceArtists(serverId, entities, shortcuts)
     }
 
     override suspend fun getAlbums(serverId: Long, type: AlbumListType): List<AlbumSummary> = withContext(ioDispatcher) {
@@ -384,6 +398,14 @@ class DefaultLibraryCacheRepository @Inject constructor(
     }
 
     private fun CachedArtistEntity.toDomain() = ArtistSummary(
+        id = artistId,
+        name = name,
+        albumCount = albumCount,
+        coverArtId = coverArtId,
+        artistImageUrl = artistImageUrl,
+    )
+
+    private fun CachedArtistShortcutEntity.toDomain() = ArtistSummary(
         id = artistId,
         name = name,
         albumCount = albumCount,

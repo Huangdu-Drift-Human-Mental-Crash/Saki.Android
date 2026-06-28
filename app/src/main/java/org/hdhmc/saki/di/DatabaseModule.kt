@@ -504,6 +504,32 @@ object DatabaseModule {
         }
     }
 
+    private val migration15To16 = object : Migration(15, 16) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `cached_artist_shortcuts` (
+                    `serverId` INTEGER NOT NULL,
+                    `artistId` TEXT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `albumCount` INTEGER,
+                    `coverArtId` TEXT,
+                    `artistImageUrl` TEXT,
+                    `sortOrder` INTEGER NOT NULL,
+                    `cachedAt` INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(`serverId`, `artistId`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_cached_artist_shortcuts_serverId_sortOrder`
+                ON `cached_artist_shortcuts` (`serverId`, `sortOrder`)
+                """.trimIndent(),
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideSakiDatabase(
@@ -521,7 +547,7 @@ object DatabaseModule {
         migration1To2, migration2To3, migration3To4, migration4To5,
         migration5To6, migration6To7, migration7To8, migration8To9,
         migration9To10, migration10To11, migration11To12, migration12To13,
-        migration13To14, migration14To15,
+        migration13To14, migration14To15, migration15To16,
     )
 
     @Provides
