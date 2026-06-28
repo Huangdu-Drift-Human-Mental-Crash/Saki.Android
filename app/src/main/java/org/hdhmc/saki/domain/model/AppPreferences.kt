@@ -1,5 +1,7 @@
 package org.hdhmc.saki.domain.model
 
+import java.util.Locale
+
 enum class TextScale(
     val storageKey: String,
     val label: String,
@@ -90,6 +92,12 @@ enum class AppLanguage(val tag: String) {
         fun fromTag(tag: String?): AppLanguage =
             entries.firstOrNull { it.tag == tag } ?: SYSTEM
     }
+}
+
+fun AppLanguage.indexingLocale(): Locale = when (this) {
+    AppLanguage.SYSTEM -> Locale.getDefault()
+    AppLanguage.ENGLISH -> Locale.ENGLISH
+    AppLanguage.CHINESE -> Locale.CHINESE
 }
 
 enum class ThemeMode(val storageKey: String) {

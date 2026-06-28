@@ -117,6 +117,7 @@ import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.SongFeedType
+import org.hdhmc.saki.domain.model.indexingLocale
 import org.hdhmc.saki.domain.model.isUnknownAlbumPlaceholder
 import org.hdhmc.saki.presentation.BrowseSection
 import org.hdhmc.saki.presentation.AlbumFeedState
@@ -829,6 +830,7 @@ private fun BrowsePager(
                                     selectedFeed = uiState.selectedAlbumFeed,
                                     viewMode = uiState.appPreferences.albumViewMode,
                                     ignoredArticles = uiState.libraryIndexes?.ignoredArticles,
+                                    indexingLocale = uiState.appPreferences.language.indexingLocale(),
                                     scrollPositions = scrollState.albumFeedPositions,
                                     onSelectFeed = onSelectAlbumFeed,
                                     onLoadMore = onLoadMoreAlbums,
@@ -1525,6 +1527,7 @@ private fun AlbumsPage(
     selectedFeed: AlbumListType,
     viewMode: AlbumViewMode,
     ignoredArticles: String?,
+    indexingLocale: Locale,
     scrollPositions: Map<AlbumListType, AlbumFeedScrollPosition>,
     onSelectFeed: (AlbumListType) -> Unit,
     onLoadMore: () -> Unit,
@@ -1599,6 +1602,7 @@ private fun AlbumsPage(
                 server = server,
                 viewMode = viewMode,
                 ignoredArticles = ignoredArticles,
+                indexingLocale = indexingLocale,
                 scrollPosition = scrollPosition,
                 isLoading = feedState.isLoading,
                 hasMore = feedState.hasMore,
@@ -1692,6 +1696,7 @@ private fun AlbumFeedPageContent(
     server: ServerConfig,
     viewMode: AlbumViewMode,
     ignoredArticles: String?,
+    indexingLocale: Locale,
     scrollPosition: AlbumFeedScrollPosition,
     isLoading: Boolean,
     hasMore: Boolean,
@@ -1702,10 +1707,12 @@ private fun AlbumFeedPageContent(
     onOpenAlbum: (String) -> Unit,
     bottomOverlayPadding: Dp,
 ) {
-    var fastScrollIndex by remember(feed, ignoredArticles) { mutableStateOf<AlbumFastScrollIndex?>(null) }
-    LaunchedEffect(feed, albums, ignoredArticles) {
+    var fastScrollIndex by remember(feed, ignoredArticles, indexingLocale) {
+        mutableStateOf<AlbumFastScrollIndex?>(null)
+    }
+    LaunchedEffect(feed, albums, ignoredArticles, indexingLocale) {
         fastScrollIndex = withContext(Dispatchers.Default) {
-            albums.albumFastScrollIndex(feed, ignoredArticles)
+            albums.albumFastScrollIndex(feed, ignoredArticles, indexingLocale)
         }
     }
     val contentPadding = albumFeedContentPadding(
@@ -1893,11 +1900,11 @@ private data class AlbumFastScrollIndex(
 private fun List<AlbumSummary>.albumFastScrollIndex(
     feed: AlbumListType,
     ignoredArticles: String?,
+    locale: Locale,
 ): AlbumFastScrollIndex? {
     if (!feed.supportsAlbumFastScroll() || size < 2) return null
 
     val articles = ignoredArticles.toIgnoredArticleList()
-    val locale = Locale.getDefault()
     val index = AlphabeticIndex<Nothing>(locale)
         .addLabels(Locale.ENGLISH)
         .addLabels(Locale.JAPANESE)
