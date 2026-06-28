@@ -678,6 +678,7 @@ fun SettingsScreen(
                 storageSummary.streamCachedSongCount,
                 storageSummary.streamCachedSongCount,
             )
+            val previewStreamCacheSizeMb = streamCacheSliderValue.toStreamCacheSizeMb()
             val streamCacheBody = if (selectedServer != null) {
                 stringResource(R.string.settings_cache_count_on_server, streamCacheCount, selectedServer.name)
             } else {
@@ -699,7 +700,7 @@ fun SettingsScreen(
                     Text(
                         text = stringResource(
                             R.string.settings_cache_limit,
-                            formatStorageSize(configuredStreamCacheSizeMb.toLong() * 1024L * 1024L),
+                            formatStorageSize(previewStreamCacheSizeMb.toLong() * 1024L * 1024L),
                         ),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -707,7 +708,7 @@ fun SettingsScreen(
                 }
                 LinearProgressIndicator(
                     progress = {
-                        val limit = configuredStreamCacheSizeMb.toLong() * 1024L * 1024L
+                        val limit = previewStreamCacheSizeMb.toLong() * 1024L * 1024L
                         if (limit <= 0L) 0f
                         else (storageSummary.streamCacheBytes.toFloat() / limit.toFloat()).coerceIn(0f, 1f)
                     },
@@ -781,6 +782,7 @@ fun SettingsScreen(
         }
 
         item {
+            val previewImageCacheSizeMb = imageCacheSliderValue.toImageCacheSizeMb()
             SettingsSectionCard(
                 title = stringResource(R.string.settings_cover_art_cache_title),
                 body = stringResource(R.string.settings_cover_art_cache_body),
@@ -797,7 +799,7 @@ fun SettingsScreen(
                     Text(
                         text = stringResource(
                             R.string.settings_cache_limit,
-                            formatStorageSize(configuredImageCacheSizeMb.toLong() * 1024L * 1024L),
+                            formatStorageSize(previewImageCacheSizeMb.toLong() * 1024L * 1024L),
                         ),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -805,7 +807,7 @@ fun SettingsScreen(
                 }
                 LinearProgressIndicator(
                     progress = {
-                        val limit = configuredImageCacheSizeMb.toLong() * 1024L * 1024L
+                        val limit = previewImageCacheSizeMb.toLong() * 1024L * 1024L
                         if (limit <= 0L) 0f
                         else (storageSummary.imageCacheBytes.toFloat() / limit.toFloat()).coerceIn(0f, 1f)
                     },
