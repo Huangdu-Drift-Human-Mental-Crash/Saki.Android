@@ -75,7 +75,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -1698,13 +1697,9 @@ private fun AlbumFeedPageContent(
     onOpenAlbum: (String) -> Unit,
     bottomOverlayPadding: Dp,
 ) {
-    val fastScrollIndex by produceState<AlbumFastScrollIndex?>(
-        initialValue = null,
-        feed,
-        albums,
-        ignoredArticles,
-    ) {
-        value = withContext(Dispatchers.Default) {
+    var fastScrollIndex by remember(feed, ignoredArticles) { mutableStateOf<AlbumFastScrollIndex?>(null) }
+    LaunchedEffect(feed, albums, ignoredArticles) {
+        fastScrollIndex = withContext(Dispatchers.Default) {
             albums.albumFastScrollIndex(feed, ignoredArticles)
         }
     }
