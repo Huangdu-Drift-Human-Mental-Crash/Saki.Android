@@ -40,6 +40,22 @@ class SakiDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrate15To16AddsArtistShortcutsCache() {
+        val databaseName = "saki-migration-15-16"
+        helper.createDatabase(databaseName, 15).close()
+
+        helper.runMigrationsAndValidate(
+            name = databaseName,
+            version = 16,
+            validateDroppedTables = true,
+            migrations = DatabaseModule.allMigrations().filter { it.startVersion >= 15 }.toTypedArray(),
+        ).apply {
+            assertTableExists("cached_artist_shortcuts")
+            close()
+        }
+    }
+
     private fun SupportSQLiteDatabase.insertLibraryListCacheRows() {
         execSQL(
             """
@@ -91,6 +107,16 @@ class SakiDatabaseMigrationTest {
             assertEquals(tableName, 1, cursor.getInt(0))
             assertEquals(tableName, 0L, cursor.getLong(1))
             assertEquals(tableName, 0L, cursor.getLong(2))
+        }
+    }
+
+    private fun SupportSQLiteDatabase.assertTableExists(tableName: String) {
+        query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+            arrayOf(tableName),
+        ).use { cursor ->
+            cursor.moveToFirst()
+            assertEquals(tableName, 1, cursor.getInt(0))
         }
     }
 }

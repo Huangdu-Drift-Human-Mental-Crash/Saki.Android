@@ -12,6 +12,7 @@ import org.hdhmc.saki.data.local.entity.CachedArtistDetailAlbumEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistDetailSongEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistEntity
+import org.hdhmc.saki.data.local.entity.CachedArtistShortcutEntity
 import org.hdhmc.saki.data.local.entity.CachedLibrarySongEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailSongEntity
@@ -38,6 +39,7 @@ interface LibraryCacheDao {
         clearAllSongMetadata(serverId)
         clearSongs(serverId)
         clearAllAlbums(serverId)
+        clearArtistShortcuts(serverId)
         clearArtists(serverId)
         clearPlaylists(serverId)
     }
@@ -45,19 +47,34 @@ interface LibraryCacheDao {
     @Query("SELECT * FROM cached_artists WHERE serverId = :serverId ORDER BY sectionName, name")
     suspend fun getArtists(serverId: Long): List<CachedArtistEntity>
 
+    @Query("SELECT * FROM cached_artist_shortcuts WHERE serverId = :serverId ORDER BY sortOrder")
+    suspend fun getArtistShortcuts(serverId: Long): List<CachedArtistShortcutEntity>
+
     @Query("SELECT * FROM cached_artists WHERE serverId = :serverId AND artistId = :artistId LIMIT 1")
     suspend fun getArtistSummary(serverId: Long, artistId: String): CachedArtistEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertArtists(artists: List<CachedArtistEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertArtistShortcuts(shortcuts: List<CachedArtistShortcutEntity>)
+
     @Query("DELETE FROM cached_artists WHERE serverId = :serverId")
     suspend fun clearArtists(serverId: Long)
 
+    @Query("DELETE FROM cached_artist_shortcuts WHERE serverId = :serverId")
+    suspend fun clearArtistShortcuts(serverId: Long)
+
     @Transaction
-    suspend fun replaceArtists(serverId: Long, artists: List<CachedArtistEntity>) {
+    suspend fun replaceArtists(
+        serverId: Long,
+        artists: List<CachedArtistEntity>,
+        shortcuts: List<CachedArtistShortcutEntity>,
+    ) {
         clearArtists(serverId)
+        clearArtistShortcuts(serverId)
         insertArtists(artists)
+        insertArtistShortcuts(shortcuts)
     }
 
     @Query("SELECT * FROM cached_albums WHERE serverId = :serverId AND listType = :listType ORDER BY sortOrder")

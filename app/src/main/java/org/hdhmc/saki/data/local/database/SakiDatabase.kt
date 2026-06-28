@@ -15,6 +15,7 @@ import org.hdhmc.saki.data.local.entity.CachedArtistDetailAlbumEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistDetailSongEntity
 import org.hdhmc.saki.data.local.entity.CachedArtistEntity
+import org.hdhmc.saki.data.local.entity.CachedArtistShortcutEntity
 import org.hdhmc.saki.data.local.entity.CachedLibrarySongEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailSongEntity
@@ -36,6 +37,7 @@ import org.hdhmc.saki.data.local.entity.ServerEntity
         CachedArtistDetailEntity::class,
         CachedArtistDetailSongEntity::class,
         CachedArtistEntity::class,
+        CachedArtistShortcutEntity::class,
         CachedLibrarySongEntity::class,
         CachedPlaylistDetailEntity::class,
         CachedPlaylistDetailSongEntity::class,
@@ -47,7 +49,7 @@ import org.hdhmc.saki.data.local.entity.ServerEntity
         ServerEntity::class,
         ServerEndpointEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 abstract class SakiDatabase : RoomDatabase() {
