@@ -227,6 +227,9 @@
     <string name="browse_no_artists">无艺术家</string>
     <string name="browse_no_artists_body">服务器未返回艺术家索引。</string>
     <string name="browse_shortcuts">快捷方式</string>
+    <string name="browse_alphabet_scroll_bar">字母快速滚动条</string>
+    <string name="browse_fast_scroll_previous_section">上一段</string>
+    <string name="browse_fast_scroll_next_section">下一段</string>
     <string name="browse_loading_albums">正在加载专辑</string>
     <string name="browse_no_albums">无专辑</string>
     <string name="browse_no_albums_body">试试其他专辑排序。</string>
