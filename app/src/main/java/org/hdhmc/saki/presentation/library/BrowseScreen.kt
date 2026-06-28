@@ -2564,18 +2564,24 @@ private fun AlphabetScrollBar(
     modifier: Modifier = Modifier,
 ) {
     var activeIndex by remember { mutableStateOf(-1) }
-    var selectedIndex by remember(labels) { mutableStateOf(0) }
+    var selectedLabel by remember { mutableStateOf<String?>(null) }
+    val selectedIndex = selectedLabel
+        ?.let(labels::indexOf)
+        ?.takeIf { it >= 0 }
+        ?: 0
     val safeSelectedIndex = selectedIndex.coerceIn(0, labels.lastIndex)
     val scrollBarDescription = stringResource(R.string.browse_alphabet_scroll_bar)
     val currentLabel = labels.getOrNull(safeSelectedIndex).orEmpty()
     val previousSectionLabel = stringResource(R.string.browse_fast_scroll_previous_section)
     val nextSectionLabel = stringResource(R.string.browse_fast_scroll_next_section)
 
-    fun scrollToIndex(index: Int): Boolean {
+    fun scrollToIndex(index: Int, highlight: Boolean): Boolean {
         if (labels.isEmpty()) return false
         val target = index.coerceIn(0, labels.lastIndex)
-        selectedIndex = target
-        activeIndex = target
+        selectedLabel = labels[target]
+        if (highlight) {
+            activeIndex = target
+        }
         onScrollTo(target)
         return true
     }
@@ -2591,14 +2597,14 @@ private fun AlphabetScrollBar(
                         if (safeSelectedIndex <= 0) {
                             false
                         } else {
-                            scrollToIndex(safeSelectedIndex - 1)
+                            scrollToIndex(safeSelectedIndex - 1, highlight = false)
                         }
                     },
                     CustomAccessibilityAction(nextSectionLabel) {
                         if (safeSelectedIndex >= labels.lastIndex) {
                             false
                         } else {
-                            scrollToIndex(safeSelectedIndex + 1)
+                            scrollToIndex(safeSelectedIndex + 1, highlight = false)
                         }
                     },
                 )
@@ -2608,7 +2614,7 @@ private fun AlphabetScrollBar(
                     val idx = (offset.y / (size.height.toFloat() / labels.size))
                         .toInt()
                         .coerceIn(0, labels.lastIndex)
-                    scrollToIndex(idx)
+                    scrollToIndex(idx, highlight = false)
                 }
             }
             .pointerInput(labels) {
@@ -2617,7 +2623,7 @@ private fun AlphabetScrollBar(
                         val idx = (offset.y / (size.height.toFloat() / labels.size))
                             .toInt()
                             .coerceIn(0, labels.lastIndex)
-                        scrollToIndex(idx)
+                        scrollToIndex(idx, highlight = true)
                     },
                     onDragEnd = { activeIndex = -1 },
                     onDragCancel = { activeIndex = -1 },
@@ -2626,7 +2632,7 @@ private fun AlphabetScrollBar(
                             .toInt()
                             .coerceIn(0, labels.lastIndex)
                         if (idx != activeIndex) {
-                            scrollToIndex(idx)
+                            scrollToIndex(idx, highlight = true)
                         }
                     },
                 )
