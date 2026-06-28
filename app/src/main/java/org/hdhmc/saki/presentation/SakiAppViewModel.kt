@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val ALBUMS_PAGE_SIZE = 36
+private const val SORTED_ALBUMS_PAGE_SIZE = 240
 private const val RANDOM_SONGS_FEED_SIZE = 200
 private const val PLAYLIST_DETAIL_PREFETCH_LIMIT = 12
 private const val PLAYLIST_DETAIL_PREFETCH_MAX_SONGS = 500
@@ -529,6 +530,7 @@ class SakiAppViewModel @Inject constructor(
         val serverId = state.selectedServerId ?: return
         val type = state.selectedAlbumFeed
         val feedState = state.albumFeedState(type)
+        val pageSize = type.albumFeedPageSize()
         if (
             !type.supportsPagination() ||
             !feedState.hasMore ||
@@ -552,7 +554,7 @@ class SakiAppViewModel @Inject constructor(
                 subsonicRepository.getAlbumList(
                     serverId = serverId,
                     type = type,
-                    size = ALBUMS_PAGE_SIZE,
+                    size = pageSize,
                     offset = offset,
                 ).data
             }.onSuccess { page ->
@@ -567,7 +569,7 @@ class SakiAppViewModel @Inject constructor(
                                 it.copy(
                                     albums = mergedAlbums,
                                     offset = offset + page.size,
-                                    hasMore = page.size >= ALBUMS_PAGE_SIZE,
+                                    hasMore = page.size >= pageSize,
                                     isLoadingMore = false,
                                     error = null,
                                 )
@@ -576,6 +578,9 @@ class SakiAppViewModel @Inject constructor(
                     }
                     runCatching { libraryCacheRepository.saveAlbums(serverId, type, mergedAlbums) }
                         .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
+                    if (type.supportsAlbumFastScroll() && page.size >= pageSize) {
+                        loadRemainingSortedAlbumPages(serverId, type, pageSize)
+                    }
                 }
             }.onFailure { throwable ->
                 if (uiState.value.selectedServerId == serverId) {
@@ -1888,6 +1893,7 @@ class SakiAppViewModel @Inject constructor(
         forceRefresh: Boolean = false,
     ) {
         val currentFeed = uiState.value.albumFeedState(type)
+        val pageSize = type.albumFeedPageSize()
         if (!forceRefresh && (currentFeed.isLoading || currentFeed.hasLoadedFromNetwork)) {
             return
         }
@@ -1929,7 +1935,7 @@ class SakiAppViewModel @Inject constructor(
                 subsonicRepository.getAlbumList(
                     serverId = serverId,
                     type = type,
-                    size = ALBUMS_PAGE_SIZE,
+                    size = pageSize,
                     offset = 0,
                 ).data
             }.onSuccess { albums ->
@@ -1943,7 +1949,7 @@ class SakiAppViewModel @Inject constructor(
                                 it.copy(
                                     albums = uniqueAlbums,
                                     offset = albums.size,
-                                    hasMore = type.supportsPagination() && albums.size >= ALBUMS_PAGE_SIZE,
+                                    hasMore = type.supportsPagination() && albums.size >= pageSize,
                                     isLoading = false,
                                     isLoadingMore = false,
                                     error = null,
@@ -1955,6 +1961,9 @@ class SakiAppViewModel @Inject constructor(
                 }
                 runCatching { libraryCacheRepository.saveAlbums(serverId, type, uniqueAlbums) }
                     .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
+                if (type.supportsAlbumFastScroll() && albums.size >= pageSize) {
+                    loadRemainingSortedAlbumPages(serverId, type, pageSize)
+                }
             }.onFailure { throwable ->
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { state ->
@@ -1970,6 +1979,77 @@ class SakiAppViewModel @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun loadRemainingSortedAlbumPages(
+        serverId: Long,
+        type: AlbumListType,
+        pageSize: Int,
+    ) {
+        if (!type.supportsAlbumFastScroll()) return
+
+        while (uiState.value.selectedServerId == serverId) {
+            val feedState = uiState.value.albumFeedState(type)
+            if (!feedState.hasMore || feedState.isLoadingMore) return
+
+            val offset = feedState.offset
+            mutableUiState.update { current ->
+                current.copy(
+                    albumFeeds = current.albumFeeds.updateFeed(type) {
+                        it.copy(isLoadingMore = true, error = null)
+                    },
+                )
+            }
+
+            val page = try {
+                subsonicRepository.getAlbumList(
+                    serverId = serverId,
+                    type = type,
+                    size = pageSize,
+                    offset = offset,
+                ).data
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (throwable: Throwable) {
+                if (uiState.value.selectedServerId == serverId) {
+                    mutableUiState.update { current ->
+                        current.copy(
+                            albumFeeds = current.albumFeeds.updateFeed(type) {
+                                it.copy(isLoadingMore = false)
+                            },
+                        )
+                    }
+                    Log.w("SakiApp", "Failed to prefetch sorted album page", throwable)
+                }
+                return
+            }
+
+            if (uiState.value.selectedServerId != serverId) return
+
+            var mergedAlbums = emptyList<AlbumSummary>()
+            var shouldContinue = false
+            mutableUiState.update { current ->
+                val currentFeed = current.albumFeedState(type)
+                val visiblePage = page.withoutUnknownAlbumPlaceholders()
+                mergedAlbums = (currentFeed.albums + visiblePage).distinctBy(AlbumSummary::id)
+                shouldContinue = page.size >= pageSize
+                current.copy(
+                    albumFeeds = current.albumFeeds.updateFeed(type) {
+                        it.copy(
+                            albums = mergedAlbums,
+                            offset = offset + page.size,
+                            hasMore = shouldContinue,
+                            isLoadingMore = false,
+                            error = null,
+                        )
+                    },
+                )
+            }
+            runCatching { libraryCacheRepository.saveAlbums(serverId, type, mergedAlbums) }
+                .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
+
+            if (!shouldContinue) return
         }
     }
 
@@ -2897,4 +2977,13 @@ private fun Song.withFallbackAlbumMetadata(album: Album): Song {
 
 private fun AlbumListType.supportsPagination(): Boolean {
     return this != AlbumListType.RANDOM && this != AlbumListType.STARRED
+}
+
+private fun AlbumListType.supportsAlbumFastScroll(): Boolean {
+    return this == AlbumListType.ALPHABETICAL_BY_NAME ||
+        this == AlbumListType.ALPHABETICAL_BY_ARTIST
+}
+
+private fun AlbumListType.albumFeedPageSize(): Int {
+    return if (supportsAlbumFastScroll()) SORTED_ALBUMS_PAGE_SIZE else ALBUMS_PAGE_SIZE
 }
