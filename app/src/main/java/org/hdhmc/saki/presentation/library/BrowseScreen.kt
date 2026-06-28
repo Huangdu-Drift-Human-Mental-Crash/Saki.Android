@@ -1,5 +1,6 @@
 package org.hdhmc.saki.presentation.library
 
+import android.icu.text.AlphabeticIndex
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -97,6 +98,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 import kotlin.math.abs
 import org.hdhmc.saki.R
 import org.hdhmc.saki.domain.model.Album
@@ -110,6 +112,7 @@ import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.SongFeedType
+import org.hdhmc.saki.domain.model.isUnknownAlbumPlaceholder
 import org.hdhmc.saki.presentation.BrowseSection
 import org.hdhmc.saki.presentation.AlbumFeedState
 import org.hdhmc.saki.presentation.labelRes
@@ -123,11 +126,13 @@ import org.hdhmc.saki.presentation.asString
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -818,6 +823,7 @@ private fun BrowsePager(
                                     server = currentServer,
                                     selectedFeed = uiState.selectedAlbumFeed,
                                     viewMode = uiState.appPreferences.albumViewMode,
+                                    ignoredArticles = uiState.libraryIndexes?.ignoredArticles,
                                     scrollPositions = scrollState.albumFeedPositions,
                                     onSelectFeed = onSelectAlbumFeed,
                                     onLoadMore = onLoadMoreAlbums,
@@ -1513,6 +1519,7 @@ private fun AlbumsPage(
     server: ServerConfig,
     selectedFeed: AlbumListType,
     viewMode: AlbumViewMode,
+    ignoredArticles: String?,
     scrollPositions: Map<AlbumListType, AlbumFeedScrollPosition>,
     onSelectFeed: (AlbumListType) -> Unit,
     onLoadMore: () -> Unit,
@@ -1582,9 +1589,11 @@ private fun AlbumsPage(
             val feedState = albumFeeds[feed] ?: AlbumFeedState()
             val scrollPosition = scrollPositions.getValue(feed)
             AlbumFeedPageContent(
+                feed = feed,
                 albums = feedState.albums,
                 server = server,
                 viewMode = viewMode,
+                ignoredArticles = ignoredArticles,
                 scrollPosition = scrollPosition,
                 isLoading = feedState.isLoading,
                 hasMore = feedState.hasMore,
@@ -1673,9 +1682,11 @@ private const val PagerOffsetSettlingEpsilon = 0.001f
 
 @Composable
 private fun AlbumFeedPageContent(
+    feed: AlbumListType,
     albums: List<AlbumSummary>,
     server: ServerConfig,
     viewMode: AlbumViewMode,
+    ignoredArticles: String?,
     scrollPosition: AlbumFeedScrollPosition,
     isLoading: Boolean,
     hasMore: Boolean,
@@ -1686,6 +1697,17 @@ private fun AlbumFeedPageContent(
     onOpenAlbum: (String) -> Unit,
     bottomOverlayPadding: Dp,
 ) {
+    var fastScrollIndex by remember(feed, ignoredArticles) { mutableStateOf<AlbumFastScrollIndex?>(null) }
+    LaunchedEffect(feed, albums, ignoredArticles) {
+        fastScrollIndex = withContext(Dispatchers.Default) {
+            albums.albumFastScrollIndex(feed, ignoredArticles)
+        }
+    }
+    val contentPadding = albumFeedContentPadding(
+        bottomOverlayPadding = bottomOverlayPadding,
+        hasFastScroll = fastScrollIndex != null,
+    )
+    val coroutineScope = rememberCoroutineScope()
     when (viewMode) {
         AlbumViewMode.GRID -> {
             val gridState = rememberRestoredLazyGridState(scrollPosition.gridPosition)
@@ -1704,37 +1726,46 @@ private fun AlbumFeedPageContent(
                     .collect { onLoadMore() }
             }
 
-            LazyVerticalGrid(
-                state = gridState,
-                modifier = Modifier.fillMaxSize(),
-                columns = GridCells.Fixed(2),
-                contentPadding = bottomContentPadding(bottomOverlayPadding),
-            ) {
-                when {
-                    isLoading && albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
-                        LoadingStateCard(stringResource(R.string.browse_loading_albums))
-                    }
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyVerticalGrid(
+                    state = gridState,
+                    modifier = Modifier.fillMaxSize(),
+                    columns = GridCells.Fixed(2),
+                    contentPadding = contentPadding,
+                ) {
+                    when {
+                        isLoading && albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                            LoadingStateCard(stringResource(R.string.browse_loading_albums))
+                        }
 
-                    error != null && albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
-                        ErrorStateCard(error)
-                    }
+                        error != null && albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                            ErrorStateCard(error)
+                        }
 
-                    albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
-                        EmptyStateCard(
-                            stringResource(R.string.browse_no_albums),
-                            stringResource(R.string.browse_no_albums_body),
-                        )
-                    }
+                        albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                            EmptyStateCard(
+                                stringResource(R.string.browse_no_albums),
+                                stringResource(R.string.browse_no_albums_body),
+                            )
+                        }
 
-                    else -> items(albums, key = { it.id }) { album ->
-                        AlbumCard(album = album, server = server, onOpenAlbum = onOpenAlbum)
+                        else -> items(albums, key = { it.id }) { album ->
+                            AlbumCard(album = album, server = server, onOpenAlbum = onOpenAlbum)
+                        }
+                    }
+                    if (isLoadingMore) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            LoadingStateCard(stringResource(R.string.browse_loading_albums))
+                        }
                     }
                 }
-                if (isLoadingMore) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        LoadingStateCard(stringResource(R.string.browse_loading_albums))
-                    }
-                }
+                AlbumFastScrollOverlay(
+                    index = fastScrollIndex,
+                    bottomOverlayPadding = bottomOverlayPadding,
+                    onScrollToAlbumIndex = { itemIndex ->
+                        coroutineScope.launch { gridState.scrollToItem(itemIndex) }
+                    },
+                )
             }
         }
 
@@ -1755,39 +1786,203 @@ private fun AlbumFeedPageContent(
                     .collect { onLoadMore() }
             }
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = bottomContentPadding(bottomOverlayPadding),
-            ) {
-                when {
-                    isLoading && albums.isEmpty() -> item {
-                        LoadingStateCard(stringResource(R.string.browse_loading_albums))
-                    }
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = contentPadding,
+                ) {
+                    when {
+                        isLoading && albums.isEmpty() -> item {
+                            LoadingStateCard(stringResource(R.string.browse_loading_albums))
+                        }
 
-                    error != null && albums.isEmpty() -> item {
-                        ErrorStateCard(error)
-                    }
+                        error != null && albums.isEmpty() -> item {
+                            ErrorStateCard(error)
+                        }
 
-                    albums.isEmpty() -> item {
-                        EmptyStateCard(
-                            stringResource(R.string.browse_no_albums),
-                            stringResource(R.string.browse_no_albums_body),
-                        )
-                    }
+                        albums.isEmpty() -> item {
+                            EmptyStateCard(
+                                stringResource(R.string.browse_no_albums),
+                                stringResource(R.string.browse_no_albums_body),
+                            )
+                        }
 
-                    else -> items(albums, key = { it.id }) { album ->
-                        AlbumRow(album = album, server = server, onOpenAlbum = onOpenAlbum)
+                        else -> items(albums, key = { it.id }) { album ->
+                            AlbumRow(album = album, server = server, onOpenAlbum = onOpenAlbum)
+                        }
+                    }
+                    if (isLoadingMore) {
+                        item {
+                            LoadingStateCard(stringResource(R.string.browse_loading_albums))
+                        }
                     }
                 }
-                if (isLoadingMore) {
-                    item {
-                        LoadingStateCard(stringResource(R.string.browse_loading_albums))
-                    }
-                }
+                AlbumFastScrollOverlay(
+                    index = fastScrollIndex,
+                    bottomOverlayPadding = bottomOverlayPadding,
+                    onScrollToAlbumIndex = { itemIndex ->
+                        coroutineScope.launch { listState.scrollToItem(itemIndex) }
+                    },
+                )
             }
         }
     }
+}
+
+private fun albumFeedContentPadding(
+    bottomOverlayPadding: Dp,
+    hasFastScroll: Boolean,
+): PaddingValues {
+    return PaddingValues(
+        end = if (hasFastScroll) AlbumFastScrollContentEndPadding else 0.dp,
+        bottom = 24.dp + bottomOverlayPadding,
+    )
+}
+
+private val AlbumFastScrollContentEndPadding = 24.dp
+
+@Composable
+private fun AlbumFastScrollOverlay(
+    index: AlbumFastScrollIndex?,
+    bottomOverlayPadding: Dp,
+    onScrollToAlbumIndex: (Int) -> Unit,
+) {
+    val labels = index?.labels.orEmpty()
+    if (index == null || labels.size <= 1) return
+
+    val haptic = LocalHapticFeedback.current
+    var showScrollBar by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(500)
+        showScrollBar = true
+    }
+
+    androidx.compose.animation.AnimatedVisibility(
+        visible = showScrollBar,
+        enter = androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.fadeOut(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 8.dp, bottom = 8.dp + bottomOverlayPadding),
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+            AlphabetScrollBar(
+                labels = labels,
+                onScrollTo = { labelIndex ->
+                    val label = labels.getOrNull(labelIndex) ?: return@AlphabetScrollBar
+                    val albumIndex = index.targetAlbumIndices[label] ?: return@AlphabetScrollBar
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onScrollToAlbumIndex(albumIndex)
+                },
+            )
+        }
+    }
+}
+
+private data class AlbumFastScrollIndex(
+    val labels: List<String>,
+    val targetAlbumIndices: Map<String, Int>,
+)
+
+private fun List<AlbumSummary>.albumFastScrollIndex(
+    feed: AlbumListType,
+    ignoredArticles: String?,
+): AlbumFastScrollIndex? {
+    if (!feed.supportsAlbumFastScroll() || size < 2) return null
+
+    val articles = ignoredArticles.toIgnoredArticleList()
+    val locale = Locale.getDefault()
+    val index = AlphabeticIndex<Nothing>(locale)
+        .addLabels(Locale.ENGLISH)
+        .addLabels(Locale.JAPANESE)
+        .addLabels(Locale.CHINESE)
+        .addLabels(Locale.KOREAN)
+        .setOverflowLabel("#")
+        .setUnderflowLabel("#")
+        .buildImmutableIndex()
+    val firstAlbumIndexByBucket = linkedMapOf<Int, AlbumFastScrollBucket>()
+    forEachIndexed { albumIndex, album ->
+        if (album.isUnknownAlbumPlaceholder()) return@forEachIndexed
+        val sortValue = album.fastScrollSortValue(feed).stripIgnoredArticles(articles)
+        val bucketIndex = index.getBucketIndex(sortValue)
+        firstAlbumIndexByBucket.putIfAbsent(
+            bucketIndex,
+            AlbumFastScrollBucket(
+                label = index.getBucket(bucketIndex).label,
+                albumIndex = albumIndex,
+            ),
+        )
+    }
+
+    val scrollBarMapping = firstAlbumIndexByBucket.albumScrollBarMapping()
+    val labels = scrollBarMapping.map { it.first }
+    val targets = scrollBarMapping.toMap()
+    return if (labels.size > 1) AlbumFastScrollIndex(labels, targets) else null
+}
+
+private data class AlbumFastScrollBucket(
+    val label: String,
+    val albumIndex: Int,
+)
+
+private fun Map<Int, AlbumFastScrollBucket>.albumScrollBarMapping(): List<Pair<String, Int>> {
+    val result = mutableListOf<Pair<String, Int>>()
+    var otherTarget: Int? = null
+    entries.sortedBy { it.key }.forEach { (_, bucket) ->
+        val label = bucket.label
+        val albumIndex = bucket.albumIndex
+        when {
+            label.length == 1 && label[0] in 'A'..'Z' -> {
+                if (result.none { it.first == label }) {
+                    result.add(label to albumIndex)
+                }
+            }
+            label == "#" -> {
+                if (result.none { it.first == "#" }) {
+                    result.add(0, "#" to albumIndex)
+                }
+            }
+            otherTarget == null -> otherTarget = albumIndex
+        }
+    }
+    otherTarget?.let { result.add("…" to it) }
+    return result
+}
+
+private fun AlbumSummary.fastScrollSortValue(feed: AlbumListType): String {
+    return when (feed) {
+        AlbumListType.ALPHABETICAL_BY_ARTIST -> artist
+            ?: artists.firstOrNull()?.name
+            ?: name
+
+        else -> name
+    }.trim()
+}
+
+private fun String?.toIgnoredArticleList(): List<String> {
+    return this?.split(' ')
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
+        ?: emptyList()
+}
+
+private fun String.stripIgnoredArticles(articles: List<String>): String {
+    val value = trim()
+    for (article in articles) {
+        if (value.startsWith(article, ignoreCase = true) &&
+            value.length > article.length &&
+            value[article.length].isWhitespace()
+        ) {
+            return value.substring(article.length + 1).trimStart()
+        }
+    }
+    return value
+}
+
+private fun AlbumListType.supportsAlbumFastScroll(): Boolean {
+    return this == AlbumListType.ALPHABETICAL_BY_NAME ||
+        this == AlbumListType.ALPHABETICAL_BY_ARTIST
 }
 
 @Composable

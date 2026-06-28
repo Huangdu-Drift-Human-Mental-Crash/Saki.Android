@@ -15,6 +15,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1131,7 +1132,7 @@ fun AlbumCard(album: AlbumSummary, server: ServerConfig, onOpenAlbum: (String) -
                 contentDescription = album.name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(170.dp),
+                    .aspectRatio(1f),
                 cornerRadiusDp = 24,
                 requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
             )
