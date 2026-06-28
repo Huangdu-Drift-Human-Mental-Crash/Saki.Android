@@ -75,6 +75,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -126,11 +127,13 @@ import org.hdhmc.saki.presentation.asString
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1695,8 +1698,15 @@ private fun AlbumFeedPageContent(
     onOpenAlbum: (String) -> Unit,
     bottomOverlayPadding: Dp,
 ) {
-    val fastScrollIndex = remember(feed, albums, ignoredArticles) {
-        albums.albumFastScrollIndex(feed, ignoredArticles)
+    val fastScrollIndex by produceState<AlbumFastScrollIndex?>(
+        initialValue = null,
+        feed,
+        albums,
+        ignoredArticles,
+    ) {
+        value = withContext(Dispatchers.Default) {
+            albums.albumFastScrollIndex(feed, ignoredArticles)
+        }
     }
     val contentPadding = albumFeedContentPadding(
         bottomOverlayPadding = bottomOverlayPadding,
@@ -1847,8 +1857,8 @@ private fun AlbumFastScrollOverlay(
     if (index == null || labels.size <= 1) return
 
     val haptic = LocalHapticFeedback.current
-    var showScrollBar by remember(labels) { mutableStateOf(false) }
-    LaunchedEffect(labels) {
+    var showScrollBar by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(500)
         showScrollBar = true
     }

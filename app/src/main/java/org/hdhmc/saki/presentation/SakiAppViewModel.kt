@@ -112,6 +112,7 @@ class SakiAppViewModel @Inject constructor(
     private var lastLoadedServerId: Long? = null
     private var appliedDefaultBrowsePreference = false
     private var deferredStreamCacheSummaryJob: Job? = null
+    private val sortedAlbumPrefetchJobs = mutableMapOf<AlbumListType, Job>()
 
     private val mutableEndpointStatus = MutableStateFlow(EndpointStatus())
     val endpointStatus: StateFlow<EndpointStatus> = mutableEndpointStatus.asStateFlow()
@@ -474,6 +475,8 @@ class SakiAppViewModel @Inject constructor(
         if (previousServerId == serverId) return
         val server = uiState.value.servers.find { it.id == serverId } ?: return
 
+        sortedAlbumPrefetchJobs.values.forEach { it.cancel() }
+        sortedAlbumPrefetchJobs.clear()
         clearSearchState()
         mutableUiState.update { state ->
             state.copy(
@@ -535,7 +538,8 @@ class SakiAppViewModel @Inject constructor(
             !type.supportsPagination() ||
             !feedState.hasMore ||
             feedState.isLoading ||
-            feedState.isLoadingMore
+            feedState.isLoadingMore ||
+            sortedAlbumPrefetchJobs[type]?.isActive == true
         ) {
             return
         }
@@ -579,7 +583,7 @@ class SakiAppViewModel @Inject constructor(
                     runCatching { libraryCacheRepository.saveAlbums(serverId, type, mergedAlbums) }
                         .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
                     if (type.supportsAlbumFastScroll() && page.size >= pageSize) {
-                        loadRemainingSortedAlbumPages(serverId, type, pageSize)
+                        startSortedAlbumPrefetch(serverId, type, pageSize)
                     }
                 }
             }.onFailure { throwable ->
@@ -1892,6 +1896,9 @@ class SakiAppViewModel @Inject constructor(
         type: AlbumListType,
         forceRefresh: Boolean = false,
     ) {
+        if (forceRefresh && type.supportsAlbumFastScroll()) {
+            sortedAlbumPrefetchJobs.remove(type)?.cancel()
+        }
         val currentFeed = uiState.value.albumFeedState(type)
         val pageSize = type.albumFeedPageSize()
         if (!forceRefresh && (currentFeed.isLoading || currentFeed.hasLoadedFromNetwork)) {
@@ -1962,7 +1969,7 @@ class SakiAppViewModel @Inject constructor(
                 runCatching { libraryCacheRepository.saveAlbums(serverId, type, uniqueAlbums) }
                     .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
                 if (type.supportsAlbumFastScroll() && albums.size >= pageSize) {
-                    loadRemainingSortedAlbumPages(serverId, type, pageSize)
+                    startSortedAlbumPrefetch(serverId, type, pageSize)
                 }
             }.onFailure { throwable ->
                 if (uiState.value.selectedServerId == serverId) {
@@ -1982,6 +1989,27 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
+    private fun startSortedAlbumPrefetch(
+        serverId: Long,
+        type: AlbumListType,
+        pageSize: Int,
+    ) {
+        if (!type.supportsAlbumFastScroll()) return
+        if (sortedAlbumPrefetchJobs[type]?.isActive == true) return
+
+        val job = viewModelScope.launch {
+            loadRemainingSortedAlbumPages(serverId, type, pageSize)
+        }
+        sortedAlbumPrefetchJobs[type] = job
+        job.invokeOnCompletion {
+            viewModelScope.launch {
+                if (sortedAlbumPrefetchJobs[type] === job) {
+                    sortedAlbumPrefetchJobs.remove(type)
+                }
+            }
+        }
+    }
+
     private suspend fun loadRemainingSortedAlbumPages(
         serverId: Long,
         type: AlbumListType,
@@ -1989,9 +2017,13 @@ class SakiAppViewModel @Inject constructor(
     ) {
         if (!type.supportsAlbumFastScroll()) return
 
+        var latestMergedAlbums: List<AlbumSummary>? = null
         while (uiState.value.selectedServerId == serverId) {
             val feedState = uiState.value.albumFeedState(type)
-            if (!feedState.hasMore || feedState.isLoadingMore) return
+            if (!feedState.hasMore || feedState.isLoadingMore) {
+                cacheSortedAlbumPrefetch(serverId, type, latestMergedAlbums)
+                return
+            }
 
             val offset = feedState.offset
             mutableUiState.update { current ->
@@ -2022,6 +2054,7 @@ class SakiAppViewModel @Inject constructor(
                     }
                     Log.w("SakiApp", "Failed to prefetch sorted album page", throwable)
                 }
+                cacheSortedAlbumPrefetch(serverId, type, latestMergedAlbums)
                 return
             }
 
@@ -2046,10 +2079,27 @@ class SakiAppViewModel @Inject constructor(
                     },
                 )
             }
-            runCatching { libraryCacheRepository.saveAlbums(serverId, type, mergedAlbums) }
-                .onFailure { Log.w("SakiApp", "Failed to cache albums", it) }
+            latestMergedAlbums = mergedAlbums
 
-            if (!shouldContinue) return
+            if (!shouldContinue) {
+                cacheSortedAlbumPrefetch(serverId, type, latestMergedAlbums)
+                return
+            }
+        }
+    }
+
+    private suspend fun cacheSortedAlbumPrefetch(
+        serverId: Long,
+        type: AlbumListType,
+        albums: List<AlbumSummary>?,
+    ) {
+        if (albums == null) return
+        try {
+            libraryCacheRepository.saveAlbums(serverId, type, albums)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (throwable: Throwable) {
+            Log.w("SakiApp", "Failed to cache prefetched albums", throwable)
         }
     }
 
