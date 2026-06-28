@@ -90,7 +90,12 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -2559,16 +2564,51 @@ private fun AlphabetScrollBar(
     modifier: Modifier = Modifier,
 ) {
     var activeIndex by remember { mutableStateOf(-1) }
+    var selectedIndex by remember(labels) { mutableStateOf(0) }
+    val safeSelectedIndex = selectedIndex.coerceIn(0, labels.lastIndex)
+    val scrollBarDescription = stringResource(R.string.browse_alphabet_scroll_bar)
+    val currentLabel = labels.getOrNull(safeSelectedIndex).orEmpty()
+    val previousSectionLabel = stringResource(R.string.browse_fast_scroll_previous_section)
+    val nextSectionLabel = stringResource(R.string.browse_fast_scroll_next_section)
+
+    fun scrollToIndex(index: Int): Boolean {
+        if (labels.isEmpty()) return false
+        val target = index.coerceIn(0, labels.lastIndex)
+        selectedIndex = target
+        activeIndex = target
+        onScrollTo(target)
+        return true
+    }
 
     Column(
         modifier = modifier
             .fillMaxHeight()
+            .semantics {
+                contentDescription = scrollBarDescription
+                stateDescription = currentLabel
+                customActions = listOf(
+                    CustomAccessibilityAction(previousSectionLabel) {
+                        if (safeSelectedIndex <= 0) {
+                            false
+                        } else {
+                            scrollToIndex(safeSelectedIndex - 1)
+                        }
+                    },
+                    CustomAccessibilityAction(nextSectionLabel) {
+                        if (safeSelectedIndex >= labels.lastIndex) {
+                            false
+                        } else {
+                            scrollToIndex(safeSelectedIndex + 1)
+                        }
+                    },
+                )
+            }
             .pointerInput(labels) {
                 detectTapGestures { offset ->
                     val idx = (offset.y / (size.height.toFloat() / labels.size))
                         .toInt()
                         .coerceIn(0, labels.lastIndex)
-                    onScrollTo(idx)
+                    scrollToIndex(idx)
                 }
             }
             .pointerInput(labels) {
@@ -2577,8 +2617,7 @@ private fun AlphabetScrollBar(
                         val idx = (offset.y / (size.height.toFloat() / labels.size))
                             .toInt()
                             .coerceIn(0, labels.lastIndex)
-                        activeIndex = idx
-                        onScrollTo(idx)
+                        scrollToIndex(idx)
                     },
                     onDragEnd = { activeIndex = -1 },
                     onDragCancel = { activeIndex = -1 },
@@ -2587,8 +2626,7 @@ private fun AlphabetScrollBar(
                             .toInt()
                             .coerceIn(0, labels.lastIndex)
                         if (idx != activeIndex) {
-                            activeIndex = idx
-                            onScrollTo(idx)
+                            scrollToIndex(idx)
                         }
                     },
                 )

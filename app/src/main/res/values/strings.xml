@@ -234,6 +234,9 @@
     <string name="browse_no_artists">No artists</string>
     <string name="browse_no_artists_body">The server did not return artist indexes.</string>
     <string name="browse_shortcuts">Shortcuts</string>
+    <string name="browse_alphabet_scroll_bar">Alphabet fast scroll</string>
+    <string name="browse_fast_scroll_previous_section">Previous section</string>
+    <string name="browse_fast_scroll_next_section">Next section</string>
     <string name="browse_loading_albums">Loading albums</string>
     <string name="browse_no_albums">No albums</string>
     <string name="browse_no_albums_body">Try another album feed.</string>
