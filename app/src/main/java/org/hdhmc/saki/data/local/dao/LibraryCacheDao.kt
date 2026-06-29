@@ -19,6 +19,7 @@ import org.hdhmc.saki.data.local.entity.CachedPlaylistDetailSongEntity
 import org.hdhmc.saki.data.local.entity.CachedPlaylistEntity
 import org.hdhmc.saki.data.local.entity.CachedSongMetadataEntity
 import org.hdhmc.saki.data.local.entity.CachedSongMetadataOrder
+import org.hdhmc.saki.data.local.entity.ArtistAlbumRef
 import org.hdhmc.saki.data.local.entity.CachedSongArtistEntity
 import org.hdhmc.saki.data.local.entity.CachedSongArtistSummary
 import kotlinx.coroutines.flow.Flow
@@ -111,6 +112,23 @@ interface LibraryCacheDao {
 
     @Query("SELECT * FROM cached_albums WHERE serverId = :serverId AND artistId = :artistId ORDER BY year DESC, name COLLATE NOCASE")
     suspend fun getAlbumSummariesByArtistId(serverId: Long, artistId: String): List<CachedAlbumEntity>
+
+    /**
+     * (artist, album) associations derived from the per-song artist relationships. Bridges the
+     * gap where the server attributes an album to a combined/composite artist while its tracks
+     * are credited to the individual (split) artists. Separator-agnostic: relies only on the
+     * server-provided per-song [cached_song_artists] rows, never on parsing artist names.
+     */
+    @Query(
+        """
+        SELECT DISTINCT artist.artistId AS artistId, song.albumId AS albumId
+        FROM cached_song_artists AS artist
+        JOIN cached_song_metadata AS song
+            ON song.serverId = artist.serverId AND song.songId = artist.songId
+        WHERE artist.serverId = :serverId AND song.albumId IS NOT NULL
+        """,
+    )
+    suspend fun getArtistAlbumRefsFromSongs(serverId: Long): List<ArtistAlbumRef>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAlbums(albums: List<CachedAlbumEntity>)

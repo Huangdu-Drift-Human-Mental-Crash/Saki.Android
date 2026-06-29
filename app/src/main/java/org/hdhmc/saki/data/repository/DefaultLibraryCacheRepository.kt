@@ -66,11 +66,17 @@ class DefaultLibraryCacheRepository @Inject constructor(
         val detailAlbumsByArtistId = dao.getAllArtistDetailAlbums(serverId)
             .groupBy { it.artistId }
             .mapValues { (_, albums) -> albums.map { it.toDomain() } }
+        val derivedAlbumIdsByArtistId = dao.getArtistAlbumRefsFromSongs(serverId)
+            .groupBy({ it.artistId }, { it.albumId })
+            .mapValues { (_, albumIds) -> albumIds.toSet() }
         val artists = mergeArtistSummaries(
             serverArtists = entities.map { it.toDomain() },
             songArtists = songArtistSummaries.map { it.toDomain() },
         ).map { artist ->
-            artist.withDetailAlbumCount(detailAlbumsByArtistId[artist.id].orEmpty())
+            artist.withDetailAlbumCount(
+                albums = detailAlbumsByArtistId[artist.id].orEmpty(),
+                derivedAlbumIds = derivedAlbumIdsByArtistId[artist.id].orEmpty(),
+            )
         }
         LibraryIndexes(
             lastModified = null,
@@ -284,9 +290,16 @@ class DefaultLibraryCacheRepository @Inject constructor(
             val topSongRefs = dao.getArtistDetailSongs(serverId, artistId)
             val topSongs = resolveSongs(serverId, topSongRefs.map { it.songId })
             val relationshipSongs = resolveSongsByArtistId(serverId, artistId)
+            // Albums attributed to this artist via the server's artist detail (rawAlbums) are
+            // unioned with albums derived from the artist's related songs. This surfaces albums
+            // the server credits to a combined/composite artist while crediting tracks to the
+            // split artists — without parsing any names.
+            val cachedAlbumsByArtist = dao.getAlbumSummariesByArtistId(serverId, artistId).map { it.toDomain() }
+            val derivedAlbums = inferAlbumSummariesFromSongs(relationshipSongs)
+            val allAlbums = (rawAlbums + cachedAlbumsByArtist + derivedAlbums).distinctBy(AlbumSummary::id)
             val songArtistSummary = dao.getSongArtistSummaries(serverId)
                 .firstOrNull { it.artistId == artistId }
-            val artist = detail.toDomain(rawAlbums).let { cachedArtist ->
+            val artist = detail.toDomain(allAlbums).let { cachedArtist ->
                 songArtistSummary?.let { summary ->
                     cachedArtist.copy(
                         name = summary.name,
@@ -295,7 +308,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
                     )
                 } ?: cachedArtist
             }.withVisibleDetailAlbums()
-            val albumsById = rawAlbums.associateBy(AlbumSummary::id)
+            val albumsById = allAlbums.associateBy(AlbumSummary::id)
             val filteredTopSongs = topSongs.filter { song ->
                 val album = song.albumId?.let(albumsById::get)
                 if (album != null) {
@@ -432,17 +445,27 @@ class DefaultLibraryCacheRepository @Inject constructor(
             .sortedBy { it.name.lowercase() }
     }
 
-    private fun ArtistSummary.withDetailAlbumCount(albums: List<AlbumSummary>): ArtistSummary {
-        if (albums.isEmpty()) return this
-        val visibleAlbumCount = Artist(
-            id = id,
-            name = name,
-            coverArtId = coverArtId,
-            artistImageUrl = artistImageUrl,
-            albumCount = albumCount,
-            albums = albums,
-        ).visibleDetailAlbums().size
-        return copy(albumCount = visibleAlbumCount)
+    private fun ArtistSummary.withDetailAlbumCount(
+        albums: List<AlbumSummary>,
+        derivedAlbumIds: Set<String>,
+    ): ArtistSummary {
+        val visibleDetailAlbumIds = if (albums.isEmpty()) {
+            emptySet()
+        } else {
+            Artist(
+                id = id,
+                name = name,
+                coverArtId = coverArtId,
+                artistImageUrl = artistImageUrl,
+                albumCount = albumCount,
+                albums = albums,
+            ).visibleDetailAlbums().map(AlbumSummary::id).toSet()
+        }
+        val derivedCount = (visibleDetailAlbumIds + derivedAlbumIds).size
+        // Never downgrade a server-provided count (it can exceed what's locally cached); only
+        // raise it when the relationship-derived associations reveal more albums.
+        val merged = maxOf(albumCount ?: 0, derivedCount)
+        return if (merged > 0) copy(albumCount = merged) else this
     }
 
     private fun CachedAlbumEntity.toDomain() = AlbumSummary(

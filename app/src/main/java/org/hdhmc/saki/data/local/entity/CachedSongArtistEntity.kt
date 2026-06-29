@@ -28,3 +28,9 @@ data class CachedSongArtistSummary(
     val albumCount: Int,
     val coverArtId: String?,
 )
+
+/** A (artist, album) association derived from the per-song artist relationships. */
+data class ArtistAlbumRef(
+    val artistId: String,
+    val albumId: String,
+)

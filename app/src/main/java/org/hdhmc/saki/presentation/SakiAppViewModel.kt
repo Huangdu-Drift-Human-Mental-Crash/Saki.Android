@@ -908,6 +908,10 @@ class SakiAppViewModel @Inject constructor(
                         coverArtId = artist.coverArtId ?: localArtist.coverArtId,
                         artistImageUrl = artist.artistImageUrl ?: localArtist.artistImageUrl,
                         albumCount = artist.albumCount ?: localArtist.albumCount,
+                        // Union the server's albums with relationship-derived albums (e.g. albums
+                        // the server credits to a combined artist but whose tracks credit this
+                        // split artist) so the network refresh does not drop them.
+                        albums = (artist.albums + localArtist.albums).distinctBy(AlbumSummary::id),
                     )
                 } ?: artist).withVisibleDetailAlbums()
                 val songs = (topSongs + relationshipSongs).distinctBy(Song::id)
