@@ -1,7 +1,6 @@
 package org.hdhmc.saki.presentation.library
 
 import android.icu.text.AlphabeticIndex
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -194,12 +193,9 @@ fun BrowseScreen(
     }
     val scrollState = rememberBrowseScrollState(uiState.selectedServerId)
 
-    BackHandler(enabled = backHandlersEnabled && uiState.browseStack.size > 1) {
-        onPopDetail()
-    }
-    BackHandler(enabled = backHandlersEnabled && uiState.browseStack.size <= 1 && uiState.isSearchActive) {
-        onSetSearchActive(false)
-    }
+    // Back for detail pop and search-close is owned by the page-level `predictiveBackMotion`
+    // surfaces below (the topmost detail page / the search overlay), which are composed deeper
+    // and so handle both the gesture and the back button with the reveal animation.
 
     Column(
         modifier = Modifier

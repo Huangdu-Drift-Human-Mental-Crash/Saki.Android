@@ -69,6 +69,16 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.util.lerp
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,7 +87,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Snackbar
@@ -87,8 +96,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.SheetValue
-import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -465,6 +472,7 @@ fun NowPlayingOverlay(
     var showMenu by remember(track.songId) { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var showEndpointStatus by remember { mutableStateOf(false) }
+    var showQueueSheet by remember { mutableStateOf(false) }
     val visualSnapshot = rememberNowPlayingVisualSnapshot(
         queue = playbackState.queue,
         currentIndex = playbackState.currentIndex,
@@ -536,14 +544,23 @@ fun NowPlayingOverlay(
     }
 
     val latestOnDismiss by rememberUpdatedState(onDismiss)
+    // Back is consumed by the topmost transient/anchored surface first; only run the
+    // page-level predictive back (dismiss Now Playing) when none of them are showing.
+    val backConsumedByOverlay =
+        showQueueSheet || showDetails || showMenu || showLyrics || showEndpointStatus
     val predictiveBackModifier = Modifier.predictiveBackMotion(
-        enabled = visible,
+        enabled = visible && !backConsumedByOverlay,
         onBack = { latestOnDismiss() },
     )
+    // Internal-state back: collapse the lyrics panel before exiting the page.
+    BackHandler(enabled = visible && showLyrics) { showLyrics = false }
 
-    // Reset lyrics overlay when Now Playing is dismissed
+    // Reset transient Now Playing overlays when the player is dismissed.
     LaunchedEffect(visible) {
-        if (!visible) showLyrics = false
+        if (!visible) {
+            showLyrics = false
+            showQueueSheet = false
+        }
     }
 
     AnimatedVisibility(
@@ -713,10 +730,6 @@ fun NowPlayingOverlay(
             val horizontalPadding = if (shortScreen) 16.dp else 20.dp
             val verticalSpacing = if (shortScreen) 8.dp else 12.dp
             val showQueueAffordance = playbackState.queue.size > 1
-
-            // Queue bottom sheet state
-            val queueSheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
-            var showQueueSheet by remember { mutableStateOf(false) }
             val latestOpenQueueSheet by rememberUpdatedState { showQueueSheet = true }
             val dismissSwipeModifier = Modifier.pointerInput(visible) {
                 if (!visible) return@pointerInput
@@ -1136,40 +1149,6 @@ fun NowPlayingOverlay(
                 }
             }
 
-            // Queue BottomSheet
-            if (showQueueSheet) {
-                ModalBottomSheet(
-                    onDismissRequest = { showQueueSheet = false },
-                    sheetState = queueSheetState,
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ) {
-                    Text(
-                        text = stringResource(R.string.player_queue),
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    )
-                    val queueListState = rememberLazyListState(
-                        initialFirstVisibleItemIndex = (playbackState.currentIndex - 2).coerceAtLeast(0),
-                    )
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        state = queueListState,
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
-                        verticalArrangement = Arrangement.spacedBy(verticalSpacing),
-                    ) {
-                        itemsIndexed(playbackState.queue) { index, item ->
-                            QueueRow(
-                                item = item,
-                                isCurrent = index == playbackState.currentIndex,
-                                currentServer = item.serverId?.let { serversById[it] },
-                                onClick = { onSkipToQueueItem(index) },
-                                onRemove = { onRemoveQueueItem(index) },
-                            )
-                        }
-                    }
-                }
-            }
-
             SnackbarHost(
                 hostState = playerSnackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
@@ -1183,6 +1162,19 @@ fun NowPlayingOverlay(
                 )
             }
         }
+    }
+
+    // Queue sheet renders at the overlay root (outside the status/nav-bar padding) so its scrim
+    // covers the full window including the status bar. It owns its own predictive back.
+    if (visible && showQueueSheet) {
+        PlayerQueueSheet(
+            queue = playbackState.queue,
+            currentIndex = playbackState.currentIndex,
+            serversById = serversById,
+            onSkipToQueueItem = onSkipToQueueItem,
+            onRemoveQueueItem = onRemoveQueueItem,
+            onDismissed = { showQueueSheet = false },
+        )
     }
 
     if (showDetails) {
@@ -1760,6 +1752,226 @@ private fun metadataLinkScrollDurationMillis(distancePx: Int, speedPxPerMs: Floa
     return (distancePx / speedPxPerMs)
         .roundToInt()
         .coerceAtLeast(METADATA_LINK_SCROLL_MIN_DURATION_MS)
+}
+
+private enum class QueueSheetAnchor { Hidden, Partial, Expanded }
+
+/**
+ * Custom anchored queue sheet (issue #317 phase 2).
+ *
+ * It owns a single [offsetY] (top inset of the sheet, in px) as the one source of truth for the
+ * gesture, the drag, the nested scroll and the animations. Because there is no hand-off between a
+ * "preview" value and a separate "commit" animation, the predictive back finishes by simply
+ * *continuing* from the current offset into the target anchor with a critically-damped
+ * (non-bouncy) spring — which is what removes the unnatural rebound on the Expanded -> Partial
+ * back commit.
+ */
+@Composable
+private fun PlayerQueueSheet(
+    queue: List<PlaybackQueueItem>,
+    currentIndex: Int,
+    serversById: Map<Long, ServerConfig>,
+    onSkipToQueueItem: (Int) -> Unit,
+    onRemoveQueueItem: (Int) -> Unit,
+    onDismissed: () -> Unit,
+) {
+    // Critically damped: eases into the anchor, never overshoots -> never rebounds.
+    val settleSpec = remember {
+        spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+    }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val fullHeightPx = constraints.maxHeight.toFloat()
+        val verticalSpacing = if (maxHeight < 640.dp) 8.dp else 12.dp
+        val expandedOffset = with(density) { 56.dp.toPx() }
+        val partialOffset = fullHeightPx * 0.5f
+        val hiddenOffset = fullHeightPx
+
+        fun offsetFor(anchor: QueueSheetAnchor): Float = when (anchor) {
+            QueueSheetAnchor.Expanded -> expandedOffset
+            QueueSheetAnchor.Partial -> partialOffset
+            QueueSheetAnchor.Hidden -> hiddenOffset
+        }
+
+        // Mirror M3 ModalBottomSheet settling: a flick past the velocity threshold moves to the
+        // next anchor in the fling direction; otherwise snap to the nearest anchor (positional).
+        // The velocity rule is what makes a short one-handed swipe actually expand the sheet.
+        val velocityThresholdPx = with(density) { 125.dp.toPx() }
+        val anchorOffsets = listOf(
+            QueueSheetAnchor.Expanded to expandedOffset,
+            QueueSheetAnchor.Partial to partialOffset,
+            QueueSheetAnchor.Hidden to hiddenOffset,
+        )
+        fun settleTarget(value: Float, velocityY: Float): QueueSheetAnchor {
+            val expandSide = anchorOffsets.last { it.second <= value }
+            val collapseSide = anchorOffsets.first { it.second >= value }
+            return when {
+                velocityY <= -velocityThresholdPx -> expandSide.first
+                velocityY >= velocityThresholdPx -> collapseSide.first
+                value - expandSide.second <= collapseSide.second - value -> expandSide.first
+                else -> collapseSide.first
+            }
+        }
+
+        var offsetY by remember { mutableFloatStateOf(hiddenOffset) }
+        var settledAnchor by remember { mutableStateOf(QueueSheetAnchor.Hidden) }
+        val scope = rememberCoroutineScope()
+        var motionJob by remember { mutableStateOf<Job?>(null) }
+
+        fun settleTo(anchor: QueueSheetAnchor) {
+            settledAnchor = anchor
+            motionJob?.cancel()
+            motionJob = scope.launch {
+                animate(offsetY, offsetFor(anchor), animationSpec = settleSpec) { value, _ -> offsetY = value }
+                if (anchor == QueueSheetAnchor.Hidden) onDismissed()
+            }
+        }
+
+        // Animate in from the bottom to the half anchor on first show.
+        LaunchedEffect(Unit) { settleTo(QueueSheetAnchor.Partial) }
+
+        // Predictive back: Expanded -> Partial -> Hidden, with a live preview that follows the
+        // gesture and a non-bouncy commit so the half-screen settle does not rebound.
+        PredictiveBackHandler(enabled = settledAnchor != QueueSheetAnchor.Hidden) { events ->
+            motionJob?.cancel()
+            val start = settledAnchor
+            val target = if (start == QueueSheetAnchor.Expanded) QueueSheetAnchor.Partial else QueueSheetAnchor.Hidden
+            val from = offsetY
+            val to = offsetFor(target)
+            try {
+                events.collect { event -> offsetY = lerp(from, to, event.progress.coerceIn(0f, 1f)) }
+                // Committed: keep going from the current offset into the target anchor.
+                settledAnchor = target
+                animate(offsetY, to, animationSpec = settleSpec) { value, _ -> offsetY = value }
+                if (target == QueueSheetAnchor.Hidden) onDismissed()
+            } catch (_: CancellationException) {
+                // Cancelled: ease back to where the gesture started.
+                animate(offsetY, from, animationSpec = settleSpec) { value, _ -> offsetY = value }
+            }
+        }
+
+        // Scrim — alpha read deferred into the graphics layer so dragging does not recompose.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = ((hiddenOffset - offsetY) / (hiddenOffset - partialOffset)).coerceIn(0f, 1f) * 0.45f
+                }
+                .background(Color.Black)
+                .pointerInput(Unit) {
+                    detectTapGestures { settleTo(QueueSheetAnchor.Hidden) }
+                },
+        )
+
+        val nestedScrollConnection = remember(expandedOffset, hiddenOffset) {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    // Only user drags move the sheet; ignore momentum/fling so a leftover list
+                    // fling can't re-expand or dismiss the sheet during/after a back commit.
+                    if (source != NestedScrollSource.UserInput) return Offset.Zero
+                    val delta = available.y
+                    // Dragging up first expands the sheet until it reaches the top anchor.
+                    if (delta < 0f && offsetY > expandedOffset) {
+                        motionJob?.cancel()
+                        val newOffset = (offsetY + delta).coerceAtLeast(expandedOffset)
+                        val consumed = newOffset - offsetY
+                        offsetY = newOffset
+                        return Offset(0f, consumed)
+                    }
+                    return Offset.Zero
+                }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    if (source != NestedScrollSource.UserInput) return Offset.Zero
+                    val delta = available.y
+                    // Dragging down once the list is at the top collapses the sheet.
+                    if (delta > 0f) {
+                        motionJob?.cancel()
+                        val newOffset = (offsetY + delta).coerceAtMost(hiddenOffset)
+                        val used = newOffset - offsetY
+                        offsetY = newOffset
+                        return Offset(0f, used)
+                    }
+                    return Offset.Zero
+                }
+
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (offsetY > expandedOffset) {
+                        settleTo(settleTarget(offsetY, available.y))
+                        return available
+                    }
+                    return Velocity.Zero
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .graphicsLayer { translationY = offsetY }
+                .nestedScroll(nestedScrollConnection),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            tonalElevation = 1.dp,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // The whole header (handle + title) is the drag grab area so the sheet can be
+                // expanded/collapsed one-handed like the M3 ModalBottomSheet, not only via the pill.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .draggable(
+                            state = rememberDraggableState { delta ->
+                                offsetY = (offsetY + delta).coerceIn(expandedOffset, hiddenOffset)
+                            },
+                            orientation = Orientation.Vertical,
+                            onDragStarted = { motionJob?.cancel() },
+                            onDragStopped = { velocity -> settleTo(settleTarget(offsetY, velocity)) },
+                        ),
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(vertical = 12.dp)
+                                .size(width = 32.dp, height = 4.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                    RoundedCornerShape(2.dp),
+                                ),
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.player_queue),
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
+                val queueListState = rememberLazyListState(
+                    initialFirstVisibleItemIndex = (currentIndex - 2).coerceAtLeast(0),
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    state = queueListState,
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(verticalSpacing),
+                ) {
+                    itemsIndexed(queue) { index, item ->
+                        QueueRow(
+                            item = item,
+                            isCurrent = index == currentIndex,
+                            currentServer = item.serverId?.let { serversById[it] },
+                            onClick = { onSkipToQueueItem(index) },
+                            onRemove = { onRemoveQueueItem(index) },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

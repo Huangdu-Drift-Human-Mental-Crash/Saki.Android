@@ -72,6 +72,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.presentation.asString
+import org.hdhmc.saki.presentation.predictiveBackMotion
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.ui.theme.SakiTheme
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
@@ -98,18 +99,18 @@ fun ServerConfigRoute(
         }
     }
 
-    BackHandler(enabled = uiState.editor != null || onCloseManager != null) {
-        if (uiState.editor != null) {
-            viewModel.dismissEditor()
-        } else {
-            onCloseManager?.invoke()
-        }
-    }
+    // Editor sub-panel is a transient surface: plain back dismisses it (keeps its slide-out).
+    BackHandler(enabled = uiState.editor != null) { viewModel.dismissEditor() }
 
     ServerConfigScreen(
         uiState = uiState,
         snackbarHostState = snackbarHostState,
-        modifier = modifier,
+        // Manager is a page surface: predictive back reveals Browse beneath. Stays inert during
+        // forced first-run setup (no onCloseManager) so the setup can't be swiped away.
+        modifier = modifier.predictiveBackMotion(
+            enabled = onCloseManager != null && uiState.editor == null,
+            onBack = { onCloseManager?.invoke() },
+        ),
         onAddServer = viewModel::startAddingServer,
         onEditServer = viewModel::editServer,
         onDeleteServer = viewModel::deleteServer,
