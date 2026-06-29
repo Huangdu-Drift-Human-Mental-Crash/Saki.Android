@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -1128,12 +1129,15 @@ fun NowPlayingOverlay(
                                 maxLines = 1,
                             )
                         }
-                        // Queue toggle
-                        if (showQueueAffordance) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
+                        // Queue toggle — always reserves a constant-height slot so the transport
+                        // deck does not reflow (shift down) when there is no queue to expand.
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (showQueueAffordance) {
                                 Icon(
                                     Icons.Rounded.KeyboardArrowUp,
                                     contentDescription = stringResource(R.string.player_show_queue),
