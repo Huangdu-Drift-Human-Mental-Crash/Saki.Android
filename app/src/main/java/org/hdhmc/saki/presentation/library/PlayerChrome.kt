@@ -70,6 +70,15 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.util.lerp
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -78,7 +87,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Snackbar
@@ -88,8 +96,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.SheetValue
-import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -466,7 +472,6 @@ fun NowPlayingOverlay(
     var showMenu by remember(track.songId) { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var showEndpointStatus by remember { mutableStateOf(false) }
-    val queueSheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
     var showQueueSheet by remember { mutableStateOf(false) }
     val visualSnapshot = rememberNowPlayingVisualSnapshot(
         queue = playbackState.queue,
@@ -1144,44 +1149,19 @@ fun NowPlayingOverlay(
                 }
             }
 
-            // Queue BottomSheet
+            // Queue sheet (custom anchored surface — owns its own predictive back so the
+            // Expanded -> PartiallyExpanded -> Hidden transitions animate as sheet anchors,
+            // and the back-commit eases in without a rebound).
             if (showQueueSheet) {
-                ModalBottomSheet(
-                    onDismissRequest = { showQueueSheet = false },
-                    sheetState = queueSheetState,
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ) {
-                    // Two-step back for the anchored queue sheet: Expanded collapses to
-                    // PartiallyExpanded; PartiallyExpanded falls through to the sheet's own dismiss.
-                    val queueScope = rememberCoroutineScope()
-                    BackHandler(enabled = queueSheetState.currentValue == SheetValue.Expanded) {
-                        queueScope.launch { queueSheetState.partialExpand() }
-                    }
-                    Text(
-                        text = stringResource(R.string.player_queue),
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    )
-                    val queueListState = rememberLazyListState(
-                        initialFirstVisibleItemIndex = (playbackState.currentIndex - 2).coerceAtLeast(0),
-                    )
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        state = queueListState,
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
-                        verticalArrangement = Arrangement.spacedBy(verticalSpacing),
-                    ) {
-                        itemsIndexed(playbackState.queue) { index, item ->
-                            QueueRow(
-                                item = item,
-                                isCurrent = index == playbackState.currentIndex,
-                                currentServer = item.serverId?.let { serversById[it] },
-                                onClick = { onSkipToQueueItem(index) },
-                                onRemove = { onRemoveQueueItem(index) },
-                            )
-                        }
-                    }
-                }
+                PlayerQueueSheet(
+                    queue = playbackState.queue,
+                    currentIndex = playbackState.currentIndex,
+                    serversById = serversById,
+                    verticalSpacing = verticalSpacing,
+                    onSkipToQueueItem = onSkipToQueueItem,
+                    onRemoveQueueItem = onRemoveQueueItem,
+                    onDismissed = { showQueueSheet = false },
+                )
             }
 
             SnackbarHost(
@@ -1774,6 +1754,202 @@ private fun metadataLinkScrollDurationMillis(distancePx: Int, speedPxPerMs: Floa
     return (distancePx / speedPxPerMs)
         .roundToInt()
         .coerceAtLeast(METADATA_LINK_SCROLL_MIN_DURATION_MS)
+}
+
+private enum class QueueSheetAnchor { Hidden, Partial, Expanded }
+
+/**
+ * Custom anchored queue sheet (issue #317 phase 2).
+ *
+ * It owns a single [offsetY] (top inset of the sheet, in px) as the one source of truth for the
+ * gesture, the drag, the nested scroll and the animations. Because there is no hand-off between a
+ * "preview" value and a separate "commit" animation, the predictive back finishes by simply
+ * *continuing* from the current offset into the target anchor with a critically-damped
+ * (non-bouncy) spring — which is what removes the unnatural rebound on the Expanded -> Partial
+ * back commit.
+ */
+@Composable
+private fun PlayerQueueSheet(
+    queue: List<PlaybackQueueItem>,
+    currentIndex: Int,
+    serversById: Map<Long, ServerConfig>,
+    verticalSpacing: Dp,
+    onSkipToQueueItem: (Int) -> Unit,
+    onRemoveQueueItem: (Int) -> Unit,
+    onDismissed: () -> Unit,
+) {
+    // Critically damped: eases into the anchor, never overshoots -> never rebounds.
+    val settleSpec = remember {
+        spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+    }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val fullHeightPx = constraints.maxHeight.toFloat()
+        val expandedOffset = with(density) { 56.dp.toPx() }
+        val partialOffset = fullHeightPx * 0.5f
+        val hiddenOffset = fullHeightPx
+
+        fun offsetFor(anchor: QueueSheetAnchor): Float = when (anchor) {
+            QueueSheetAnchor.Expanded -> expandedOffset
+            QueueSheetAnchor.Partial -> partialOffset
+            QueueSheetAnchor.Hidden -> hiddenOffset
+        }
+
+        fun nearestAnchor(value: Float): QueueSheetAnchor = when {
+            value <= (expandedOffset + partialOffset) / 2f -> QueueSheetAnchor.Expanded
+            value <= (partialOffset + hiddenOffset) / 2f -> QueueSheetAnchor.Partial
+            else -> QueueSheetAnchor.Hidden
+        }
+
+        var offsetY by remember { mutableFloatStateOf(hiddenOffset) }
+        var settledAnchor by remember { mutableStateOf(QueueSheetAnchor.Hidden) }
+        val scope = rememberCoroutineScope()
+        var motionJob by remember { mutableStateOf<Job?>(null) }
+
+        fun settleTo(anchor: QueueSheetAnchor) {
+            settledAnchor = anchor
+            motionJob?.cancel()
+            motionJob = scope.launch {
+                animate(offsetY, offsetFor(anchor), animationSpec = settleSpec) { value, _ -> offsetY = value }
+                if (anchor == QueueSheetAnchor.Hidden) onDismissed()
+            }
+        }
+
+        // Animate in from the bottom to the half anchor on first show.
+        LaunchedEffect(Unit) { settleTo(QueueSheetAnchor.Partial) }
+
+        // Predictive back: Expanded -> Partial -> Hidden, with a live preview that follows the
+        // gesture and a non-bouncy commit so the half-screen settle does not rebound.
+        PredictiveBackHandler(enabled = settledAnchor != QueueSheetAnchor.Hidden) { events ->
+            motionJob?.cancel()
+            val start = settledAnchor
+            val target = if (start == QueueSheetAnchor.Expanded) QueueSheetAnchor.Partial else QueueSheetAnchor.Hidden
+            val from = offsetFor(start)
+            val to = offsetFor(target)
+            try {
+                events.collect { event -> offsetY = lerp(from, to, event.progress.coerceIn(0f, 1f)) }
+                // Committed: keep going from the current offset into the target anchor.
+                settledAnchor = target
+                animate(offsetY, to, animationSpec = settleSpec) { value, _ -> offsetY = value }
+                if (target == QueueSheetAnchor.Hidden) onDismissed()
+            } catch (_: CancellationException) {
+                // Cancelled: ease back to where the gesture started.
+                animate(offsetY, from, animationSpec = settleSpec) { value, _ -> offsetY = value }
+            }
+        }
+
+        // Scrim — alpha read deferred into the graphics layer so dragging does not recompose.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = ((hiddenOffset - offsetY) / (hiddenOffset - partialOffset)).coerceIn(0f, 1f) * 0.45f
+                }
+                .background(Color.Black)
+                .pointerInput(Unit) {
+                    detectTapGestures { settleTo(QueueSheetAnchor.Hidden) }
+                },
+        )
+
+        val nestedScrollConnection = remember(expandedOffset, hiddenOffset) {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    val delta = available.y
+                    // Dragging up first expands the sheet until it reaches the top anchor.
+                    if (delta < 0f && offsetY > expandedOffset) {
+                        motionJob?.cancel()
+                        val newOffset = (offsetY + delta).coerceAtLeast(expandedOffset)
+                        val consumed = newOffset - offsetY
+                        offsetY = newOffset
+                        return Offset(0f, consumed)
+                    }
+                    return Offset.Zero
+                }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    val delta = available.y
+                    // Dragging down once the list is at the top collapses the sheet.
+                    if (delta > 0f) {
+                        motionJob?.cancel()
+                        val newOffset = (offsetY + delta).coerceAtMost(hiddenOffset)
+                        val used = newOffset - offsetY
+                        offsetY = newOffset
+                        return Offset(0f, used)
+                    }
+                    return Offset.Zero
+                }
+
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (offsetY > expandedOffset) {
+                        settleTo(nearestAnchor(offsetY))
+                        return available
+                    }
+                    return Velocity.Zero
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .graphicsLayer { translationY = offsetY }
+                .nestedScroll(nestedScrollConnection),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            tonalElevation = 1.dp,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .draggable(
+                            state = rememberDraggableState { delta ->
+                                offsetY = (offsetY + delta).coerceIn(expandedOffset, hiddenOffset)
+                            },
+                            orientation = Orientation.Vertical,
+                            onDragStarted = { motionJob?.cancel() },
+                            onDragStopped = { settleTo(nearestAnchor(offsetY)) },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(vertical = 12.dp)
+                            .size(width = 32.dp, height = 4.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                RoundedCornerShape(2.dp),
+                            ),
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.player_queue),
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+                val queueListState = rememberLazyListState(
+                    initialFirstVisibleItemIndex = (currentIndex - 2).coerceAtLeast(0),
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    state = queueListState,
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(verticalSpacing),
+                ) {
+                    itemsIndexed(queue) { index, item ->
+                        QueueRow(
+                            item = item,
+                            isCurrent = index == currentIndex,
+                            currentServer = item.serverId?.let { serversById[it] },
+                            onClick = { onSkipToQueueItem(index) },
+                            onRemove = { onRemoveQueueItem(index) },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
