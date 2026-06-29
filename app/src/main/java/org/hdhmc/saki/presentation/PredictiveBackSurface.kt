@@ -23,6 +23,27 @@ import kotlinx.coroutines.CancellationException
 
 private val PredictiveBackInterpolator = PathInterpolator(0.1f, 0.1f, 0f, 1f)
 
+/**
+ * Predictive-back model by surface role (issue #317).
+ *
+ * Every animated back gesture must preview the same target the completed back will reach. Pick the
+ * treatment by what the surface *is*, not ad-hoc per screen:
+ *
+ * - **Page / route** (Now Playing, Settings, Search overlay, Browse detail pages): use
+ *   [predictiveBackMotion] — scale + rounded corners + slight translate, revealing the previous
+ *   surface. Gate `enabled` so it is OFF whenever a higher-priority surface is consuming back
+ *   (a sheet, dialog, menu, or an internal expanded state). See `NowPlayingOverlay`.
+ * - **Anchored sheet** (queue sheet): do NOT use page motion. Map predictive progress to the sheet
+ *   anchors (Expanded -> PartiallyExpanded -> Hidden) with a single offset source of truth and a
+ *   critically-damped (non-bouncy) commit so the settle never rebounds. Reference implementation:
+ *   `PlayerQueueSheet` in PlayerChrome.kt.
+ * - **Dialog / menu** (AlertDialog, DropdownMenu, single-anchor ModalBottomSheet): rely on the
+ *   Material/system default dismiss. These render in their own window / install their own back
+ *   handling, so they already pre-empt the page motion underneath — just make sure the page's
+ *   `predictiveBackMotion` is not *also* enabled for an inline (non-window) overlay.
+ * - **Internal state** (lyrics panel, other in-page expanded/collapsed states): a plain
+ *   `BackHandler` that undoes the state first, and keep the page motion disabled while it is shown.
+ */
 @Composable
 fun Modifier.predictiveBackMotion(
     enabled: Boolean,
