@@ -1795,10 +1795,24 @@ private fun PlayerQueueSheet(
             QueueSheetAnchor.Hidden -> hiddenOffset
         }
 
-        fun nearestAnchor(value: Float): QueueSheetAnchor = when {
-            value <= (expandedOffset + partialOffset) / 2f -> QueueSheetAnchor.Expanded
-            value <= (partialOffset + hiddenOffset) / 2f -> QueueSheetAnchor.Partial
-            else -> QueueSheetAnchor.Hidden
+        // Mirror M3 ModalBottomSheet settling: a flick past the velocity threshold moves to the
+        // next anchor in the fling direction; otherwise snap to the nearest anchor (positional).
+        // The velocity rule is what makes a short one-handed swipe actually expand the sheet.
+        val velocityThresholdPx = with(density) { 125.dp.toPx() }
+        val anchorOffsets = listOf(
+            QueueSheetAnchor.Expanded to expandedOffset,
+            QueueSheetAnchor.Partial to partialOffset,
+            QueueSheetAnchor.Hidden to hiddenOffset,
+        )
+        fun settleTarget(value: Float, velocityY: Float): QueueSheetAnchor {
+            val expandSide = anchorOffsets.last { it.second <= value }
+            val collapseSide = anchorOffsets.first { it.second >= value }
+            return when {
+                velocityY <= -velocityThresholdPx -> expandSide.first
+                velocityY >= velocityThresholdPx -> collapseSide.first
+                value - expandSide.second <= collapseSide.second - value -> expandSide.first
+                else -> collapseSide.first
+            }
         }
 
         var offsetY by remember { mutableFloatStateOf(hiddenOffset) }
@@ -1881,7 +1895,7 @@ private fun PlayerQueueSheet(
 
                 override suspend fun onPreFling(available: Velocity): Velocity {
                     if (offsetY > expandedOffset) {
-                        settleTo(nearestAnchor(offsetY))
+                        settleTo(settleTarget(offsetY, available.y))
                         return available
                     }
                     return Velocity.Zero
@@ -1900,7 +1914,9 @@ private fun PlayerQueueSheet(
             tonalElevation = 1.dp,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Box(
+                // The whole header (handle + title) is the drag grab area so the sheet can be
+                // expanded/collapsed one-handed like the M3 ModalBottomSheet, not only via the pill.
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .draggable(
@@ -1909,25 +1925,29 @@ private fun PlayerQueueSheet(
                             },
                             orientation = Orientation.Vertical,
                             onDragStarted = { motionJob?.cancel() },
-                            onDragStopped = { settleTo(nearestAnchor(offsetY)) },
+                            onDragStopped = { velocity -> settleTo(settleTarget(offsetY, velocity)) },
                         ),
-                    contentAlignment = Alignment.Center,
                 ) {
                     Box(
-                        modifier = Modifier
-                            .padding(vertical = 12.dp)
-                            .size(width = 32.dp, height = 4.dp)
-                            .background(
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                RoundedCornerShape(2.dp),
-                            ),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(vertical = 12.dp)
+                                .size(width = 32.dp, height = 4.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                    RoundedCornerShape(2.dp),
+                                ),
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.player_queue),
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                     )
                 }
-                Text(
-                    text = stringResource(R.string.player_queue),
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                )
                 val queueListState = rememberLazyListState(
                     initialFirstVisibleItemIndex = (currentIndex - 2).coerceAtLeast(0),
                 )
