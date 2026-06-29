@@ -69,6 +69,7 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.activity.compose.BackHandler
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -465,6 +466,8 @@ fun NowPlayingOverlay(
     var showMenu by remember(track.songId) { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var showEndpointStatus by remember { mutableStateOf(false) }
+    val queueSheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
+    var showQueueSheet by remember { mutableStateOf(false) }
     val visualSnapshot = rememberNowPlayingVisualSnapshot(
         queue = playbackState.queue,
         currentIndex = playbackState.currentIndex,
@@ -536,14 +539,23 @@ fun NowPlayingOverlay(
     }
 
     val latestOnDismiss by rememberUpdatedState(onDismiss)
+    // Back is consumed by the topmost transient/anchored surface first; only run the
+    // page-level predictive back (dismiss Now Playing) when none of them are showing.
+    val backConsumedByOverlay =
+        showQueueSheet || showDetails || showMenu || showLyrics || showEndpointStatus
     val predictiveBackModifier = Modifier.predictiveBackMotion(
-        enabled = visible,
+        enabled = visible && !backConsumedByOverlay,
         onBack = { latestOnDismiss() },
     )
+    // Internal-state back: collapse the lyrics panel before exiting the page.
+    BackHandler(enabled = visible && showLyrics) { showLyrics = false }
 
-    // Reset lyrics overlay when Now Playing is dismissed
+    // Reset transient Now Playing overlays when the player is dismissed.
     LaunchedEffect(visible) {
-        if (!visible) showLyrics = false
+        if (!visible) {
+            showLyrics = false
+            showQueueSheet = false
+        }
     }
 
     AnimatedVisibility(
@@ -713,10 +725,6 @@ fun NowPlayingOverlay(
             val horizontalPadding = if (shortScreen) 16.dp else 20.dp
             val verticalSpacing = if (shortScreen) 8.dp else 12.dp
             val showQueueAffordance = playbackState.queue.size > 1
-
-            // Queue bottom sheet state
-            val queueSheetState = rememberBottomSheetState(initialValue = SheetValue.Hidden)
-            var showQueueSheet by remember { mutableStateOf(false) }
             val latestOpenQueueSheet by rememberUpdatedState { showQueueSheet = true }
             val dismissSwipeModifier = Modifier.pointerInput(visible) {
                 if (!visible) return@pointerInput
@@ -1143,6 +1151,12 @@ fun NowPlayingOverlay(
                     sheetState = queueSheetState,
                     containerColor = MaterialTheme.colorScheme.surface,
                 ) {
+                    // Two-step back for the anchored queue sheet: Expanded collapses to
+                    // PartiallyExpanded; PartiallyExpanded falls through to the sheet's own dismiss.
+                    val queueScope = rememberCoroutineScope()
+                    BackHandler(enabled = queueSheetState.currentValue == SheetValue.Expanded) {
+                        queueScope.launch { queueSheetState.partialExpand() }
+                    }
                     Text(
                         text = stringResource(R.string.player_queue),
                         style = MaterialTheme.typography.headlineSmall,
