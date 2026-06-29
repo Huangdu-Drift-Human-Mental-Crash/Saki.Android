@@ -1149,21 +1149,6 @@ fun NowPlayingOverlay(
                 }
             }
 
-            // Queue sheet (custom anchored surface — owns its own predictive back so the
-            // Expanded -> PartiallyExpanded -> Hidden transitions animate as sheet anchors,
-            // and the back-commit eases in without a rebound).
-            if (showQueueSheet) {
-                PlayerQueueSheet(
-                    queue = playbackState.queue,
-                    currentIndex = playbackState.currentIndex,
-                    serversById = serversById,
-                    verticalSpacing = verticalSpacing,
-                    onSkipToQueueItem = onSkipToQueueItem,
-                    onRemoveQueueItem = onRemoveQueueItem,
-                    onDismissed = { showQueueSheet = false },
-                )
-            }
-
             SnackbarHost(
                 hostState = playerSnackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
@@ -1177,6 +1162,19 @@ fun NowPlayingOverlay(
                 )
             }
         }
+    }
+
+    // Queue sheet renders at the overlay root (outside the status/nav-bar padding) so its scrim
+    // covers the full window including the status bar. It owns its own predictive back.
+    if (visible && showQueueSheet) {
+        PlayerQueueSheet(
+            queue = playbackState.queue,
+            currentIndex = playbackState.currentIndex,
+            serversById = serversById,
+            onSkipToQueueItem = onSkipToQueueItem,
+            onRemoveQueueItem = onRemoveQueueItem,
+            onDismissed = { showQueueSheet = false },
+        )
     }
 
     if (showDetails) {
@@ -1773,7 +1771,6 @@ private fun PlayerQueueSheet(
     queue: List<PlaybackQueueItem>,
     currentIndex: Int,
     serversById: Map<Long, ServerConfig>,
-    verticalSpacing: Dp,
     onSkipToQueueItem: (Int) -> Unit,
     onRemoveQueueItem: (Int) -> Unit,
     onDismissed: () -> Unit,
@@ -1785,6 +1782,7 @@ private fun PlayerQueueSheet(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val fullHeightPx = constraints.maxHeight.toFloat()
+        val verticalSpacing = if (maxHeight < 640.dp) 8.dp else 12.dp
         val expandedOffset = with(density) { 56.dp.toPx() }
         val partialOffset = fullHeightPx * 0.5f
         val hiddenOffset = fullHeightPx
@@ -1838,7 +1836,7 @@ private fun PlayerQueueSheet(
             motionJob?.cancel()
             val start = settledAnchor
             val target = if (start == QueueSheetAnchor.Expanded) QueueSheetAnchor.Partial else QueueSheetAnchor.Hidden
-            val from = offsetFor(start)
+            val from = offsetY
             val to = offsetFor(target)
             try {
                 events.collect { event -> offsetY = lerp(from, to, event.progress.coerceIn(0f, 1f)) }
@@ -1868,6 +1866,9 @@ private fun PlayerQueueSheet(
         val nestedScrollConnection = remember(expandedOffset, hiddenOffset) {
             object : NestedScrollConnection {
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    // Only user drags move the sheet; ignore momentum/fling so a leftover list
+                    // fling can't re-expand or dismiss the sheet during/after a back commit.
+                    if (source != NestedScrollSource.UserInput) return Offset.Zero
                     val delta = available.y
                     // Dragging up first expands the sheet until it reaches the top anchor.
                     if (delta < 0f && offsetY > expandedOffset) {
@@ -1881,6 +1882,7 @@ private fun PlayerQueueSheet(
                 }
 
                 override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    if (source != NestedScrollSource.UserInput) return Offset.Zero
                     val delta = available.y
                     // Dragging down once the list is at the top collapses the sheet.
                     if (delta > 0f) {
