@@ -119,13 +119,12 @@ fun ServerConfigRoute(
         uiState = uiState,
         snackbarHostState = snackbarHostState,
         // Explicit back affordance (arrow). Plays the in-app reverse-of-open close animation via
-        // dismiss() (not the predictive gesture commit). Gated exactly like the predictive-back
-        // handler: hidden during the forced first-run setup, and while the editor is open so the
-        // editor consumes back first.
-        onClose = if (onCloseManager != null && uiState.editor == null) {
-            managerBackMotion::dismiss
-        } else {
-            null
+        // dismiss() (not the predictive gesture commit). The arrow's visibility is stable whenever
+        // the manager is closeable (hidden only during the forced first-run setup) so opening the
+        // editor doesn't reflow the page; the action itself is gated to editor == null so the
+        // editor consumes back first, matching the predictive-back handler.
+        onClose = onCloseManager?.let {
+            { if (uiState.editor == null) managerBackMotion.dismiss() }
         },
         modifier = modifier.then(managerBackMotion.modifier),
         onAddServer = viewModel::startAddingServer,
