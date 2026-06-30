@@ -69,6 +69,21 @@ class DefaultLibraryCacheRepository @Inject constructor(
         val derivedAlbumIdsByArtistId = dao.getArtistAlbumRefsFromSongs(serverId)
             .groupBy({ it.artistId }, { it.albumId })
             .mapValues { (_, albumIds) -> albumIds.toSet() }
+        val claimedArtistIds = songArtistSummaries.map { it.artistId }.toSet()
+        // A server-index artist that no track credits, yet that still claims albums, is a
+        // server-side composite/variant "album artist" (e.g. "A/B", or a spelling variant like
+        // "安田 レイ" vs "安田レイ"). Its albums stay reachable through the artists the tracks
+        // actually credit (see the relationship-based album derivation above), so hiding it only
+        // removes the duplicate. Relationship-only: no name parsing, so it is agnostic to whatever
+        // separators the server is configured with. Decided purely from list-level data so the
+        // result is identical before and after opening the artist. Disabled when there are no song
+        // relationships at all, since composites are then indistinguishable from real artists.
+        val isMergedArtist: (String, Int?) -> Boolean = { artistId, albumCount ->
+            hideMergedArtists &&
+                claimedArtistIds.isNotEmpty() &&
+                artistId !in claimedArtistIds &&
+                (albumCount ?: 0) > 0
+        }
         val artists = mergeArtistSummaries(
             serverArtists = entities.map { it.toDomain() },
             songArtists = songArtistSummaries.map { it.toDomain() },
@@ -77,27 +92,14 @@ class DefaultLibraryCacheRepository @Inject constructor(
                 albums = detailAlbumsByArtistId[artist.id].orEmpty(),
                 derivedAlbumIds = derivedAlbumIdsByArtistId[artist.id].orEmpty(),
             )
-        }.let { merged ->
-            if (!hideMergedArtists) return@let merged
-            val claimedArtistIds = songArtistSummaries.map { it.artistId }.toSet()
-            // Without any song relationships we cannot distinguish composites from real artists,
-            // so never hide anything in that case.
-            if (claimedArtistIds.isEmpty()) return@let merged
-            // A server-index artist that no track credits, yet that still claims albums, is a
-            // server-side composite/variant "album artist" (e.g. "A/B", or a spelling variant
-            // like "安田 レイ" vs "安田レイ"). Its albums stay reachable through the artists the
-            // tracks actually credit (see the relationship-based album derivation above), so
-            // hiding it here only removes the duplicate. Relationship-only: no name parsing, so
-            // it is agnostic to whatever separators the server is configured with. Decided purely
-            // from list-level data so the result is identical before and after opening the artist.
-            merged.filterNot { artist ->
-                artist.id !in claimedArtistIds && (artist.albumCount ?: 0) > 0
-            }
-        }
+        }.filterNot { artist -> isMergedArtist(artist.id, artist.albumCount) }
+        // Apply the same predicate to the shortcuts row so hidden artists can't reappear there.
+        val shortcuts = shortcutEntities.map { it.toDomain() }
+            .filterNot { artist -> isMergedArtist(artist.id, artist.albumCount) }
         LibraryIndexes(
             lastModified = null,
             ignoredArticles = null,
-            shortcuts = shortcutEntities.map { it.toDomain() },
+            shortcuts = shortcuts,
             sections = listOf(ArtistSection(name = "#", artists = artists)),
         )
     }
