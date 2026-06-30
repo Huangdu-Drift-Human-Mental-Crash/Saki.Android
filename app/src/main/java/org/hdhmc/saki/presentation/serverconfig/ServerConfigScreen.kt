@@ -35,6 +35,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,7 +57,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -72,8 +77,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.presentation.asString
-import org.hdhmc.saki.presentation.predictiveBackMotion
+import org.hdhmc.saki.presentation.rememberPredictiveBackMotion
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
+import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiTheme
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
@@ -102,15 +108,25 @@ fun ServerConfigRoute(
     // Editor sub-panel is a transient surface: plain back dismisses it (keeps its slide-out).
     BackHandler(enabled = uiState.editor != null) { viewModel.dismissEditor() }
 
+    // Manager is a page surface: predictive back reveals Browse beneath. Stays inert during
+    // forced first-run setup (no onCloseManager) so the setup can't be swiped away.
+    val managerBackMotion = rememberPredictiveBackMotion(
+        enabled = onCloseManager != null && uiState.editor == null,
+        onBack = { onCloseManager?.invoke() },
+    )
+
     ServerConfigScreen(
         uiState = uiState,
         snackbarHostState = snackbarHostState,
-        // Manager is a page surface: predictive back reveals Browse beneath. Stays inert during
-        // forced first-run setup (no onCloseManager) so the setup can't be swiped away.
-        modifier = modifier.predictiveBackMotion(
-            enabled = onCloseManager != null && uiState.editor == null,
-            onBack = { onCloseManager?.invoke() },
-        ),
+        // Explicit back affordance (arrow). Plays the in-app reverse-of-open close animation via
+        // dismiss() (not the predictive gesture commit). The arrow's visibility is stable whenever
+        // the manager is closeable (hidden only during the forced first-run setup) so opening the
+        // editor doesn't reflow the page; the action itself is gated to editor == null so the
+        // editor consumes back first, matching the predictive-back handler.
+        onClose = onCloseManager?.let {
+            { if (uiState.editor == null) managerBackMotion.dismiss() }
+        },
+        modifier = modifier.then(managerBackMotion.modifier),
         onAddServer = viewModel::startAddingServer,
         onEditServer = viewModel::editServer,
         onDeleteServer = viewModel::deleteServer,
@@ -133,6 +149,7 @@ fun ServerConfigRoute(
 fun ServerConfigScreen(
     uiState: ServerConfigUiState,
     snackbarHostState: SnackbarHostState,
+    onClose: (() -> Unit)? = null,
     onAddServer: () -> Unit,
     onEditServer: (Long) -> Unit,
     onDeleteServer: (Long) -> Unit,
@@ -184,10 +201,19 @@ fun ServerConfigScreen(
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 item {
-                    HeroSection(
-                        serverCount = uiState.servers.size,
+                    Column(
                         modifier = Modifier.statusBarsPadding(),
-                    )
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        if (onClose != null) {
+                            SakiChromeIconButton(
+                                onClick = onClose,
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = stringResource(R.string.library_back),
+                            )
+                        }
+                        HeroSection(serverCount = uiState.servers.size)
+                    }
                 }
 
                 if (uiState.servers.isEmpty()) {
@@ -207,6 +233,11 @@ fun ServerConfigScreen(
                     }
                 }
             }
+
+            // Keep the last editor while it animates out: AnimatedVisibility plays its exit only
+            // if there is still content to draw, but uiState.editor is already null by then.
+            var lastEditor by remember { mutableStateOf<ServerEditorState?>(null) }
+            LaunchedEffect(uiState.editor) { uiState.editor?.let { lastEditor = it } }
 
             AnimatedVisibility(
                 visible = uiState.editor != null,
@@ -235,7 +266,7 @@ fun ServerConfigScreen(
                     targetOffsetY = { fullHeight -> fullHeight / 2 },
                 ),
             ) {
-                uiState.editor?.let { editor ->
+                (uiState.editor ?: lastEditor)?.let { editor ->
                     Box(
                         modifier = Modifier.fillMaxSize(),
                     ) {
@@ -553,9 +584,11 @@ private fun ServerEditorSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    TextButton(onClick = onDismissEditor, shape = MaterialTheme.shapes.small) {
-                        Text(stringResource(R.string.server_config_close))
-                    }
+                    SakiChromeIconButton(
+                        onClick = onDismissEditor,
+                        icon = Icons.Rounded.Close,
+                        contentDescription = stringResource(R.string.server_config_close),
+                    )
                 }
 
                 editor.formError?.let { error ->
