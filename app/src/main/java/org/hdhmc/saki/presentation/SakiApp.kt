@@ -300,6 +300,7 @@ private fun SettingsRoute(
         onUpdateImageCacheSizeMb = viewModel::updateImageCacheSizeMb,
         onClearImageCache = viewModel::clearImageCache,
         onUpdateSongMetadata = viewModel::updateAllSongMetadata,
+        onUpdateHideMergedArtists = viewModel::updateHideMergedArtists,
         onUpdateTextScale = viewModel::updateTextScale,
         onUpdateLanguage = viewModel::updateLanguage,
         onUpdateThemeMode = viewModel::updateThemeMode,

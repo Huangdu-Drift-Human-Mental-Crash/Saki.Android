@@ -58,7 +58,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
     private val artistRefsAdapter: JsonAdapter<List<CachedArtistRefJsonDto>> =
         moshi.adapter(Types.newParameterizedType(List::class.java, CachedArtistRefJsonDto::class.java))
 
-    override suspend fun getArtists(serverId: Long): LibraryIndexes? = withContext(ioDispatcher) {
+    override suspend fun getArtists(serverId: Long, hideMergedArtists: Boolean): LibraryIndexes? = withContext(ioDispatcher) {
         val entities = dao.getArtists(serverId)
         val shortcutEntities = dao.getArtistShortcuts(serverId)
         val songArtistSummaries = dao.getSongArtistSummaries(serverId)
@@ -66,16 +66,40 @@ class DefaultLibraryCacheRepository @Inject constructor(
         val detailAlbumsByArtistId = dao.getAllArtistDetailAlbums(serverId)
             .groupBy { it.artistId }
             .mapValues { (_, albums) -> albums.map { it.toDomain() } }
+        val derivedAlbumIdsByArtistId = dao.getArtistAlbumRefsFromSongs(serverId)
+            .groupBy({ it.artistId }, { it.albumId })
+            .mapValues { (_, albumIds) -> albumIds.toSet() }
+        val claimedArtistIds = songArtistSummaries.map { it.artistId }.toSet()
+        // A server-index artist that no track credits, yet that still claims albums, is a
+        // server-side composite/variant "album artist" (e.g. "A/B", or a spelling variant like
+        // "安田 レイ" vs "安田レイ"). Its albums stay reachable through the artists the tracks
+        // actually credit (see the relationship-based album derivation above), so hiding it only
+        // removes the duplicate. Relationship-only: no name parsing, so it is agnostic to whatever
+        // separators the server is configured with. Decided purely from list-level data so the
+        // result is identical before and after opening the artist. Disabled when there are no song
+        // relationships at all, since composites are then indistinguishable from real artists.
+        val isMergedArtist: (String, Int?) -> Boolean = { artistId, albumCount ->
+            hideMergedArtists &&
+                claimedArtistIds.isNotEmpty() &&
+                artistId !in claimedArtistIds &&
+                (albumCount ?: 0) > 0
+        }
         val artists = mergeArtistSummaries(
             serverArtists = entities.map { it.toDomain() },
             songArtists = songArtistSummaries.map { it.toDomain() },
         ).map { artist ->
-            artist.withDetailAlbumCount(detailAlbumsByArtistId[artist.id].orEmpty())
-        }
+            artist.withDetailAlbumCount(
+                albums = detailAlbumsByArtistId[artist.id].orEmpty(),
+                derivedAlbumIds = derivedAlbumIdsByArtistId[artist.id].orEmpty(),
+            )
+        }.filterNot { artist -> isMergedArtist(artist.id, artist.albumCount) }
+        // Apply the same predicate to the shortcuts row so hidden artists can't reappear there.
+        val shortcuts = shortcutEntities.map { it.toDomain() }
+            .filterNot { artist -> isMergedArtist(artist.id, artist.albumCount) }
         LibraryIndexes(
             lastModified = null,
             ignoredArticles = null,
-            shortcuts = shortcutEntities.map { it.toDomain() },
+            shortcuts = shortcuts,
             sections = listOf(ArtistSection(name = "#", artists = artists)),
         )
     }
@@ -284,9 +308,16 @@ class DefaultLibraryCacheRepository @Inject constructor(
             val topSongRefs = dao.getArtistDetailSongs(serverId, artistId)
             val topSongs = resolveSongs(serverId, topSongRefs.map { it.songId })
             val relationshipSongs = resolveSongsByArtistId(serverId, artistId)
+            // Albums attributed to this artist via the server's artist detail (rawAlbums) are
+            // unioned with albums derived from the artist's related songs. This surfaces albums
+            // the server credits to a combined/composite artist while crediting tracks to the
+            // split artists — without parsing any names.
+            val cachedAlbumsByArtist = dao.getAlbumSummariesByArtistId(serverId, artistId).map { it.toDomain() }
+            val derivedAlbums = inferAlbumSummariesFromSongs(relationshipSongs)
+            val allAlbums = (rawAlbums + cachedAlbumsByArtist + derivedAlbums).distinctBy(AlbumSummary::id)
             val songArtistSummary = dao.getSongArtistSummaries(serverId)
                 .firstOrNull { it.artistId == artistId }
-            val artist = detail.toDomain(rawAlbums).let { cachedArtist ->
+            val artist = detail.toDomain(allAlbums).let { cachedArtist ->
                 songArtistSummary?.let { summary ->
                     cachedArtist.copy(
                         name = summary.name,
@@ -295,7 +326,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
                     )
                 } ?: cachedArtist
             }.withVisibleDetailAlbums()
-            val albumsById = rawAlbums.associateBy(AlbumSummary::id)
+            val albumsById = allAlbums.associateBy(AlbumSummary::id)
             val filteredTopSongs = topSongs.filter { song ->
                 val album = song.albumId?.let(albumsById::get)
                 if (album != null) {
@@ -432,17 +463,30 @@ class DefaultLibraryCacheRepository @Inject constructor(
             .sortedBy { it.name.lowercase() }
     }
 
-    private fun ArtistSummary.withDetailAlbumCount(albums: List<AlbumSummary>): ArtistSummary {
-        if (albums.isEmpty()) return this
-        val visibleAlbumCount = Artist(
+    private fun ArtistSummary.withDetailAlbumCount(
+        albums: List<AlbumSummary>,
+        derivedAlbumIds: Set<String>,
+    ): ArtistSummary {
+        val artistWithDetailAlbums = Artist(
             id = id,
             name = name,
             coverArtId = coverArtId,
             artistImageUrl = artistImageUrl,
             albumCount = albumCount,
             albums = albums,
-        ).visibleDetailAlbums().size
-        return copy(albumCount = visibleAlbumCount)
+        )
+        val allDetailAlbumIds = albums.map(AlbumSummary::id).toSet()
+        val visibleDetailAlbumIds = if (albums.isEmpty()) {
+            emptySet()
+        } else {
+            artistWithDetailAlbums.visibleDetailAlbums().map(AlbumSummary::id).toSet()
+        }
+        // Mirror what the detail page shows: visible detail albums, plus relationship-derived
+        // albums that are entirely absent from the detail set. Derived ids are NOT allowed to
+        // re-introduce albums the detail already filtered out (e.g. "unknown album" placeholders),
+        // which is what previously made the list count exceed the detail count.
+        val knownAlbumIds = visibleDetailAlbumIds + (derivedAlbumIds - allDetailAlbumIds)
+        return if (knownAlbumIds.isNotEmpty()) copy(albumCount = knownAlbumIds.size) else this
     }
 
     private fun CachedAlbumEntity.toDomain() = AlbumSummary(

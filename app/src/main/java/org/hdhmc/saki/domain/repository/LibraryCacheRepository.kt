@@ -12,7 +12,7 @@ import org.hdhmc.saki.domain.model.Song
 
 interface LibraryCacheRepository {
     suspend fun clearServer(serverId: Long)
-    suspend fun getArtists(serverId: Long): LibraryIndexes?
+    suspend fun getArtists(serverId: Long, hideMergedArtists: Boolean = false): LibraryIndexes?
     suspend fun saveArtists(serverId: Long, indexes: LibraryIndexes)
     suspend fun getAlbums(serverId: Long, type: AlbumListType): List<AlbumSummary>
     suspend fun saveAlbums(serverId: Long, type: AlbumListType, albums: List<AlbumSummary>)

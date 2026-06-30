@@ -33,6 +33,8 @@
     <string name="settings_song_metadata_body_server">更新 %1$s 的歌曲缓存索引。</string>
     <string name="settings_update_song_metadata">更新全部元数据</string>
     <string name="settings_song_metadata_syncing">正在更新元数据…已索引 %1$d 首歌曲</string>
+    <string name="settings_hide_merged_artists">尝试隐藏合并艺术家</string>
+    <string name="settings_hide_merged_artists_body">隐藏其曲目已归属到各独立艺术家的合并“专辑艺术家”(如“A/B”)。建议先执行“更新全部元数据”以获得最佳效果。</string>
     <string name="settings_cover_art_cache_title">封面缓存</string>
     <string name="settings_cover_art_cache_body">所有服务器的专辑封面缓存。</string>
     <string name="settings_clear_cover_art_cache">清除封面缓存</string>

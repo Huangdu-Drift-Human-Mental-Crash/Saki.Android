@@ -51,6 +51,7 @@ data class AppPreferences(
     val defaultBrowseTab: DefaultBrowseTab = DefaultBrowseTab.ARTISTS,
     val defaultAlbumFeed: AlbumListType = AlbumListType.NEWEST,
     val songsPageSize: Int = DEFAULT_SONGS_PAGE_SIZE,
+    val hideMergedArtists: Boolean = false,
     val lastSelectedServerId: Long? = null,
     val recentSearchQueries: List<String> = emptyList(),
 )
