@@ -109,3 +109,36 @@ fun Modifier.predictiveBackMotion(
         clip = true
     }
 }
+
+/**
+ * Enter motion for a hierarchical child **page/route** (e.g. a Browse detail pushed onto the
+ * stack). Open is a discrete action, not a gesture, so this is NOT the inverse of the back
+ * preview — it is a crisp, confident forward "cover": the incoming page rises a short distance
+ * and fades in over its parent, then settles. Pairs coherently with the shrink-away back without
+ * trying to rewind it.
+ *
+ * The animation runs once per composition; wrap the page in a `key(route)` (as Browse does) so a
+ * freshly pushed route re-triggers it. Independent of the back gesture's progress.
+ */
+@Composable
+fun Modifier.pageEnterMotion(
+    initialOffsetFraction: Float = 0.06f,
+): Modifier {
+    // 1f = just entered (shifted down + transparent), 0f = settled at rest.
+    val progress = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(
+            targetValue = 0f,
+            animationSpec = spring(dampingRatio = 1f, stiffness = 500f),
+        )
+    }
+    val displayProgress = progress.value
+    val interpolated = if (displayProgress <= 0f) 0f
+    else PredictiveBackInterpolator.getInterpolation(displayProgress.coerceIn(0f, 1f))
+
+    return if (interpolated <= 0f) this
+    else this.graphicsLayer {
+        alpha = 1f - interpolated
+        translationY = interpolated * size.height * initialOffsetFraction
+    }
+}

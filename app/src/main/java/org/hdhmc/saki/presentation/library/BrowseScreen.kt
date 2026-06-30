@@ -122,6 +122,7 @@ import org.hdhmc.saki.presentation.BrowseSection
 import org.hdhmc.saki.presentation.AlbumFeedState
 import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.presentation.bottomContentPadding
+import org.hdhmc.saki.presentation.pageEnterMotion
 import org.hdhmc.saki.presentation.predictiveBackMotion
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.presentation.SakiBrowseAvailabilityUiState
@@ -354,6 +355,7 @@ fun BrowseScreen(
                             route is BrowseNavRoute.Root -> Modifier.fillMaxSize()
                             else -> Modifier
                                 .fillMaxSize()
+                                .pageEnterMotion()
                                 .predictiveBackMotion(
                                     enabled = backHandlersEnabled,
                                     onBack = onPopDetail,
@@ -884,6 +886,7 @@ private fun BrowsePager(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .pageEnterMotion()
                     .predictiveBackMotion(
                         enabled = backHandlersEnabled,
                         onBack = { onSetSearchActive(false) },

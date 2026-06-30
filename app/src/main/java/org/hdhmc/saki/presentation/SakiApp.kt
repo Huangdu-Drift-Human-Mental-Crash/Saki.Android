@@ -1,11 +1,6 @@
 package org.hdhmc.saki.presentation
 
 import android.content.Intent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -135,7 +130,7 @@ fun SakiApp(
             if (showServerManager) {
                 CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
                     ServerConfigRoute(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().pageEnterMotion(),
                         onCloseManager = { showServerManager = false },
                     )
                 }
@@ -183,12 +178,8 @@ private fun RootShell(
                     onOpenSettings = { onShowSettingsChange(true) },
                 )
 
-                AnimatedVisibility(
-                    visible = showSettings,
-                    enter = fadeIn(spring(stiffness = Spring.StiffnessMediumLow)),
-                    exit = fadeOut(spring(stiffness = Spring.StiffnessMediumLow)),
-                ) {
-                    Box(modifier = Modifier.fillMaxSize().then(settingsBackModifier)) {
+                if (showSettings) {
+                    Box(modifier = Modifier.fillMaxSize().pageEnterMotion().then(settingsBackModifier)) {
                         SettingsRoute(
                             viewModel = viewModel,
                             contentPadding = PaddingValues(),
