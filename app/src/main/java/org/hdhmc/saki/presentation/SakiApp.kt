@@ -156,7 +156,7 @@ private fun RootShell(
     var capsuleHeightPx by remember { mutableIntStateOf(defaultCapsuleHeightPx) }
     val capsuleOverlayPadding = with(density) { capsuleHeightPx.toDp() }
 
-    val settingsBackModifier = Modifier.predictiveBackMotion(
+    val settingsBackMotion = rememberPredictiveBackMotion(
         enabled = showSettings && !showNowPlaying,
         onBack = { onShowSettingsChange(false) },
         targetAlpha = 0.35f,
@@ -179,12 +179,12 @@ private fun RootShell(
                 )
 
                 if (showSettings) {
-                    Box(modifier = Modifier.fillMaxSize().pageEnterMotion().then(settingsBackModifier)) {
+                    Box(modifier = Modifier.fillMaxSize().pageEnterMotion().then(settingsBackMotion.modifier)) {
                         SettingsRoute(
                             viewModel = viewModel,
                             contentPadding = PaddingValues(),
                             bottomOverlayPadding = capsuleOverlayPadding,
-                            onClose = { onShowSettingsChange(false) },
+                            onClose = { settingsBackMotion.dismiss() },
                             onManageServers = onManageServers,
                         )
                     }
