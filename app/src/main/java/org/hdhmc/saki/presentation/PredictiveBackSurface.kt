@@ -81,6 +81,13 @@ fun Modifier.predictiveBackMotion(
  * button animates identically to the gesture (and to the system back button, which
  * [PredictiveBackHandler] already animates).
  */
+/**
+ * Holds the motion state for a page/route surface and exposes both the [modifier] that renders it
+ * and a programmatic [dismiss]. The predictive gesture — and the system back button, which
+ * [PredictiveBackHandler] drives — animate the follow-the-finger preview + commit. An in-app
+ * back/close button should instead go through [dismiss], which plays a quick reverse-of-open
+ * (slide down + fade out) before invoking `onBack`.
+ */
 @Stable
 class PredictiveBackMotionState internal constructor(
     private val scope: CoroutineScope,
@@ -98,18 +105,26 @@ class PredictiveBackMotionState internal constructor(
 ) {
     internal var swipeEdge by mutableIntStateOf(BackEventCompat.EDGE_LEFT)
     internal var touchY by mutableFloatStateOf(0f)
+    private var isDismissing = false
 
     /**
      * Programmatic close for an in-app back/close button. This is NOT the predictive follow-finger
      * commit — a tap has no gesture to track. Instead it plays a quick reverse-of-open (slide down
-     * + fade out), then invokes onBack.
+     * + fade out), then invokes onBack. Ignores re-entrant calls so a double-tap can't invoke
+     * onBack more than once.
      */
     fun dismiss() {
+        if (isDismissing) return
+        isDismissing = true
         scope.launch {
-            if (dismissProgress.value < 1f) {
-                dismissProgress.animateTo(1f, animationSpec = spring(dampingRatio = 1f, stiffness = 900f))
+            try {
+                if (dismissProgress.value < 1f) {
+                    dismissProgress.animateTo(1f, animationSpec = spring(dampingRatio = 1f, stiffness = 900f))
+                }
+                onBack()
+            } finally {
+                isDismissing = false
             }
-            onBack()
         }
     }
 
