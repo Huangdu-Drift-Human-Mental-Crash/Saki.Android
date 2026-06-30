@@ -2,6 +2,7 @@ package org.hdhmc.saki.data.repository
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -87,6 +88,10 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         dataStore.edit { it[KEY_SONGS_PAGE_SIZE] = pageSize.normalizeSongsPageSize() }
     }
 
+    override suspend fun updateHideMergedArtists(enabled: Boolean) {
+        dataStore.edit { it[KEY_HIDE_MERGED_ARTISTS] = enabled }
+    }
+
     override suspend fun updateLastSelectedServerId(serverId: Long?) {
         dataStore.edit {
             if (serverId == null) {
@@ -143,6 +148,7 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val KEY_DEFAULT_BROWSE_TAB = stringPreferencesKey("default_browse_tab")
         val KEY_DEFAULT_ALBUM_FEED = stringPreferencesKey("default_album_feed")
         val KEY_SONGS_PAGE_SIZE = intPreferencesKey("songs_page_size")
+        val KEY_HIDE_MERGED_ARTISTS = booleanPreferencesKey("hide_merged_artists")
         val KEY_LAST_SELECTED_SERVER_ID = longPreferencesKey("last_selected_server_id")
         val KEY_RECENT_SEARCH_QUERIES = stringPreferencesKey("recent_search_queries")
     }
@@ -162,6 +168,7 @@ private fun Preferences.toAppPreferences() = AppPreferences(
     )?.takeIf { it in AlbumListType.defaultBrowseFeeds } ?: AlbumListType.NEWEST,
     songsPageSize = (this[DataStoreAppPreferencesRepository.KEY_SONGS_PAGE_SIZE] ?: DEFAULT_SONGS_PAGE_SIZE)
         .normalizeSongsPageSize(),
+    hideMergedArtists = this[DataStoreAppPreferencesRepository.KEY_HIDE_MERGED_ARTISTS] ?: false,
     lastSelectedServerId = this[DataStoreAppPreferencesRepository.KEY_LAST_SELECTED_SERVER_ID],
     recentSearchQueries = this[DataStoreAppPreferencesRepository.KEY_RECENT_SEARCH_QUERIES]
         .decodeRecentSearchQueries(),

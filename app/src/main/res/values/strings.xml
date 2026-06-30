@@ -35,6 +35,8 @@
     <string name="settings_song_metadata_body_server">Update the cached song index for %1$s.</string>
     <string name="settings_update_song_metadata">Update all metadata</string>
     <string name="settings_song_metadata_syncing">Updating metadata… %1$d songs indexed</string>
+    <string name="settings_hide_merged_artists">Try to hide merged artists</string>
+    <string name="settings_hide_merged_artists_body">Hide composite \"album artists\" (e.g. \"A/B\") whose tracks are already credited to the individual artists. Run \"Update all metadata\" first for the best result.</string>
     <string name="settings_cover_art_cache_title">Cover art cache</string>
     <string name="settings_cover_art_cache_body">Album artwork cached across all servers.</string>
     <string name="settings_clear_cover_art_cache">Clear cover art cache</string>

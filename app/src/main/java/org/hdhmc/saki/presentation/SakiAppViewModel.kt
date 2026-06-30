@@ -482,6 +482,21 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
+    fun updateHideMergedArtists(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferencesRepository.updateHideMergedArtists(enabled)
+            val serverId = uiState.value.selectedServerId ?: return@launch
+            val artists = runCatching {
+                libraryCacheRepository.getArtists(serverId, hideMergedArtists = enabled)
+            }.getOrNull()
+            if (artists != null && uiState.value.selectedServerId == serverId) {
+                mutableUiState.update {
+                    it.copy(libraryIndexes = artists.regroupByLocale(currentIndexingLocale()))
+                }
+            }
+        }
+    }
+
     fun openArtistFromPlayback(
         serverId: Long?,
         artistId: String?,
@@ -1835,7 +1850,7 @@ class SakiAppViewModel @Inject constructor(
                 null
             }
 
-            val artists = loadCachedOrNull { libraryCacheRepository.getArtists(serverId) }
+            val artists = loadCachedOrNull { libraryCacheRepository.getArtists(serverId, hideMergedArtists = uiState.value.appPreferences.hideMergedArtists) }
             if (artists != null && uiState.value.selectedServerId == serverId) {
                 mutableUiState.update { it.copy(libraryIndexes = artists.regroupByLocale(currentIndexingLocale())) }
             }
@@ -1915,7 +1930,7 @@ class SakiAppViewModel @Inject constructor(
             mutableUiState.update { it.copy(isArtistsLoading = true, artistsError = null) }
 
             if (!forceRefresh) {
-                val cached = runCatching { libraryCacheRepository.getArtists(serverId) }.getOrNull()
+                val cached = runCatching { libraryCacheRepository.getArtists(serverId, hideMergedArtists = uiState.value.appPreferences.hideMergedArtists) }.getOrNull()
                 if (cached != null && uiState.value.selectedServerId == serverId) {
                     mutableUiState.update { it.copy(libraryIndexes = cached.regroupByLocale(currentIndexingLocale())) }
                 }
@@ -1927,7 +1942,7 @@ class SakiAppViewModel @Inject constructor(
                 runCatching { libraryCacheRepository.saveArtists(serverId, indexes) }
                     .onFailure { Log.w("SakiApp", "Failed to cache artists", it) }
                 val mergedIndexes = runCatching {
-                    libraryCacheRepository.getArtists(serverId)
+                    libraryCacheRepository.getArtists(serverId, hideMergedArtists = uiState.value.appPreferences.hideMergedArtists)
                 }.getOrNull() ?: indexes
                 if (uiState.value.selectedServerId == serverId) {
                     mutableUiState.update {
@@ -2382,7 +2397,7 @@ class SakiAppViewModel @Inject constructor(
     }
 
     private suspend fun refreshCachedArtistIndex(serverId: Long) {
-        val artists = runCatching { libraryCacheRepository.getArtists(serverId) }.getOrNull() ?: return
+        val artists = runCatching { libraryCacheRepository.getArtists(serverId, hideMergedArtists = uiState.value.appPreferences.hideMergedArtists) }.getOrNull() ?: return
         if (uiState.value.selectedServerId == serverId) {
             mutableUiState.update {
                 it.copy(libraryIndexes = artists.regroupByLocale(currentIndexingLocale()))

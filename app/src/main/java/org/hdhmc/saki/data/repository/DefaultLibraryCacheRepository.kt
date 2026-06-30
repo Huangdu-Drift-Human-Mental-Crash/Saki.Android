@@ -58,7 +58,7 @@ class DefaultLibraryCacheRepository @Inject constructor(
     private val artistRefsAdapter: JsonAdapter<List<CachedArtistRefJsonDto>> =
         moshi.adapter(Types.newParameterizedType(List::class.java, CachedArtistRefJsonDto::class.java))
 
-    override suspend fun getArtists(serverId: Long): LibraryIndexes? = withContext(ioDispatcher) {
+    override suspend fun getArtists(serverId: Long, hideMergedArtists: Boolean): LibraryIndexes? = withContext(ioDispatcher) {
         val entities = dao.getArtists(serverId)
         val shortcutEntities = dao.getArtistShortcuts(serverId)
         val songArtistSummaries = dao.getSongArtistSummaries(serverId)
@@ -77,6 +77,22 @@ class DefaultLibraryCacheRepository @Inject constructor(
                 albums = detailAlbumsByArtistId[artist.id].orEmpty(),
                 derivedAlbumIds = derivedAlbumIdsByArtistId[artist.id].orEmpty(),
             )
+        }.let { merged ->
+            if (!hideMergedArtists) return@let merged
+            val claimedArtistIds = songArtistSummaries.map { it.artistId }.toSet()
+            // Without any song relationships we cannot distinguish composites from real artists,
+            // so never hide anything in that case.
+            if (claimedArtistIds.isEmpty()) return@let merged
+            // A server-index artist that no track credits, yet that still claims albums, is a
+            // server-side composite/variant "album artist" (e.g. "A/B", or a spelling variant
+            // like "安田 レイ" vs "安田レイ"). Its albums stay reachable through the artists the
+            // tracks actually credit (see the relationship-based album derivation above), so
+            // hiding it here only removes the duplicate. Relationship-only: no name parsing, so
+            // it is agnostic to whatever separators the server is configured with. Decided purely
+            // from list-level data so the result is identical before and after opening the artist.
+            merged.filterNot { artist ->
+                artist.id !in claimedArtistIds && (artist.albumCount ?: 0) > 0
+            }
         }
         LibraryIndexes(
             lastModified = null,
@@ -449,23 +465,26 @@ class DefaultLibraryCacheRepository @Inject constructor(
         albums: List<AlbumSummary>,
         derivedAlbumIds: Set<String>,
     ): ArtistSummary {
+        val artistWithDetailAlbums = Artist(
+            id = id,
+            name = name,
+            coverArtId = coverArtId,
+            artistImageUrl = artistImageUrl,
+            albumCount = albumCount,
+            albums = albums,
+        )
+        val allDetailAlbumIds = albums.map(AlbumSummary::id).toSet()
         val visibleDetailAlbumIds = if (albums.isEmpty()) {
             emptySet()
         } else {
-            Artist(
-                id = id,
-                name = name,
-                coverArtId = coverArtId,
-                artistImageUrl = artistImageUrl,
-                albumCount = albumCount,
-                albums = albums,
-            ).visibleDetailAlbums().map(AlbumSummary::id).toSet()
+            artistWithDetailAlbums.visibleDetailAlbums().map(AlbumSummary::id).toSet()
         }
-        val derivedCount = (visibleDetailAlbumIds + derivedAlbumIds).size
-        // Never downgrade a server-provided count (it can exceed what's locally cached); only
-        // raise it when the relationship-derived associations reveal more albums.
-        val merged = maxOf(albumCount ?: 0, derivedCount)
-        return if (merged > 0) copy(albumCount = merged) else this
+        // Mirror what the detail page shows: visible detail albums, plus relationship-derived
+        // albums that are entirely absent from the detail set. Derived ids are NOT allowed to
+        // re-introduce albums the detail already filtered out (e.g. "unknown album" placeholders),
+        // which is what previously made the list count exceed the detail count.
+        val knownAlbumIds = visibleDetailAlbumIds + (derivedAlbumIds - allDetailAlbumIds)
+        return if (knownAlbumIds.isNotEmpty()) copy(albumCount = knownAlbumIds.size) else this
     }
 
     private fun CachedAlbumEntity.toDomain() = AlbumSummary(

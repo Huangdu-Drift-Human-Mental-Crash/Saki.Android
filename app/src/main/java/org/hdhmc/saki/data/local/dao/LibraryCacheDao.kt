@@ -126,6 +126,10 @@ interface LibraryCacheDao {
         JOIN cached_song_metadata AS song
             ON song.serverId = artist.serverId AND song.songId = artist.songId
         WHERE artist.serverId = :serverId AND song.albumId IS NOT NULL
+            AND (
+                song.album IS NULL
+                OR LOWER(TRIM(REPLACE(REPLACE(song.album, '[', ''), ']', ''))) != 'unknown album'
+            )
         """,
     )
     suspend fun getArtistAlbumRefsFromSongs(serverId: Long): List<ArtistAlbumRef>

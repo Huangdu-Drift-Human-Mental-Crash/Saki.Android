@@ -123,6 +123,7 @@ fun SettingsScreen(
     onUpdateImageCacheSizeMb: (Int) -> Unit,
     onClearImageCache: () -> Unit,
     onUpdateSongMetadata: () -> Unit,
+    onUpdateHideMergedArtists: (Boolean) -> Unit,
     onUpdateTextScale: (TextScale) -> Unit,
     onUpdateLanguage: (AppLanguage) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
@@ -777,6 +778,27 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Rounded.Storage, contentDescription = null)
                     Text(stringResource(R.string.settings_update_song_metadata), modifier = Modifier.padding(start = 8.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            stringResource(R.string.settings_hide_merged_artists),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            stringResource(R.string.settings_hide_merged_artists_body),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = uiState.appPreferences.hideMergedArtists,
+                        onCheckedChange = onUpdateHideMergedArtists,
+                    )
                 }
             }
         }

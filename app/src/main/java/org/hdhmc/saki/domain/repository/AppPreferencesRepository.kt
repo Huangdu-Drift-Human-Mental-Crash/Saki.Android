@@ -36,6 +36,8 @@ interface AppPreferencesRepository {
 
     suspend fun updateSongsPageSize(pageSize: Int)
 
+    suspend fun updateHideMergedArtists(enabled: Boolean)
+
     suspend fun updateLastSelectedServerId(serverId: Long?)
 
     suspend fun addRecentSearchQuery(query: String)
