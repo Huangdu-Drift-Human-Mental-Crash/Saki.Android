@@ -75,13 +75,6 @@ fun Modifier.predictiveBackMotion(
 }
 
 /**
- * Holds the progress of a page/route's predictive-back motion and exposes both the [modifier] that
- * renders it and a programmatic [dismiss] that replays the same commit animation a completed back
- * gesture would, then invokes `onBack`. Route an in-app back/close button through [dismiss] so the
- * button animates identically to the gesture (and to the system back button, which
- * [PredictiveBackHandler] already animates).
- */
-/**
  * Holds the motion state for a page/route surface and exposes both the [modifier] that renders it
  * and a programmatic [dismiss]. The predictive gesture — and the system back button, which
  * [PredictiveBackHandler] drives — animate the follow-the-finger preview + commit. An in-app
