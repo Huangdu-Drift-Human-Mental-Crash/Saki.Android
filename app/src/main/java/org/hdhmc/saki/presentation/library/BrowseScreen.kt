@@ -122,7 +122,8 @@ import org.hdhmc.saki.presentation.BrowseSection
 import org.hdhmc.saki.presentation.AlbumFeedState
 import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.presentation.bottomContentPadding
-import org.hdhmc.saki.presentation.predictiveBackMotion
+import org.hdhmc.saki.presentation.pageEnterMotion
+import org.hdhmc.saki.presentation.rememberPredictiveBackMotion
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.presentation.SakiBrowseAvailabilityUiState
 import org.hdhmc.saki.presentation.SakiBrowsePlaybackUiState
@@ -224,7 +225,7 @@ fun BrowseScreen(
                 val below = stack.getOrNull(stack.size - 2)
 
                 @Composable
-                fun BrowsePage(route: BrowseNavRoute, pageModifier: Modifier) {
+                fun BrowsePage(route: BrowseNavRoute, pageModifier: Modifier, onBack: () -> Unit) {
                     Box(modifier = pageModifier) {
                         when (route) {
                             BrowseNavRoute.Root -> BrowsePager(
@@ -274,7 +275,7 @@ fun BrowseScreen(
                                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                                         onPlaySongs = offlineAwarePlaySongs,
                                         onShowActions = { actionSong = it },
-                                        onBack = onPopDetail,
+                                        onBack = onBack,
                                     )
                                 } else {
                                     BrowseDetailPlaceholder(
@@ -302,7 +303,7 @@ fun BrowseScreen(
                                         onOpenAlbum = onOpenAlbum,
                                         onPlaySongs = offlineAwarePlaySongs,
                                         onShowActions = { actionSong = it },
-                                        onBack = onPopDetail,
+                                        onBack = onBack,
                                     )
                                 } else {
                                     BrowseDetailPlaceholder(
@@ -328,7 +329,7 @@ fun BrowseScreen(
                                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                                         onPlaySongs = offlineAwarePlaySongs,
                                         onShowActions = { actionSong = it },
-                                        onBack = onPopDetail,
+                                        onBack = onBack,
                                     )
                                 } else {
                                     BrowseDetailPlaceholder(
@@ -346,21 +347,33 @@ fun BrowseScreen(
                 pages.forEachIndexed { index, route ->
                     val isTop = index == pages.lastIndex
                     key(route) {
-                        val pageModifier = when {
-                            !isTop && route !is BrowseNavRoute.Root -> Modifier
-                                .fillMaxSize()
-                                .background(background)
-                            !isTop -> Modifier.fillMaxSize()
-                            route is BrowseNavRoute.Root -> Modifier.fillMaxSize()
-                            else -> Modifier
-                                .fillMaxSize()
-                                .predictiveBackMotion(
-                                    enabled = backHandlersEnabled,
-                                    onBack = onPopDetail,
-                                )
-                                .background(background)
+                        if (isTop && route !is BrowseNavRoute.Root) {
+                            // Detail page: a shared back-motion state drives both the predictive
+                            // gesture and the in-app back button (via dismiss), so the button
+                            // animates the same commit instead of snapping away.
+                            val backMotion = rememberPredictiveBackMotion(
+                                enabled = backHandlersEnabled,
+                                onBack = onPopDetail,
+                            )
+                            BrowsePage(
+                                route = route,
+                                pageModifier = Modifier
+                                    .fillMaxSize()
+                                    .pageEnterMotion()
+                                    .then(backMotion.modifier)
+                                    .background(background),
+                                onBack = backMotion::dismiss,
+                            )
+                        } else {
+                            val pageModifier = when {
+                                !isTop && route !is BrowseNavRoute.Root -> Modifier
+                                    .fillMaxSize()
+                                    .background(background)
+                                !isTop -> Modifier.fillMaxSize()
+                                else -> Modifier.fillMaxSize()
+                            }
+                            BrowsePage(route = route, pageModifier = pageModifier, onBack = onPopDetail)
                         }
-                        BrowsePage(route, pageModifier)
                     }
                 }
             }
@@ -881,27 +894,31 @@ private fun BrowsePager(
         }
 
         if (uiState.isSearchActive) {
+            val searchBackMotion = rememberPredictiveBackMotion(
+                enabled = backHandlersEnabled,
+                onBack = { onSetSearchActive(false) },
+                maxScaleReduction = 0.02f,
+                maxHorizontalShiftFraction = 0.12f,
+                horizontalShiftInset = 0.dp,
+                maxVerticalShiftFraction = 0f,
+                verticalShiftInset = 0.dp,
+                maxCornerRadius = 18.dp,
+                targetAlpha = 0f,
+            )
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .predictiveBackMotion(
-                        enabled = backHandlersEnabled,
-                        onBack = { onSetSearchActive(false) },
-                        maxScaleReduction = 0.02f,
-                        maxHorizontalShiftFraction = 0.12f,
-                        horizontalShiftInset = 0.dp,
-                        maxVerticalShiftFraction = 0f,
-                        verticalShiftInset = 0.dp,
-                        maxCornerRadius = 18.dp,
-                        targetAlpha = 0f,
-                    )
+                    .pageEnterMotion()
+                    .then(searchBackMotion.modifier)
                     .background(background),
             ) {
                 BrowseHeroCard(
                     currentServer = currentServer,
                     isSearchActive = true,
                     searchQuery = uiState.searchQuery,
-                    onSearchActiveChange = onSetSearchActive,
+                    onSearchActiveChange = { active ->
+                        if (active) onSetSearchActive(true) else searchBackMotion.dismiss()
+                    },
                     onSearchQueryChange = onUpdateSearchQuery,
                     onOpenSettings = onOpenSettings,
                 )
