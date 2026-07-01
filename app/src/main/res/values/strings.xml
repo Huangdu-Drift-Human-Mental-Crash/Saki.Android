@@ -73,6 +73,7 @@
     <string name="settings_palette_style_vibrant">Vibrant</string>
     <string name="settings_palette_style_expressive">Expressive</string>
     <string name="settings_theme_seed_label">Theme color</string>
+    <string name="settings_theme_seed_system">System</string>
     <string name="settings_theme_seed_harbor_blue">Harbor blue</string>
     <string name="settings_theme_seed_sakura">Sakura</string>
     <string name="settings_theme_seed_wisteria">Wisteria</string>

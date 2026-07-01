@@ -72,6 +72,7 @@
     <string name="settings_palette_style_vibrant">鲜艳</string>
     <string name="settings_palette_style_expressive">张扬</string>
     <string name="settings_theme_seed_label">主题颜色</string>
+    <string name="settings_theme_seed_system">跟随系统</string>
     <string name="settings_theme_seed_harbor_blue">港湾蓝</string>
     <string name="settings_theme_seed_sakura">樱花粉</string>
     <string name="settings_theme_seed_wisteria">紫藤</string>

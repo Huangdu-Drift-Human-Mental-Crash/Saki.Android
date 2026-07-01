@@ -44,6 +44,7 @@ import org.hdhmc.saki.presentation.library.NowPlayingOverlay
 import org.hdhmc.saki.presentation.serverconfig.ServerConfigRoute
 import org.hdhmc.saki.presentation.settings.SettingsScreen
 import org.hdhmc.saki.ui.theme.seedColorForKey
+import org.hdhmc.saki.ui.theme.isSystemDynamicSeed
 import org.hdhmc.saki.ui.theme.SakiAndroidTheme
 
 @Composable
@@ -100,6 +101,7 @@ fun SakiApp(
         themeStyle = rootUiState.appPreferences.themeStyle,
         seedColor = seedColorForKey(rootUiState.appPreferences.themeSeedKey),
         paletteStyle = rootUiState.appPreferences.paletteStyle,
+        useSystemColor = isSystemDynamicSeed(rootUiState.appPreferences.themeSeedKey),
     ) {
         CompositionLocalProvider(LocalDensity provides appDensity) {
         Box(modifier = modifier.fillMaxSize()) {

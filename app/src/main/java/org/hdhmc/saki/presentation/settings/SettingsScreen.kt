@@ -1,5 +1,6 @@
 package org.hdhmc.saki.presentation.settings
 
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -7,9 +8,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,11 +26,13 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.rounded.TextFields
@@ -36,6 +40,7 @@ import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -44,12 +49,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -98,10 +104,13 @@ import org.hdhmc.saki.presentation.bottomContentPadding
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiThemePresets
+import org.hdhmc.saki.ui.theme.SYSTEM_DYNAMIC_THEME_SEED_KEY
+import org.hdhmc.saki.ui.theme.isSystemDynamicSeed
+import org.hdhmc.saki.ui.theme.systemDynamicSeedColor
+import org.hdhmc.saki.ui.theme.sakiExpressiveColorScheme
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSelectedContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
-import com.materialkolor.hct.Hct
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -164,6 +173,44 @@ fun SettingsScreen(
     var songsPageSizeSliderValue by remember(configuredSongsPageSize) {
         mutableFloatStateOf(configuredSongsPageSize.toFloat())
     }
+
+    // Precompute the theme-color swatch palette once, off the scroll path. Otherwise the theme
+    // LazyColumn item generates 8 full color schemes the instant it composes mid-scroll (a frame
+    // drop) and recomputes them every time it is recycled and scrolled back into view.
+    val swatchPreviewDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val swatchPaletteStyle = uiState.appPreferences.paletteStyle
+    val swatchThemeStyle = uiState.appPreferences.themeStyle
+    val swatchContext = LocalContext.current
+    val supportsSystemColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val themeSwatchColors: Map<String, ThemeSeedSwatchColors> =
+        remember(swatchPreviewDark, swatchPaletteStyle, swatchThemeStyle) {
+            if (swatchThemeStyle != ThemeStyle.MATERIAL_EXPRESSIVE) {
+                emptyMap()
+            } else {
+                buildMap {
+                    SakiThemePresets.forEach { preset ->
+                        put(
+                            preset.key,
+                            themeSeedSwatchColors(
+                                sakiExpressiveColorScheme(preset.seed, swatchPreviewDark, swatchPaletteStyle),
+                            ),
+                        )
+                    }
+                    if (supportsSystemColor) {
+                        put(
+                            SYSTEM_DYNAMIC_THEME_SEED_KEY,
+                            themeSeedSwatchColors(
+                                sakiExpressiveColorScheme(
+                                    systemDynamicSeedColor(swatchContext),
+                                    swatchPreviewDark,
+                                    swatchPaletteStyle,
+                                ),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
 
     LazyColumn(
         modifier = Modifier
@@ -533,18 +580,6 @@ fun SettingsScreen(
                         )
                     }
                     val currentSeedKey = uiState.appPreferences.themeSeedKey
-                    // Preview follows the current light/dark mode and uses the container roles, so the
-                    // swatches stay pleasant pastels in light and deep tones in dark (KSU-style).
-                    val previewDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-                    val swatchColors = remember(previewDark, currentPaletteStyle) {
-                        SakiThemePresets.associate { preset ->
-                            preset.key to themeSeedSwatchColors(
-                                seed = preset.seed,
-                                isDark = previewDark,
-                                paletteStyle = currentPaletteStyle,
-                            )
-                        }
-                    }
                     Text(
                         text = stringResource(R.string.settings_theme_seed_label),
                         style = MaterialTheme.typography.labelLarge,
@@ -554,35 +589,22 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        themeSwatchColors[SYSTEM_DYNAMIC_THEME_SEED_KEY]?.let { systemColors ->
+                            ThemeSeedSwatch(
+                                colors = systemColors,
+                                isSelected = isSystemDynamicSeed(currentSeedKey),
+                                description = stringResource(R.string.settings_theme_seed_system),
+                                onClick = { onUpdateThemeSeed(SYSTEM_DYNAMIC_THEME_SEED_KEY) },
+                                centerIcon = Icons.Rounded.Smartphone,
+                            )
+                        }
                         SakiThemePresets.forEach { preset ->
-                            val selected = preset.key == currentSeedKey
-                            val presetName = stringResource(preset.nameRes)
-                            val colors = swatchColors.getValue(preset.key)
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .border(
-                                        width = if (selected) 3.dp else 1.dp,
-                                        color = if (selected) {
-                                            MaterialTheme.colorScheme.onSurface
-                                        } else {
-                                            MaterialTheme.colorScheme.outlineVariant
-                                        },
-                                        shape = CircleShape,
-                                    )
-                                    .selectable(
-                                        selected = selected,
-                                        role = Role.RadioButton,
-                                        onClick = { onUpdateThemeSeed(preset.key) },
-                                    )
-                                    .semantics { contentDescription = presetName },
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    drawArc(color = colors.top, startAngle = 180f, sweepAngle = 180f, useCenter = true)
-                                    drawArc(color = colors.bottom, startAngle = 0f, sweepAngle = 180f, useCenter = true)
-                                }
-                            }
+                            ThemeSeedSwatch(
+                                colors = themeSwatchColors.getValue(preset.key),
+                                isSelected = preset.key == currentSeedKey,
+                                description = stringResource(preset.nameRes),
+                                onClick = { onUpdateThemeSeed(preset.key) },
+                            )
                         }
                     }
                 }
@@ -1233,31 +1255,88 @@ private fun formatStorageSize(bytes: Long): String {
 private data class ThemeSeedSwatchColors(
     val top: Color,
     val bottom: Color,
+    val center: Color,
+    val onCenter: Color,
 )
 
-private fun themeSeedSwatchColors(
-    seed: Color,
-    isDark: Boolean,
-    paletteStyle: SakiPaletteStyle,
-): ThemeSeedSwatchColors {
-    val hct = Hct.fromInt(seed.toArgb())
-    val hueShift = when (paletteStyle) {
-        SakiPaletteStyle.TONAL_SPOT -> 24.0
-        SakiPaletteStyle.VIBRANT -> 36.0
-        SakiPaletteStyle.EXPRESSIVE -> 58.0
+/** Maps a generated scheme to the swatch's roles, using the roles the app actually renders. */
+private fun themeSeedSwatchColors(scheme: ColorScheme) = ThemeSeedSwatchColors(
+    top = scheme.primaryContainer,
+    bottom = scheme.secondaryContainer,
+    center = scheme.primary,
+    onCenter = scheme.onPrimary,
+)
+
+/**
+ * "Pokéball" theme swatch (KernelSU-style, scaled down for Settings): a rounded surfaceContainer
+ * tile holding a two-tone ball (top = primaryContainer, bottom = secondaryContainer) with a small
+ * primary center button; selection grows the button into a ringed, checked badge.
+ */
+@Composable
+private fun ThemeSeedSwatch(
+    colors: ThemeSeedSwatchColors,
+    isSelected: Boolean,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    centerIcon: ImageVector? = null,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier
+            .size(52.dp)
+            .semantics { contentDescription = description },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.size(34.dp)) {
+                drawArc(color = colors.top, startAngle = 180f, sweepAngle = 180f, useCenter = true)
+                drawArc(color = colors.bottom, startAngle = 0f, sweepAngle = 180f, useCenter = true)
+            }
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .border(2.dp, colors.center, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(colors.center),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = null,
+                            tint = colors.onCenter,
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(15.dp)
+                        .clip(CircleShape)
+                        .background(colors.center),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // System/Material You marker inside the center button when unselected.
+                    if (centerIcon != null) {
+                        Icon(
+                            imageVector = centerIcon,
+                            contentDescription = null,
+                            tint = colors.onCenter,
+                            modifier = Modifier.size(10.dp),
+                        )
+                    }
+                }
+            }
+        }
     }
-    val primaryTone = if (isDark) 70.0 else 88.0
-    val secondaryTone = if (isDark) 62.0 else 92.0
-    val primaryChroma = (hct.chroma * 0.70).coerceIn(18.0, if (isDark) 42.0 else 32.0)
-    val secondaryChroma = (hct.chroma * when (paletteStyle) {
-        SakiPaletteStyle.TONAL_SPOT -> 0.42
-        SakiPaletteStyle.VIBRANT -> 0.58
-        SakiPaletteStyle.EXPRESSIVE -> 0.70
-    }).coerceIn(12.0, if (isDark) 34.0 else 26.0)
-    return ThemeSeedSwatchColors(
-        top = Color(Hct.from(hct.hue, primaryChroma, primaryTone).toInt()),
-        bottom = Color(Hct.from((hct.hue + hueShift) % 360.0, secondaryChroma, secondaryTone).toInt()),
-    )
 }
 
 private const val STREAM_CACHE_SLIDER_STEPS =
