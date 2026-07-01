@@ -55,6 +55,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -75,6 +76,7 @@ import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
+import org.hdhmc.saki.domain.model.DEFAULT_THEME_SEED_KEY
 import org.hdhmc.saki.domain.model.ThemeMode
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ThemeStyle
@@ -580,6 +582,13 @@ fun SettingsScreen(
                         )
                     }
                     val currentSeedKey = uiState.appPreferences.themeSeedKey
+                    // Below Android 12 a stored "system" seed falls back to the brand seed, so show
+                    // that preset as selected rather than leaving nothing highlighted.
+                    val effectiveSeedKey = if (!supportsSystemColor && isSystemDynamicSeed(currentSeedKey)) {
+                        DEFAULT_THEME_SEED_KEY
+                    } else {
+                        currentSeedKey
+                    }
                     Text(
                         text = stringResource(R.string.settings_theme_seed_label),
                         style = MaterialTheme.typography.labelLarge,
@@ -601,7 +610,7 @@ fun SettingsScreen(
                         SakiThemePresets.forEach { preset ->
                             ThemeSeedSwatch(
                                 colors = themeSwatchColors.getValue(preset.key),
-                                isSelected = preset.key == currentSeedKey,
+                                isSelected = preset.key == effectiveSeedKey,
                                 description = stringResource(preset.nameRes),
                                 onClick = { onUpdateThemeSeed(preset.key) },
                             )
@@ -1282,11 +1291,16 @@ private fun ThemeSeedSwatch(
     centerIcon: ImageVector? = null,
 ) {
     Surface(
-        onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = modifier
             .size(52.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .selectable(
+                selected = isSelected,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
             .semantics { contentDescription = description },
     ) {
         Box(contentAlignment = Alignment.Center) {
