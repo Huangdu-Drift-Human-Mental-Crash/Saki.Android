@@ -11,11 +11,13 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
+import com.materialkolor.dynamicColorScheme
 import com.materialkolor.hct.Hct
 import com.materialkolor.rememberDynamicColorScheme
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
@@ -35,6 +37,9 @@ fun SakiAndroidTheme(
     seedColor: Color? = null,
     // Palette style for the Material Expressive theme.
     paletteStyle: SakiPaletteStyle = SakiPaletteStyle.TONAL_SPOT,
+    // Source the Material Expressive scheme from the system (Material You) palette instead of
+    // [seedColor]. Honored only on Android 12+; ignored otherwise.
+    useSystemColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     CompositionLocalProvider(
@@ -52,8 +57,15 @@ fun SakiAndroidTheme(
             }
 
             ThemeStyle.MATERIAL_EXPRESSIVE -> {
+                // System color is fed in as a seed (not the platform scheme) so the selected
+                // palette style still applies and the app's calm tuning stays consistent.
+                val seed = if (useSystemColor) {
+                    systemDynamicSeedColor(LocalContext.current)
+                } else {
+                    seedColor ?: BrandSeedColor
+                }
                 val scheme = rememberSakiExpressiveColorScheme(
-                    seedColor = seedColor ?: BrandSeedColor,
+                    seedColor = seed,
                     isDark = darkTheme,
                     paletteStyle = paletteStyle,
                 )
@@ -99,7 +111,21 @@ fun rememberSakiExpressiveColorScheme(
     seedColor: Color,
     isDark: Boolean,
     paletteStyle: SakiPaletteStyle,
-): ColorScheme = rememberDynamicColorScheme(
+): ColorScheme = remember(seedColor, isDark, paletteStyle) {
+    sakiExpressiveColorScheme(seedColor, isDark, paletteStyle)
+}
+
+/**
+ * Non-composable counterpart to [rememberSakiExpressiveColorScheme]. Exposed so previews — notably
+ * the Settings color picker, which needs every preset's scheme at once — can compute and memoize
+ * them inside a single `remember` block, keeping the expensive desaturation off the recomposition
+ * path (the jank #299 addressed) while still previewing the real generated primary/secondary pair.
+ */
+fun sakiExpressiveColorScheme(
+    seedColor: Color,
+    isDark: Boolean,
+    paletteStyle: SakiPaletteStyle,
+): ColorScheme = dynamicColorScheme(
     seedColor = seedColor,
     isDark = isDark,
     style = paletteStyle.toMaterialKolor(),

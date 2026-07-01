@@ -1,5 +1,7 @@
 package org.hdhmc.saki.ui.theme
 
+import android.content.Context
+import android.os.Build
 import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.Color
 import org.hdhmc.saki.R
@@ -36,3 +38,26 @@ val SakiThemePresets: List<SakiThemePreset> = listOf(
 /** Resolves a stored preset key to its seed color, falling back to the brand seed. */
 fun seedColorForKey(key: String?): Color =
     SakiThemePresets.firstOrNull { it.key == key }?.seed ?: HarborBlue
+
+/**
+ * Sentinel seed key for "follow the system" / Material You dynamic color (Android 12+). When this
+ * is the active [org.hdhmc.saki.domain.model.AppPreferences.themeSeedKey], the theme sources its
+ * colors from the platform dynamic scheme instead of a fixed preset seed.
+ */
+const val SYSTEM_DYNAMIC_THEME_SEED_KEY = "system"
+
+/** True when [key] selects the system dynamic (Material You) color source. */
+fun isSystemDynamicSeed(key: String?): Boolean = key == SYSTEM_DYNAMIC_THEME_SEED_KEY
+
+/**
+ * The system (Material You) accent used as a MaterialKolor seed, so the system color source still
+ * flows through the same palette-style pipeline as the curated presets (and therefore honors the
+ * selected [SakiPaletteStyle]). Falls back to the brand seed below Android 12, where dynamic color
+ * is unavailable.
+ */
+fun systemDynamicSeedColor(context: Context): Color =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        Color(context.getColor(android.R.color.system_accent1_500))
+    } else {
+        HarborBlue
+    }
