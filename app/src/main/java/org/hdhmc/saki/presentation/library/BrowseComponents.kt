@@ -78,6 +78,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +105,8 @@ import org.hdhmc.saki.ui.theme.SakiTheme
 
 private val LibraryDetailWideHeroMinWidth = 720.dp
 private val LibraryDetailWideHeroArtworkWidth = 320.dp
+private val LibraryDetailWideHeroCompactArtworkWidth = 220.dp
+private const val LibraryDetailWideHeroCompactMaxHeightDp = 520
 
 @Composable
 fun ArtistDetailScreen(
@@ -506,11 +509,21 @@ private fun AlbumDetailHeroCard(
     onBack: () -> Unit,
     accentColor: Color,
 ) {
+    val configuration = LocalConfiguration.current
+    val useCompactLandscapeHero = configuration.screenWidthDp > configuration.screenHeightDp &&
+        configuration.screenHeightDp < LibraryDetailWideHeroCompactMaxHeightDp
+    val wideHeroArtworkWidth = if (useCompactLandscapeHero) {
+        LibraryDetailWideHeroCompactArtworkWidth
+    } else {
+        LibraryDetailWideHeroArtworkWidth
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         if (maxWidth >= LibraryDetailWideHeroMinWidth) {
             WideAlbumDetailHeroCard(
                 title = title,
                 artwork = artwork,
+                artworkWidth = wideHeroArtworkWidth,
                 metaItems = metaItems,
                 canPlay = canPlay,
                 onPlay = onPlay,
@@ -535,6 +548,7 @@ private fun AlbumDetailHeroCard(
 private fun WideAlbumDetailHeroCard(
     title: String,
     artwork: Any?,
+    artworkWidth: Dp,
     metaItems: List<String>,
     canPlay: Boolean,
     onPlay: () -> Unit,
@@ -562,13 +576,13 @@ private fun WideAlbumDetailHeroCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = LibraryDetailWideHeroArtworkWidth)
+                .heightIn(min = artworkWidth)
                 .padding(18.dp),
             horizontalArrangement = Arrangement.spacedBy(24.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = Modifier.width(LibraryDetailWideHeroArtworkWidth),
+                modifier = Modifier.width(artworkWidth),
             ) {
                 AdaptiveBlurArtwork(
                     model = artwork,

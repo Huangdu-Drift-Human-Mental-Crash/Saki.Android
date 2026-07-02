@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -224,150 +225,166 @@ fun NowPlayingCapsule(
     )
     val onExpandState = rememberUpdatedState(onExpand)
 
-    Card(
-        onClick = onExpand,
-        enabled = track != null,
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp)
-            .pointerInput(track != null) {
-                if (track == null) return@pointerInput
-                val distanceThresholdPx = 72.dp.toPx()
-                val velocityThresholdDpPerSecond = 300f
-                var upwardDistance = 0f
-                var dragStartedAtNanos = 0L
-                var didOpen = false
+            .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        val constrainLandscapeCapsuleWidth = maxWidth > maxHeight &&
+            maxHeight < MINI_PLAYER_LANDSCAPE_WIDTH_LIMIT_HEIGHT
 
-                fun openFromSwipe() {
-                    if (!didOpen) {
-                        didOpen = true
-                        onExpandState.value()
-                    }
-                }
-
-                detectVerticalDragGestures(
-                    onDragStart = {
-                        upwardDistance = 0f
-                        dragStartedAtNanos = System.nanoTime()
-                        didOpen = false
+        Card(
+            onClick = onExpand,
+            enabled = track != null,
+            modifier = Modifier
+                .then(
+                    if (constrainLandscapeCapsuleWidth) {
+                        Modifier.widthIn(max = MINI_PLAYER_LANDSCAPE_MAX_WIDTH)
+                    } else {
+                        Modifier
                     },
-                    onVerticalDrag = { _, dragAmount ->
-                        if (dragAmount < 0f) {
-                            upwardDistance -= dragAmount
-                            if (upwardDistance >= distanceThresholdPx) {
+                )
+                .fillMaxWidth()
+                .pointerInput(track != null) {
+                    if (track == null) return@pointerInput
+                    val distanceThresholdPx = 72.dp.toPx()
+                    val velocityThresholdDpPerSecond = 300f
+                    var upwardDistance = 0f
+                    var dragStartedAtNanos = 0L
+                    var didOpen = false
+
+                    fun openFromSwipe() {
+                        if (!didOpen) {
+                            didOpen = true
+                            onExpandState.value()
+                        }
+                    }
+
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            upwardDistance = 0f
+                            dragStartedAtNanos = System.nanoTime()
+                            didOpen = false
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            if (dragAmount < 0f) {
+                                upwardDistance -= dragAmount
+                                if (upwardDistance >= distanceThresholdPx) {
+                                    openFromSwipe()
+                                }
+                            } else {
+                                upwardDistance = (upwardDistance - dragAmount).coerceAtLeast(0f)
+                            }
+                        },
+                        onDragEnd = {
+                            val elapsedSeconds = (System.nanoTime() - dragStartedAtNanos) / 1_000_000_000f
+                            val upwardVelocityDpPerSecond = if (elapsedSeconds > 0f) {
+                                (upwardDistance / elapsedSeconds).toDp().value
+                            } else {
+                                0f
+                            }
+                            if (elapsedSeconds > 0f &&
+                                upwardVelocityDpPerSecond >= velocityThresholdDpPerSecond
+                            ) {
                                 openFromSwipe()
                             }
-                        } else {
-                            upwardDistance = (upwardDistance - dragAmount).coerceAtLeast(0f)
-                        }
-                    },
-                    onDragEnd = {
-                        val elapsedSeconds = (System.nanoTime() - dragStartedAtNanos) / 1_000_000_000f
-                        val upwardVelocityDpPerSecond = if (elapsedSeconds > 0f) {
-                            (upwardDistance / elapsedSeconds).toDp().value
-                        } else {
-                            0f
-                        }
-                        if (elapsedSeconds > 0f &&
-                            upwardVelocityDpPerSecond >= velocityThresholdDpPerSecond
-                        ) {
-                            openFromSwipe()
-                        }
-                    },
-                    onDragCancel = {
-                        upwardDistance = 0f
-                        didOpen = false
-                    },
-                )
-            },
-        shape = RoundedCornerShape(visuals.miniPlayerContainerCornerRadius),
-        colors = CardDefaults.cardColors(
-            containerColor = capsuleContainerColor,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                        },
+                        onDragCancel = {
+                            upwardDistance = 0f
+                            didOpen = false
+                        },
+                    )
+                },
+            shape = RoundedCornerShape(visuals.miniPlayerContainerCornerRadius),
+            colors = CardDefaults.cardColors(
+                containerColor = capsuleContainerColor,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = elevation),
         ) {
-            AnimatedVisibility(visible = track != null) {
-                Box(
-                    modifier = Modifier
-                        .size(width = visuals.miniPlayerHandleWidth, height = 3.dp)
-                        .background(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                alpha = visuals.miniPlayerHandleAlpha,
-                            ),
-                            shape = RoundedCornerShape(100),
-                        ),
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                AnimatedContent(
-                    targetState = Pair(
-                        track?.queueArtworkModel(currentServer),
-                        track?.title,
-                    ),
-                    transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
-                    label = "capsule-artwork",
-                ) { (model, title) ->
-                    ArtworkCard(
-                        model = model,
-                        contentDescription = title,
-                        modifier = Modifier.size(46.dp),
-                        cornerRadiusDp = visuals.miniPlayerArtworkCornerRadius.value.roundToInt(),
-                        requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
+                AnimatedVisibility(visible = track != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = visuals.miniPlayerHandleWidth, height = 3.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                    alpha = visuals.miniPlayerHandleAlpha,
+                                ),
+                                shape = RoundedCornerShape(100),
+                            ),
                     )
                 }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = track?.title ?: stringResource(R.string.player_nothing_playing),
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    AnimatedContent(
+                        targetState = Pair(
+                            track?.queueArtworkModel(currentServer),
+                            track?.title,
+                        ),
+                        transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
+                        label = "capsule-artwork",
+                    ) { (model, title) ->
+                        ArtworkCard(
+                            model = model,
+                            contentDescription = title,
+                            modifier = Modifier.size(46.dp),
+                            cornerRadiusDp = visuals.miniPlayerArtworkCornerRadius.value.roundToInt(),
+                            requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = track?.title ?: stringResource(R.string.player_nothing_playing),
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = track?.let { listOfNotNull(it.artist, it.album).joinToString(" • ") }
+                                ?: stringResource(R.string.player_start_from_browse),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    MiniPlayerIconButton(
+                        icon = Icons.Rounded.SkipPrevious,
+                        contentDescription = stringResource(R.string.player_previous),
+                        onClick = onSkipToPrevious,
+                        enabled = track != null,
                     )
-                    Text(
-                        text = track?.let { listOfNotNull(it.artist, it.album).joinToString(" • ") }
-                            ?: stringResource(R.string.player_start_from_browse),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    MiniPlayerIconButton(
+                        icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (isPlaying) {
+                            stringResource(R.string.player_pause)
+                        } else {
+                            stringResource(R.string.player_play)
+                        },
+                        onClick = onPlayPause,
+                        enabled = track != null,
+                        primary = true,
+                    )
+                    MiniPlayerIconButton(
+                        icon = Icons.Rounded.SkipNext,
+                        contentDescription = stringResource(R.string.player_next),
+                        onClick = onSkipToNext,
+                        enabled = track != null,
                     )
                 }
-                MiniPlayerIconButton(
-                    icon = Icons.Rounded.SkipPrevious,
-                    contentDescription = stringResource(R.string.player_previous),
-                    onClick = onSkipToPrevious,
-                    enabled = track != null,
-                )
-                MiniPlayerIconButton(
-                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = if (isPlaying) {
-                        stringResource(R.string.player_pause)
-                    } else {
-                        stringResource(R.string.player_play)
-                    },
-                    onClick = onPlayPause,
-                    enabled = track != null,
-                    primary = true,
-                )
-                MiniPlayerIconButton(
-                    icon = Icons.Rounded.SkipNext,
-                    contentDescription = stringResource(R.string.player_next),
-                    onClick = onSkipToNext,
-                    enabled = track != null,
-                )
             }
         }
     }
@@ -2700,6 +2717,8 @@ private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
 private const val PROGRAMMATIC_ARTWORK_SPRING_BASE_STIFFNESS = 140f
 private const val PROGRAMMATIC_ARTWORK_SPRING_DISTANCE_STIFFNESS = 60f
 private const val PROGRAMMATIC_ARTWORK_MAX_INITIAL_VELOCITY_PAGES = 8f
+private val MINI_PLAYER_LANDSCAPE_MAX_WIDTH = 520.dp
+private val MINI_PLAYER_LANDSCAPE_WIDTH_LIMIT_HEIGHT = 480.dp
 private val artworkPresentationCache = LruCache<String, ArtworkPresentation>(ARTWORK_PRESENTATION_CACHE_ENTRIES)
 
 private object FixedArtworkMotionDurationScale : MotionDurationScale {
