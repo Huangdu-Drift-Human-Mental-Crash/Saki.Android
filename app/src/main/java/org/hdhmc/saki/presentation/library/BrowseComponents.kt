@@ -104,6 +104,8 @@ import org.hdhmc.saki.ui.theme.SakiTheme
 
 private val LibraryDetailWideHeroMinWidth = 720.dp
 private val LibraryDetailWideHeroArtworkWidth = 320.dp
+private val LibraryDetailWideHeroCompactArtworkWidth = 220.dp
+private val LibraryDetailWideHeroCompactMaxHeight = 520.dp
 
 @Composable
 fun ArtistDetailScreen(
@@ -507,10 +509,19 @@ private fun AlbumDetailHeroCard(
     accentColor: Color,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val useCompactLandscapeHero = maxWidth > maxHeight &&
+            maxHeight < LibraryDetailWideHeroCompactMaxHeight
+        val wideHeroArtworkWidth = if (useCompactLandscapeHero) {
+            LibraryDetailWideHeroCompactArtworkWidth
+        } else {
+            LibraryDetailWideHeroArtworkWidth
+        }
+
         if (maxWidth >= LibraryDetailWideHeroMinWidth) {
             WideAlbumDetailHeroCard(
                 title = title,
                 artwork = artwork,
+                artworkWidth = wideHeroArtworkWidth,
                 metaItems = metaItems,
                 canPlay = canPlay,
                 onPlay = onPlay,
@@ -535,6 +546,7 @@ private fun AlbumDetailHeroCard(
 private fun WideAlbumDetailHeroCard(
     title: String,
     artwork: Any?,
+    artworkWidth: Dp,
     metaItems: List<String>,
     canPlay: Boolean,
     onPlay: () -> Unit,
@@ -562,13 +574,13 @@ private fun WideAlbumDetailHeroCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = LibraryDetailWideHeroArtworkWidth)
+                .heightIn(min = artworkWidth)
                 .padding(18.dp),
             horizontalArrangement = Arrangement.spacedBy(24.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = Modifier.width(LibraryDetailWideHeroArtworkWidth),
+                modifier = Modifier.width(artworkWidth),
             ) {
                 AdaptiveBlurArtwork(
                     model = artwork,
