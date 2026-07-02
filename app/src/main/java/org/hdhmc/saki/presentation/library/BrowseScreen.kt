@@ -148,6 +148,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 private val BrowseAdaptiveNavigationMinWidth = 600.dp
+private val AlbumAdaptiveGridMinContentWidth = 520.dp
+private val AlbumAdaptiveGridMinCellWidth = 168.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1798,11 +1800,12 @@ private fun AlbumFeedPageContent(
                     .collect { onLoadMore() }
             }
 
-            Box(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val gridColumns = albumGridCells(maxWidth)
                 LazyVerticalGrid(
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
-                    columns = GridCells.Fixed(2),
+                    columns = gridColumns,
                     contentPadding = contentPadding,
                 ) {
                     when {
@@ -1913,6 +1916,14 @@ private fun albumFeedContentPadding(
 }
 
 private val AlbumFastScrollContentEndPadding = 24.dp
+
+private fun albumGridCells(maxWidth: Dp): GridCells {
+    return if (maxWidth < AlbumAdaptiveGridMinContentWidth) {
+        GridCells.Fixed(2)
+    } else {
+        GridCells.Adaptive(AlbumAdaptiveGridMinCellWidth)
+    }
+}
 
 @Composable
 private fun AlbumFastScrollOverlay(
