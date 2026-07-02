@@ -78,7 +78,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -106,7 +105,7 @@ import org.hdhmc.saki.ui.theme.SakiTheme
 private val LibraryDetailWideHeroMinWidth = 720.dp
 private val LibraryDetailWideHeroArtworkWidth = 320.dp
 private val LibraryDetailWideHeroCompactArtworkWidth = 220.dp
-private const val LibraryDetailWideHeroCompactMaxHeightDp = 520
+private val LibraryDetailWideHeroCompactMaxHeight = 520.dp
 
 @Composable
 fun ArtistDetailScreen(
@@ -509,16 +508,15 @@ private fun AlbumDetailHeroCard(
     onBack: () -> Unit,
     accentColor: Color,
 ) {
-    val configuration = LocalConfiguration.current
-    val useCompactLandscapeHero = configuration.screenWidthDp > configuration.screenHeightDp &&
-        configuration.screenHeightDp < LibraryDetailWideHeroCompactMaxHeightDp
-    val wideHeroArtworkWidth = if (useCompactLandscapeHero) {
-        LibraryDetailWideHeroCompactArtworkWidth
-    } else {
-        LibraryDetailWideHeroArtworkWidth
-    }
-
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val useCompactLandscapeHero = maxWidth > maxHeight &&
+            maxHeight < LibraryDetailWideHeroCompactMaxHeight
+        val wideHeroArtworkWidth = if (useCompactLandscapeHero) {
+            LibraryDetailWideHeroCompactArtworkWidth
+        } else {
+            LibraryDetailWideHeroArtworkWidth
+        }
+
         if (maxWidth >= LibraryDetailWideHeroMinWidth) {
             WideAlbumDetailHeroCard(
                 title = title,
