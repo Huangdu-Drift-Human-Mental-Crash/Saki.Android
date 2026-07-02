@@ -910,60 +910,6 @@ private fun BrowsePager(
                         }
                     }
                 }
-
-                if (uiState.isSearchActive) {
-                    val searchBackMotion = rememberPredictiveBackMotion(
-                        enabled = backHandlersEnabled,
-                        onBack = { onSetSearchActive(false) },
-                        maxScaleReduction = 0.02f,
-                        maxHorizontalShiftFraction = 0.12f,
-                        horizontalShiftInset = 0.dp,
-                        maxVerticalShiftFraction = 0f,
-                        verticalShiftInset = 0.dp,
-                        maxCornerRadius = 18.dp,
-                        targetAlpha = 0f,
-                    )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pageEnterMotion()
-                            .then(searchBackMotion.modifier)
-                            .background(background),
-                    ) {
-                        BrowseHeroCard(
-                            currentServer = currentServer,
-                            isSearchActive = true,
-                            searchQuery = uiState.searchQuery,
-                            onSearchActiveChange = { active ->
-                                if (active) onSetSearchActive(true) else searchBackMotion.dismiss()
-                            },
-                            onSearchQueryChange = onUpdateSearchQuery,
-                            onOpenSettings = onOpenSettings,
-                        )
-                        SearchResultsRoute(
-                            modifier = Modifier.weight(1f),
-                            currentServer = currentServer,
-                            query = uiState.searchQuery,
-                            results = uiState.searchResults,
-                            isLoading = uiState.isSearchLoading,
-                            error = uiState.searchError?.asString(),
-                            recentSearchQueries = uiState.recentSearchQueries,
-                            availabilityUiStateFlow = availabilityUiStateFlow,
-                            isOfflineDegraded = isOfflineDegraded,
-                            bottomOverlayPadding = bottomOverlayPadding,
-                            resultsPosition = scrollState.searchResultsPosition,
-                            recentSearchesPosition = scrollState.recentSearchesPosition,
-                            onSearchQuery = onUpdateSearchQuery,
-                            onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
-                            onClearRecentSearchQueries = onClearRecentSearchQueries,
-                            onOpenArtist = onOpenArtist,
-                            onOpenAlbum = onOpenAlbum,
-                            onPlaySongs = onPlaySongs,
-                            onOfflineSongUnavailable = onOfflineSongUnavailable,
-                            onShowSongActions = onShowSongActions,
-                        )
-                    }
-                }
             }
         }
 
@@ -975,7 +921,7 @@ private fun BrowsePager(
                             icon = {
                                 Icon(
                                     imageVector = section.navigationIcon(),
-                                    contentDescription = section.localizedLabel(),
+                                    contentDescription = null,
                                 )
                             },
                             label = { Text(section.localizedLabel()) },
@@ -992,6 +938,60 @@ private fun BrowsePager(
             }
         } else {
             content()
+        }
+
+        if (uiState.isSearchActive) {
+            val searchBackMotion = rememberPredictiveBackMotion(
+                enabled = backHandlersEnabled,
+                onBack = { onSetSearchActive(false) },
+                maxScaleReduction = 0.02f,
+                maxHorizontalShiftFraction = 0.12f,
+                horizontalShiftInset = 0.dp,
+                maxVerticalShiftFraction = 0f,
+                verticalShiftInset = 0.dp,
+                maxCornerRadius = 18.dp,
+                targetAlpha = 0f,
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pageEnterMotion()
+                    .then(searchBackMotion.modifier)
+                    .background(background),
+            ) {
+                BrowseHeroCard(
+                    currentServer = currentServer,
+                    isSearchActive = true,
+                    searchQuery = uiState.searchQuery,
+                    onSearchActiveChange = { active ->
+                        if (active) onSetSearchActive(true) else searchBackMotion.dismiss()
+                    },
+                    onSearchQueryChange = onUpdateSearchQuery,
+                    onOpenSettings = onOpenSettings,
+                )
+                SearchResultsRoute(
+                    modifier = Modifier.weight(1f),
+                    currentServer = currentServer,
+                    query = uiState.searchQuery,
+                    results = uiState.searchResults,
+                    isLoading = uiState.isSearchLoading,
+                    error = uiState.searchError?.asString(),
+                    recentSearchQueries = uiState.recentSearchQueries,
+                    availabilityUiStateFlow = availabilityUiStateFlow,
+                    isOfflineDegraded = isOfflineDegraded,
+                    bottomOverlayPadding = bottomOverlayPadding,
+                    resultsPosition = scrollState.searchResultsPosition,
+                    recentSearchesPosition = scrollState.recentSearchesPosition,
+                    onSearchQuery = onUpdateSearchQuery,
+                    onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
+                    onClearRecentSearchQueries = onClearRecentSearchQueries,
+                    onOpenArtist = onOpenArtist,
+                    onOpenAlbum = onOpenAlbum,
+                    onPlaySongs = onPlaySongs,
+                    onOfflineSongUnavailable = onOfflineSongUnavailable,
+                    onShowSongActions = onShowSongActions,
+                )
+            }
         }
     }
 }
