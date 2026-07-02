@@ -15,6 +15,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -51,8 +52,12 @@ import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
@@ -85,6 +90,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -139,6 +146,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+
+private val BrowseAdaptiveNavigationMinWidth = 600.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -698,7 +707,11 @@ private fun OfflineModeBanner(modifier: Modifier = Modifier) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(
+    ExperimentalFoundationApi::class,
+    ExperimentalMaterial3AdaptiveApi::class,
+    ExperimentalMaterial3ExpressiveApi::class,
+)
 @Composable
 private fun BrowsePager(
     modifier: Modifier,
@@ -757,194 +770,228 @@ private fun BrowsePager(
             .collect { onSelectBrowseSection(it) }
     }
 
-    Box(modifier = modifier) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            BrowseHeroCard(
-                currentServer = currentServer,
-                isSearchActive = false,
-                searchQuery = "",
-                onSearchActiveChange = onSetSearchActive,
-                onSearchQueryChange = onUpdateSearchQuery,
-                onOpenSettings = onOpenSettings,
-            )
-            Box(modifier = Modifier.weight(1f)) {
-                val isRefreshing = uiState.isArtistsLoading || uiState.isAlbumsLoading ||
-                    uiState.isPlaylistsLoading || uiState.isSongsLoading || uiState.isRandomSongsLoading
-                val pullState = rememberPullToRefreshState()
-                val haptic = LocalHapticFeedback.current
-                val isOverThreshold = !isRefreshing && pullState.distanceFraction >= 1f
-                LaunchedEffect(isOverThreshold) {
-                    if (isOverThreshold) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    BoxWithConstraints(modifier = modifier) {
+        val useAdaptiveNavigation = maxWidth >= BrowseAdaptiveNavigationMinWidth
+        val content: @Composable () -> Unit = {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    BrowseHeroCard(
+                        currentServer = currentServer,
+                        isSearchActive = false,
+                        searchQuery = "",
+                        onSearchActiveChange = onSetSearchActive,
+                        onSearchQueryChange = onUpdateSearchQuery,
+                        onOpenSettings = onOpenSettings,
+                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        val isRefreshing = uiState.isArtistsLoading || uiState.isAlbumsLoading ||
+                            uiState.isPlaylistsLoading || uiState.isSongsLoading || uiState.isRandomSongsLoading
+                        val pullState = rememberPullToRefreshState()
+                        val haptic = LocalHapticFeedback.current
+                        val isOverThreshold = !isRefreshing && pullState.distanceFraction >= 1f
+                        LaunchedEffect(isOverThreshold) {
+                            if (isOverThreshold) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = onRefreshCurrentTab,
+                            modifier = Modifier.fillMaxSize(),
+                            state = pullState,
+                            indicator = {
+                                if (SakiTheme.visuals.useExpressiveLoadingIndicator) {
+                                    PullToRefreshDefaults.LoadingIndicator(
+                                        state = pullState,
+                                        isRefreshing = isRefreshing,
+                                        modifier = Modifier
+                                            .align(Alignment.TopCenter)
+                                            .size(SakiTheme.visuals.pullRefreshLoadingIndicatorSize),
+                                    )
+                                } else {
+                                    PullToRefreshDefaults.Indicator(
+                                        state = pullState,
+                                        isRefreshing = isRefreshing,
+                                        modifier = Modifier.align(Alignment.TopCenter),
+                                    )
+                                }
+                            },
+                        ) {
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                if (!useAdaptiveNavigation) {
+                                    LazyRow(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        items(sections) { section ->
+                                            BrowseSectionChip(
+                                                section = section,
+                                                selected = uiState.selectedBrowseSection == section,
+                                                onClick = { onSelectBrowseSection(section) },
+                                            )
+                                        }
+                                    }
+                                }
+                                HorizontalPager(
+                                    state = pagerState,
+                                    modifier = Modifier.weight(1f),
+                                    flingBehavior = pagerFlingBehavior,
+                                ) { page ->
+                                    when (sections[page]) {
+                                        BrowseSection.ARTISTS -> ArtistsPage(
+                                            indexes = uiState.libraryIndexes,
+                                            server = currentServer,
+                                            isLoading = uiState.isArtistsLoading,
+                                            error = uiState.artistsError?.asString(),
+                                            bottomOverlayPadding = bottomOverlayPadding,
+                                            scrollPosition = scrollState.artistsPosition,
+                                            onOpenArtist = onOpenArtist,
+                                        )
+
+                                        BrowseSection.ALBUMS -> AlbumsPage(
+                                            albumFeeds = uiState.albumFeeds,
+                                            browsePagerState = pagerState,
+                                            server = currentServer,
+                                            selectedFeed = uiState.selectedAlbumFeed,
+                                            viewMode = uiState.appPreferences.albumViewMode,
+                                            ignoredArticles = uiState.libraryIndexes?.ignoredArticles,
+                                            indexingLocale = uiState.appPreferences.language.indexingLocale(),
+                                            scrollPositions = scrollState.albumFeedPositions,
+                                            onSelectFeed = onSelectAlbumFeed,
+                                            onLoadMore = onLoadMoreAlbums,
+                                            onUpdateViewMode = onUpdateAlbumViewMode,
+                                            onOpenAlbum = onOpenAlbum,
+                                            bottomOverlayPadding = bottomOverlayPadding,
+                                        )
+
+                                        BrowseSection.PLAYLISTS -> PlaylistsPage(
+                                            playlists = uiState.playlists,
+                                            server = currentServer,
+                                            isLoading = uiState.isPlaylistsLoading,
+                                            error = uiState.playlistsError?.asString(),
+                                            bottomOverlayPadding = bottomOverlayPadding,
+                                            scrollPosition = scrollState.playlistsPosition,
+                                            onOpenPlaylist = onOpenPlaylist,
+                                        )
+
+                                        BrowseSection.SONGS -> SongsPageRoute(
+                                            browsePagerState = pagerState,
+                                            songs = uiState.songs,
+                                            songsOffset = uiState.songsOffset,
+                                            hasPrevious = uiState.hasPreviousSongs,
+                                            hasMore = uiState.hasMoreSongs,
+                                            server = currentServer,
+                                            playbackUiStateFlow = playbackUiStateFlow,
+                                            availabilityUiStateFlow = availabilityUiStateFlow,
+                                            isOfflineDegraded = isOfflineDegraded,
+                                            isLoading = uiState.isSongsLoading,
+                                            isLoadingPrevious = uiState.isSongsLoadingPrevious,
+                                            isLoadingMore = uiState.isSongsLoadingMore,
+                                            error = uiState.songsError?.asString(),
+                                            bottomOverlayPadding = bottomOverlayPadding,
+                                            scrollPosition = scrollState.songsPosition,
+                                            onLoadPrevious = onLoadPreviousSongs,
+                                            onLoadMore = onLoadMoreSongs,
+                                            onPlaySongs = onPlaySongs,
+                                            onPlayLibrarySongs = onPlayLibrarySongs,
+                                            onOfflineSongUnavailable = onOfflineSongUnavailable,
+                                            onShowSongActions = onShowSongActions,
+                                            selectedSongFeed = uiState.selectedSongFeed,
+                                            randomSongs = uiState.randomSongs,
+                                            isRandomSongsLoading = uiState.isRandomSongsLoading,
+                                            randomSongsError = uiState.randomSongsError?.asString(),
+                                            onSelectSongFeed = onSelectSongFeed,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                PullToRefreshBox(
-                    isRefreshing = isRefreshing,
-                    onRefresh = onRefreshCurrentTab,
-                    modifier = Modifier.fillMaxSize(),
-                    state = pullState,
-                    indicator = {
-                        if (SakiTheme.visuals.useExpressiveLoadingIndicator) {
-                            PullToRefreshDefaults.LoadingIndicator(
-                                state = pullState,
-                                isRefreshing = isRefreshing,
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .size(SakiTheme.visuals.pullRefreshLoadingIndicatorSize),
-                            )
-                        } else {
-                            PullToRefreshDefaults.Indicator(
-                                state = pullState,
-                                isRefreshing = isRefreshing,
-                                modifier = Modifier.align(Alignment.TopCenter),
-                            )
-                        }
-                    },
-                ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        LazyRow(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            items(sections) { section ->
-                                BrowseSectionChip(
-                                    section = section,
-                                    selected = uiState.selectedBrowseSection == section,
-                                    onClick = { onSelectBrowseSection(section) },
-                                )
-                            }
-                        }
-                        HorizontalPager(
-                            state = pagerState,
+
+                if (uiState.isSearchActive) {
+                    val searchBackMotion = rememberPredictiveBackMotion(
+                        enabled = backHandlersEnabled,
+                        onBack = { onSetSearchActive(false) },
+                        maxScaleReduction = 0.02f,
+                        maxHorizontalShiftFraction = 0.12f,
+                        horizontalShiftInset = 0.dp,
+                        maxVerticalShiftFraction = 0f,
+                        verticalShiftInset = 0.dp,
+                        maxCornerRadius = 18.dp,
+                        targetAlpha = 0f,
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pageEnterMotion()
+                            .then(searchBackMotion.modifier)
+                            .background(background),
+                    ) {
+                        BrowseHeroCard(
+                            currentServer = currentServer,
+                            isSearchActive = true,
+                            searchQuery = uiState.searchQuery,
+                            onSearchActiveChange = { active ->
+                                if (active) onSetSearchActive(true) else searchBackMotion.dismiss()
+                            },
+                            onSearchQueryChange = onUpdateSearchQuery,
+                            onOpenSettings = onOpenSettings,
+                        )
+                        SearchResultsRoute(
                             modifier = Modifier.weight(1f),
-                            flingBehavior = pagerFlingBehavior,
-                        ) { page ->
-                            when (sections[page]) {
-                                BrowseSection.ARTISTS -> ArtistsPage(
-                                    indexes = uiState.libraryIndexes,
-                                    server = currentServer,
-                                    isLoading = uiState.isArtistsLoading,
-                                    error = uiState.artistsError?.asString(),
-                                    bottomOverlayPadding = bottomOverlayPadding,
-                                    scrollPosition = scrollState.artistsPosition,
-                                    onOpenArtist = onOpenArtist,
-                                )
-
-                                BrowseSection.ALBUMS -> AlbumsPage(
-                                    albumFeeds = uiState.albumFeeds,
-                                    browsePagerState = pagerState,
-                                    server = currentServer,
-                                    selectedFeed = uiState.selectedAlbumFeed,
-                                    viewMode = uiState.appPreferences.albumViewMode,
-                                    ignoredArticles = uiState.libraryIndexes?.ignoredArticles,
-                                    indexingLocale = uiState.appPreferences.language.indexingLocale(),
-                                    scrollPositions = scrollState.albumFeedPositions,
-                                    onSelectFeed = onSelectAlbumFeed,
-                                    onLoadMore = onLoadMoreAlbums,
-                                    onUpdateViewMode = onUpdateAlbumViewMode,
-                                    onOpenAlbum = onOpenAlbum,
-                                    bottomOverlayPadding = bottomOverlayPadding,
-                                )
-
-                                BrowseSection.PLAYLISTS -> PlaylistsPage(
-                                    playlists = uiState.playlists,
-                                    server = currentServer,
-                                    isLoading = uiState.isPlaylistsLoading,
-                                    error = uiState.playlistsError?.asString(),
-                                    bottomOverlayPadding = bottomOverlayPadding,
-                                    scrollPosition = scrollState.playlistsPosition,
-                                    onOpenPlaylist = onOpenPlaylist,
-                                )
-
-                                BrowseSection.SONGS -> SongsPageRoute(
-                                    browsePagerState = pagerState,
-                                    songs = uiState.songs,
-                                    songsOffset = uiState.songsOffset,
-                                    hasPrevious = uiState.hasPreviousSongs,
-                                    hasMore = uiState.hasMoreSongs,
-                                    server = currentServer,
-                                    playbackUiStateFlow = playbackUiStateFlow,
-                                    availabilityUiStateFlow = availabilityUiStateFlow,
-                                    isOfflineDegraded = isOfflineDegraded,
-                                    isLoading = uiState.isSongsLoading,
-                                    isLoadingPrevious = uiState.isSongsLoadingPrevious,
-                                    isLoadingMore = uiState.isSongsLoadingMore,
-                                    error = uiState.songsError?.asString(),
-                                    bottomOverlayPadding = bottomOverlayPadding,
-                                    scrollPosition = scrollState.songsPosition,
-                                    onLoadPrevious = onLoadPreviousSongs,
-                                    onLoadMore = onLoadMoreSongs,
-                                    onPlaySongs = onPlaySongs,
-                                    onPlayLibrarySongs = onPlayLibrarySongs,
-                                    onOfflineSongUnavailable = onOfflineSongUnavailable,
-                                    onShowSongActions = onShowSongActions,
-                                    selectedSongFeed = uiState.selectedSongFeed,
-                                    randomSongs = uiState.randomSongs,
-                                    isRandomSongsLoading = uiState.isRandomSongsLoading,
-                                    randomSongsError = uiState.randomSongsError?.asString(),
-                                    onSelectSongFeed = onSelectSongFeed,
-                                )
-                            }
-                        }
+                            currentServer = currentServer,
+                            query = uiState.searchQuery,
+                            results = uiState.searchResults,
+                            isLoading = uiState.isSearchLoading,
+                            error = uiState.searchError?.asString(),
+                            recentSearchQueries = uiState.recentSearchQueries,
+                            availabilityUiStateFlow = availabilityUiStateFlow,
+                            isOfflineDegraded = isOfflineDegraded,
+                            bottomOverlayPadding = bottomOverlayPadding,
+                            resultsPosition = scrollState.searchResultsPosition,
+                            recentSearchesPosition = scrollState.recentSearchesPosition,
+                            onSearchQuery = onUpdateSearchQuery,
+                            onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
+                            onClearRecentSearchQueries = onClearRecentSearchQueries,
+                            onOpenArtist = onOpenArtist,
+                            onOpenAlbum = onOpenAlbum,
+                            onPlaySongs = onPlaySongs,
+                            onOfflineSongUnavailable = onOfflineSongUnavailable,
+                            onShowSongActions = onShowSongActions,
+                        )
                     }
                 }
             }
         }
 
-        if (uiState.isSearchActive) {
-            val searchBackMotion = rememberPredictiveBackMotion(
-                enabled = backHandlersEnabled,
-                onBack = { onSetSearchActive(false) },
-                maxScaleReduction = 0.02f,
-                maxHorizontalShiftFraction = 0.12f,
-                horizontalShiftInset = 0.dp,
-                maxVerticalShiftFraction = 0f,
-                verticalShiftInset = 0.dp,
-                maxCornerRadius = 18.dp,
-                targetAlpha = 0f,
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pageEnterMotion()
-                    .then(searchBackMotion.modifier)
-                    .background(background),
+        if (useAdaptiveNavigation) {
+            NavigationSuiteScaffold(
+                navigationSuiteItems = {
+                    sections.forEach { section ->
+                        item(
+                            icon = {
+                                Icon(
+                                    imageVector = section.navigationIcon(),
+                                    contentDescription = section.localizedLabel(),
+                                )
+                            },
+                            label = { Text(section.localizedLabel()) },
+                            selected = uiState.selectedBrowseSection == section,
+                            onClick = { onSelectBrowseSection(section) },
+                        )
+                    }
+                },
+                layoutType = NavigationSuiteType.NavigationRail,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onBackground,
             ) {
-                BrowseHeroCard(
-                    currentServer = currentServer,
-                    isSearchActive = true,
-                    searchQuery = uiState.searchQuery,
-                    onSearchActiveChange = { active ->
-                        if (active) onSetSearchActive(true) else searchBackMotion.dismiss()
-                    },
-                    onSearchQueryChange = onUpdateSearchQuery,
-                    onOpenSettings = onOpenSettings,
-                )
-                SearchResultsRoute(
-                    modifier = Modifier.weight(1f),
-                    currentServer = currentServer,
-                    query = uiState.searchQuery,
-                    results = uiState.searchResults,
-                    isLoading = uiState.isSearchLoading,
-                    error = uiState.searchError?.asString(),
-                    recentSearchQueries = uiState.recentSearchQueries,
-                    availabilityUiStateFlow = availabilityUiStateFlow,
-                    isOfflineDegraded = isOfflineDegraded,
-                    bottomOverlayPadding = bottomOverlayPadding,
-                    resultsPosition = scrollState.searchResultsPosition,
-                    recentSearchesPosition = scrollState.recentSearchesPosition,
-                    onSearchQuery = onUpdateSearchQuery,
-                    onRemoveRecentSearchQuery = onRemoveRecentSearchQuery,
-                    onClearRecentSearchQueries = onClearRecentSearchQueries,
-                    onOpenArtist = onOpenArtist,
-                    onOpenAlbum = onOpenAlbum,
-                    onPlaySongs = onPlaySongs,
-                    onOfflineSongUnavailable = onOfflineSongUnavailable,
-                    onShowSongActions = onShowSongActions,
-                )
+                content()
             }
+        } else {
+            content()
         }
     }
 }
@@ -2566,6 +2613,13 @@ private fun BrowseSection.localizedLabel(): String = when (this) {
     BrowseSection.ALBUMS -> stringResource(R.string.library_albums)
     BrowseSection.PLAYLISTS -> stringResource(R.string.browse_playlists)
     BrowseSection.SONGS -> stringResource(R.string.browse_songs)
+}
+
+private fun BrowseSection.navigationIcon(): ImageVector = when (this) {
+    BrowseSection.ARTISTS -> Icons.Rounded.Person
+    BrowseSection.ALBUMS -> Icons.Rounded.GridView
+    BrowseSection.PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
+    BrowseSection.SONGS -> Icons.AutoMirrored.Rounded.ViewList
 }
 
 @Composable
