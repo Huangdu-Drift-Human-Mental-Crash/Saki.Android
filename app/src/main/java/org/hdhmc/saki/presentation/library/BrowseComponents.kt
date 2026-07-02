@@ -17,12 +17,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +48,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -98,6 +101,9 @@ import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSubtleCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
 import org.hdhmc.saki.ui.theme.SakiTheme
+
+private val LibraryDetailWideHeroMinWidth = 720.dp
+private val LibraryDetailWideHeroArtworkWidth = 320.dp
 
 @Composable
 fun ArtistDetailScreen(
@@ -492,6 +498,152 @@ fun AlbumDetailScreen(
 
 @Composable
 private fun AlbumDetailHeroCard(
+    title: String,
+    artwork: Any?,
+    metaItems: List<String>,
+    canPlay: Boolean,
+    onPlay: () -> Unit,
+    onBack: () -> Unit,
+    accentColor: Color,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        if (maxWidth >= LibraryDetailWideHeroMinWidth) {
+            WideAlbumDetailHeroCard(
+                title = title,
+                artwork = artwork,
+                metaItems = metaItems,
+                canPlay = canPlay,
+                onPlay = onPlay,
+                onBack = onBack,
+                accentColor = accentColor,
+            )
+        } else {
+            CompactAlbumDetailHeroCard(
+                title = title,
+                artwork = artwork,
+                metaItems = metaItems,
+                canPlay = canPlay,
+                onPlay = onPlay,
+                onBack = onBack,
+                accentColor = accentColor,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WideAlbumDetailHeroCard(
+    title: String,
+    artwork: Any?,
+    metaItems: List<String>,
+    canPlay: Boolean,
+    onPlay: () -> Unit,
+    onBack: () -> Unit,
+    accentColor: Color,
+) {
+    val playContainer = accentColor.ensureContrast(
+        MaterialTheme.colorScheme.surfaceContainerHighest,
+        MaterialTheme.colorScheme.primary,
+    )
+    val onPlayAccent = if (playContainer.contrastRatio(Color.White) >= playContainer.contrastRatio(Color.Black)) {
+        Color.White
+    } else {
+        Color.Black
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 18.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = LibraryDetailWideHeroArtworkWidth)
+                .padding(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier.width(LibraryDetailWideHeroArtworkWidth),
+            ) {
+                AdaptiveBlurArtwork(
+                    model = artwork,
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadiusDp = 28,
+                )
+                Surface(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(10.dp)
+                        .minimumInteractiveComponentSize()
+                        .size(40.dp),
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.32f),
+                    contentColor = Color.White,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = stringResource(R.string.library_back),
+                        modifier = Modifier.padding(9.dp),
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val metaLine = metaItems.joinToString(" • ")
+                if (metaLine.isNotBlank()) {
+                    Text(
+                        text = metaLine,
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .basicMarquee(iterations = Int.MAX_VALUE, velocity = 20.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onPlay,
+                    enabled = canPlay,
+                    modifier = Modifier.padding(top = 22.dp),
+                    shape = MaterialTheme.shapes.small,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = playContainer,
+                        contentColor = onPlayAccent,
+                    ),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.library_play))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactAlbumDetailHeroCard(
     title: String,
     artwork: Any?,
     metaItems: List<String>,

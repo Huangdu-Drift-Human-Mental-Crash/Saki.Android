@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -55,9 +56,6 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
@@ -148,6 +146,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 private val BrowseAdaptiveNavigationMinWidth = 600.dp
+private val BrowseAdaptiveNavigationRailWidth = 104.dp
+private val BrowseAdaptiveNavigationRailItemWidth = 88.dp
+private val BrowseAdaptiveNavigationRailItemHeight = 76.dp
+private val BrowseAdaptiveNavigationRailIndicatorWidth = 64.dp
+private val BrowseAdaptiveNavigationRailIndicatorHeight = 36.dp
+private val BrowseAdaptiveNavigationContentGap = 12.dp
 private val AlbumAdaptiveGridMinContentWidth = 520.dp
 private val AlbumAdaptiveGridMinCellWidth = 168.dp
 
@@ -711,7 +715,6 @@ private fun OfflineModeBanner(modifier: Modifier = Modifier) {
 
 @OptIn(
     ExperimentalFoundationApi::class,
-    ExperimentalMaterial3AdaptiveApi::class,
     ExperimentalMaterial3ExpressiveApi::class,
 )
 @Composable
@@ -916,27 +919,23 @@ private fun BrowsePager(
         }
 
         if (useAdaptiveNavigation) {
-            NavigationSuiteScaffold(
-                navigationSuiteItems = {
-                    sections.forEach { section ->
-                        item(
-                            icon = {
-                                Icon(
-                                    imageVector = section.navigationIcon(),
-                                    contentDescription = null,
-                                )
-                            },
-                            label = { Text(section.localizedLabel()) },
-                            selected = uiState.selectedBrowseSection == section,
-                            onClick = { onSelectBrowseSection(section) },
-                        )
-                    }
-                },
-                layoutType = NavigationSuiteType.NavigationRail,
-                containerColor = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onBackground,
-            ) {
-                content()
+            Row(modifier = Modifier.fillMaxSize()) {
+                BrowseAdaptiveNavigationRail(
+                    sections = sections,
+                    selectedSection = uiState.selectedBrowseSection,
+                    onSelectBrowseSection = onSelectBrowseSection,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(BrowseAdaptiveNavigationRailWidth),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(start = BrowseAdaptiveNavigationContentGap),
+                ) {
+                    content()
+                }
             }
         } else {
             content()
@@ -993,6 +992,80 @@ private fun BrowsePager(
                     onOfflineSongUnavailable = onOfflineSongUnavailable,
                     onShowSongActions = onShowSongActions,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseAdaptiveNavigationRail(
+    sections: List<BrowseSection>,
+    selectedSection: BrowseSection,
+    onSelectBrowseSection: (BrowseSection) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(top = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        sections.forEach { section ->
+            val selected = section == selectedSection
+            Surface(
+                modifier = Modifier
+                    .width(BrowseAdaptiveNavigationRailItemWidth)
+                    .height(BrowseAdaptiveNavigationRailItemHeight)
+                    .selectable(
+                        selected = selected,
+                        onClick = { onSelectBrowseSection(section) },
+                        role = Role.Tab,
+                    ),
+                shape = MaterialTheme.shapes.large,
+                color = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .width(BrowseAdaptiveNavigationRailIndicatorWidth)
+                            .height(BrowseAdaptiveNavigationRailIndicatorHeight),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            Color.Transparent
+                        },
+                        contentColor = if (selected) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = section.navigationIcon(),
+                                contentDescription = null,
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = section.localizedLabel(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
