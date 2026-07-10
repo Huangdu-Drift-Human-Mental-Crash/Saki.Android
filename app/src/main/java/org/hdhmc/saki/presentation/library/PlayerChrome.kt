@@ -25,7 +25,6 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -61,6 +60,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
@@ -191,6 +191,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -738,9 +739,18 @@ fun NowPlayingOverlay(
             val denseMetadata = combinedMetadata.length >= 42
             val compactControls = overlayMaxHeight < 640.dp
             val isLandscapeLayout = overlayMaxWidth > overlayMaxHeight
-            val useLargeScreenLandscapeLayout = isLandscapeLayout &&
-                minOf(overlayMaxWidth, overlayMaxHeight) >= NOW_PLAYING_LARGE_SCREEN_MIN_DIMENSION
-            val useCompactLandscapeLayout = isLandscapeLayout && !useLargeScreenLandscapeLayout
+            val useLargeScreenLandscapeLayout = supportsLargeScreenNowPlayingLayout(
+                width = overlayMaxWidth,
+                height = overlayMaxHeight,
+            )
+            val useCompactLandscapeLayout = !useLargeScreenLandscapeLayout &&
+                supportsCompactLandscapeNowPlayingLayout(
+                    width = overlayMaxWidth,
+                    height = overlayMaxHeight,
+                )
+            val useControlPriorityLandscapeLayout = isLandscapeLayout &&
+                !useLargeScreenLandscapeLayout &&
+                !useCompactLandscapeLayout
             val shortScreen = overlayMaxHeight < 700.dp
             val titleStyle = when {
                 track.title.length >= 34 -> MaterialTheme.typography.titleLarge.copy(
@@ -1379,37 +1389,13 @@ fun NowPlayingOverlay(
                         }
                     }
                 } else if (useCompactLandscapeLayout) {
-                    val availableStageWidth = (
-                        overlayMaxWidth - NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING * 2
-                        ).coerceAtLeast(0.dp)
-                    val availableStageHeight = (
-                        overlayMaxHeight - NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING * 2
-                        ).coerceAtLeast(0.dp)
-                    val reservedControlWidth = minOf(
-                        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_WIDTH,
-                        availableStageWidth * 0.60f,
+                    val stageMetrics = calculateCompactLandscapeStageMetrics(
+                        overlayWidth = overlayMaxWidth,
+                        overlayHeight = overlayMaxHeight,
                     )
-                    val artworkSize = minOf(
-                        NOW_PLAYING_COMPACT_LANDSCAPE_ARTWORK_MAX_SIZE,
-                        availableStageHeight,
-                        (
-                            availableStageWidth -
-                                NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP -
-                                reservedControlWidth
-                            ).coerceAtLeast(0.dp),
-                    )
-                    val controlWidth = minOf(
-                        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH,
-                        (
-                            availableStageWidth -
-                                NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP -
-                                artworkSize
-                            ).coerceAtLeast(0.dp),
-                    )
-                    val controlHeight = minOf(
-                        availableStageHeight,
-                        artworkSize + NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_HEIGHT_EXTENSION,
-                    )
+                    val artworkSize = stageMetrics.artworkSize
+                    val controlWidth = stageMetrics.controlWidth
+                    val controlHeight = stageMetrics.controlHeight
                     val stageWidth = artworkSize + NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP + controlWidth
                     val systemBarCenteringOffset = (
                         (safeTopInset - safeBottomInset) / 2f
@@ -1441,14 +1427,20 @@ fun NowPlayingOverlay(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 ArtworkPanel(modifier = Modifier.fillMaxSize())
-                                NowPlayingTechnicalInfoLabel(
-                                    track = track,
-                                    runtimeInfo = playbackState.runtimeInfo,
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .offset(y = NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_OFFSET),
-                                    alignment = TextAlign.Center,
-                                )
+                                val bottomArtworkClearance = availableCenteringOffset + upwardCenteringOffset
+                                if (
+                                    bottomArtworkClearance >=
+                                    NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_REQUIRED_CLEARANCE
+                                ) {
+                                    NowPlayingTechnicalInfoLabel(
+                                        track = track,
+                                        runtimeInfo = playbackState.runtimeInfo,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .offset(y = NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_OFFSET),
+                                        alignment = TextAlign.Center,
+                                    )
+                                }
                             }
                             Spacer(Modifier.width(NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP))
                             ControlDeck(
@@ -1461,6 +1453,36 @@ fun NowPlayingOverlay(
                                     .padding(end = NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_END_INSET),
                             )
                         }
+                    }
+                } else if (useControlPriorityLandscapeLayout) {
+                    val controlWidth = minOf(
+                        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH,
+                        (
+                            overlayMaxWidth -
+                                NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING * 2
+                            ).coerceAtLeast(0.dp),
+                    )
+                    val controlHeight = (
+                        overlayMaxHeight - NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING * 2
+                        ).coerceAtLeast(0.dp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                horizontal = NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING,
+                                vertical = NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ControlDeck(
+                            largeScreen = false,
+                            compactLandscape = true,
+                            modifier = Modifier
+                                .width(controlWidth)
+                                .height(controlHeight)
+                                .verticalScroll(rememberScrollState())
+                                .padding(end = NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_END_INSET),
+                        )
                     }
                 } else {
                     Column(
@@ -2208,8 +2230,12 @@ private fun LandscapeQueuePane(
             }
             animate(offsetX, hiddenTranslation, animationSpec = settleSpec) { value, _ -> offsetX = value }
             onDismissed()
-        } catch (_: CancellationException) {
-            animate(offsetX, 0f, animationSpec = settleSpec) { value, _ -> offsetX = value }
+        } catch (cancellation: CancellationException) {
+            if (!scope.isActive) throw cancellation
+            motionJob?.cancel()
+            motionJob = scope.launch {
+                animate(offsetX, 0f, animationSpec = settleSpec) { value, _ -> offsetX = value }
+            }
         }
     }
 
@@ -2321,7 +2347,10 @@ private fun PlayerQueueSheet(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useLandscapePane = maxWidth > maxHeight
         if (useLandscapePane) {
-            val compactRows = minOf(maxWidth, maxHeight) < NOW_PLAYING_LARGE_SCREEN_MIN_DIMENSION
+            val compactRows = !supportsLargeScreenNowPlayingLayout(
+                width = maxWidth,
+                height = maxHeight,
+            )
             LandscapeQueuePane(
                 queue = queue,
                 currentIndex = currentIndex,
@@ -2402,9 +2431,14 @@ private fun PlayerQueueSheet(
                 settledAnchor = target
                 animate(offsetY, to, animationSpec = settleSpec) { value, _ -> offsetY = value }
                 if (target == QueueSheetAnchor.Hidden) onDismissed()
-            } catch (_: CancellationException) {
-                // Cancelled: ease back to where the gesture started.
-                animate(offsetY, from, animationSpec = settleSpec) { value, _ -> offsetY = value }
+            } catch (cancellation: CancellationException) {
+                if (!scope.isActive) throw cancellation
+                // Back cancellation also cancels the handler job. Use the sheet-owned scope so
+                // the return animation survives, while disposal still cancels it with the sheet.
+                motionJob?.cancel()
+                motionJob = scope.launch {
+                    animate(offsetY, from, animationSpec = settleSpec) { value, _ -> offsetY = value }
+                }
             }
         }
 
@@ -2963,12 +2997,12 @@ private fun NowPlayingArtworkPagerHost(
         initialPage = targetPage,
         pageCount = { stableQueue.size.coerceAtLeast(1) },
     )
-    val isPagerDragged by artworkPagerState.interactionSource.collectIsDraggedAsState()
-    var userPagerGestureArmed by remember { mutableStateOf(false) }
+    var userPagerNavigationArmed by remember { mutableStateOf(false) }
 
     var lastTrackId by remember { mutableStateOf(currentTrack.songId) }
     // Programmatic sync keeps pager state aligned but never drives playback.
-    // Playback is driven only after the pager emits a real DragInteraction.
+    // Any real pager scroll (touch, accessibility semantics, keyboard) arms selection; a pure
+    // resize/remeasure changes pages without entering scroll progress and is restored instead.
     var programmaticPagerSync by remember { mutableStateOf(false) }
     var lastProgrammaticSettledPage by remember { mutableStateOf<Int?>(null) }
     var lastPlaybackTargetPage by remember { mutableStateOf(targetPage) }
@@ -3014,10 +3048,10 @@ private fun NowPlayingArtworkPagerHost(
             while (artworkPagerState.isScrollInProgress) {
                 withFrameNanos { }
             }
-            // A size/orientation remeasure can temporarily move currentPage without any touch.
-            // Only an actual drag interaction is allowed to preserve a different page; otherwise
-            // restore the pager to playback without driving playback from the visual relayout.
-            val userMovedPager = userPagerGestureArmed || isPagerDragged
+            // A size/orientation remeasure can temporarily move currentPage without starting a
+            // pager scroll. Touch, accessibility and keyboard navigation all enter scroll progress;
+            // only a page move armed by that progress may drive playback.
+            val userMovedPager = userPagerNavigationArmed
             if (!userMovedPager && artworkPagerState.currentPage != targetPage) {
                 programmaticPagerSync = true
                 try {
@@ -3078,31 +3112,34 @@ private fun NowPlayingArtworkPagerHost(
             Triple(
                 artworkPagerState.settledPage,
                 artworkPagerState.isScrollInProgress,
-                isPagerDragged,
+                programmaticPagerSync,
             )
         }
             .distinctUntilChanged()
-            .collect { (page, isScrolling, isDragged) ->
-                if (isDragged) {
-                    userPagerGestureArmed = true
+            .collect { (page, isScrolling, isProgrammatic) ->
+                if (shouldArmArtworkPagerNavigation(isScrolling, isProgrammatic)) {
+                    userPagerNavigationArmed = true
                     return@collect
                 }
                 if (isScrolling) return@collect
-                if (programmaticPagerSync) {
+                if (isProgrammatic) {
                     lastProgrammaticSettledPage = page
                     return@collect
                 }
                 if (lastProgrammaticSettledPage == page) {
                     lastProgrammaticSettledPage = null
-                    userPagerGestureArmed = false
+                    userPagerNavigationArmed = false
                     return@collect
                 }
-                if (!userPagerGestureArmed) return@collect
 
-                userPagerGestureArmed = false
-                if (page != currentPlaybackIndex && page in 0 until currentQueueSize) {
-                    latestOnUserSelectQueueItem(page)
-                }
+                val selectedPage = settledArtworkPagerSelection(
+                    page = page,
+                    currentPlaybackIndex = currentPlaybackIndex,
+                    queueSize = currentQueueSize,
+                    userNavigationArmed = userPagerNavigationArmed,
+                )
+                if (userPagerNavigationArmed) userPagerNavigationArmed = false
+                selectedPage?.let { latestOnUserSelectQueueItem(it) }
             }
     }
 
@@ -3272,15 +3309,21 @@ private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
 private const val PROGRAMMATIC_ARTWORK_SPRING_BASE_STIFFNESS = 140f
 private const val PROGRAMMATIC_ARTWORK_SPRING_DISTANCE_STIFFNESS = 60f
 private const val PROGRAMMATIC_ARTWORK_MAX_INITIAL_VELOCITY_PAGES = 8f
-private val NOW_PLAYING_LARGE_SCREEN_MIN_DIMENSION = 600.dp
+private val NOW_PLAYING_LARGE_SCREEN_MIN_WIDTH = 900.dp
+private val NOW_PLAYING_LARGE_SCREEN_MIN_HEIGHT = 600.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_MIN_WIDTH = 480.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_MIN_HEIGHT = 320.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING = 16.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING = 8.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_ARTWORK_MAX_SIZE = 300.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_OFFSET = 24.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_REQUIRED_CLEARANCE = 28.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_HEIGHT_EXTENSION = 24.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_HEIGHT = 280.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_VERTICAL_OFFSET = 8.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_END_INSET = 8.dp
-private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_WIDTH = 360.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_WIDTH = 280.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_PREFERRED_WIDTH = 360.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH = 520.dp
 private val NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP = 20.dp
 private const val NOW_PLAYING_LANDSCAPE_QUEUE_WIDTH_FRACTION = 0.52f
@@ -3294,6 +3337,77 @@ private val NOW_PLAYING_LARGE_SCREEN_PANE_GAP = 36.dp
 private val MINI_PLAYER_LANDSCAPE_MAX_WIDTH = 520.dp
 private val MINI_PLAYER_LANDSCAPE_WIDTH_LIMIT_HEIGHT = 480.dp
 private val artworkPresentationCache = LruCache<String, ArtworkPresentation>(ARTWORK_PRESENTATION_CACHE_ENTRIES)
+
+internal fun shouldArmArtworkPagerNavigation(
+    isScrollInProgress: Boolean,
+    isProgrammaticSync: Boolean,
+): Boolean = isScrollInProgress && !isProgrammaticSync
+
+internal fun settledArtworkPagerSelection(
+    page: Int,
+    currentPlaybackIndex: Int,
+    queueSize: Int,
+    userNavigationArmed: Boolean,
+): Int? = page.takeIf {
+    userNavigationArmed && page != currentPlaybackIndex && page in 0 until queueSize
+}
+
+internal data class CompactLandscapeStageMetrics(
+    val artworkSize: Dp,
+    val controlWidth: Dp,
+    val controlHeight: Dp,
+)
+
+internal fun supportsLargeScreenNowPlayingLayout(width: Dp, height: Dp): Boolean =
+    width > height &&
+        width >= NOW_PLAYING_LARGE_SCREEN_MIN_WIDTH &&
+        height >= NOW_PLAYING_LARGE_SCREEN_MIN_HEIGHT
+
+internal fun supportsCompactLandscapeNowPlayingLayout(width: Dp, height: Dp): Boolean =
+    width > height &&
+        width >= NOW_PLAYING_COMPACT_LANDSCAPE_MIN_WIDTH &&
+        height >= NOW_PLAYING_COMPACT_LANDSCAPE_MIN_HEIGHT
+
+internal fun calculateCompactLandscapeStageMetrics(
+    overlayWidth: Dp,
+    overlayHeight: Dp,
+): CompactLandscapeStageMetrics {
+    val availableWidth = (
+        overlayWidth - NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING * 2
+        ).coerceAtLeast(0.dp)
+    val availableHeight = (
+        overlayHeight - NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING * 2
+        ).coerceAtLeast(0.dp)
+    val targetControlWidth = minOf(
+        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_PREFERRED_WIDTH,
+        availableWidth * 0.60f,
+    ).coerceAtLeast(NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_WIDTH)
+    val artworkSize = minOf(
+        NOW_PLAYING_COMPACT_LANDSCAPE_ARTWORK_MAX_SIZE,
+        availableHeight,
+        (
+            availableWidth - NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP - targetControlWidth
+            ).coerceAtLeast(0.dp),
+    )
+    val controlWidth = minOf(
+        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH,
+        (
+            availableWidth - NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP - artworkSize
+            ).coerceAtLeast(0.dp),
+    )
+    val controlHeight = minOf(
+        availableHeight,
+        maxOf(
+            NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_HEIGHT,
+            artworkSize + NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_HEIGHT_EXTENSION,
+        ),
+    )
+    return CompactLandscapeStageMetrics(
+        artworkSize = artworkSize,
+        controlWidth = controlWidth,
+        controlHeight = controlHeight,
+    )
+}
 
 private object FixedArtworkMotionDurationScale : MotionDurationScale {
     override val key: CoroutineContext.Key<*> = MotionDurationScale.Key
