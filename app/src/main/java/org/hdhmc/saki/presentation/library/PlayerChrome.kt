@@ -25,6 +25,7 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -35,6 +36,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,12 +46,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +68,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
@@ -702,8 +708,7 @@ fun NowPlayingOverlay(
                 .fillMaxSize()
                 .then(predictiveBackModifier)
                 .background(background)
-                .statusBarsPadding()
-                .navigationBarsPadding()
+                .safeDrawingPadding()
                 .imePadding()
                 .pointerInput(Unit) { detectTapGestures { /* consume all taps */ } },
         ) {
@@ -722,11 +727,21 @@ fun NowPlayingOverlay(
                     playerSnackbarHostState.currentSnackbarData?.dismiss()
                 }
             }
+            val overlayMaxWidth = maxWidth
+            val overlayMaxHeight = maxHeight
+            val safeDrawingInsets = WindowInsets.safeDrawing
+            val safeInsetDensity = LocalDensity.current
+            val safeTopInset = with(safeInsetDensity) { safeDrawingInsets.getTop(this).toDp() }
+            val safeBottomInset = with(safeInsetDensity) { safeDrawingInsets.getBottom(this).toDp() }
             val combinedMetadata = listOfNotNull(track.artist, track.album).joinToString(" • ")
             val denseTitle = track.title.length >= 24
             val denseMetadata = combinedMetadata.length >= 42
-            val compactControls = maxHeight < 640.dp
-            val shortScreen = maxHeight < 700.dp
+            val compactControls = overlayMaxHeight < 640.dp
+            val isLandscapeLayout = overlayMaxWidth > overlayMaxHeight
+            val useLargeScreenLandscapeLayout = isLandscapeLayout &&
+                minOf(overlayMaxWidth, overlayMaxHeight) >= NOW_PLAYING_LARGE_SCREEN_MIN_DIMENSION
+            val useCompactLandscapeLayout = isLandscapeLayout && !useLargeScreenLandscapeLayout
+            val shortScreen = overlayMaxHeight < 700.dp
             val titleStyle = when {
                 track.title.length >= 34 -> MaterialTheme.typography.titleLarge.copy(
                     fontSize = 20.sp,
@@ -815,24 +830,203 @@ fun NowPlayingOverlay(
                 )
             }
 
-            CompositionLocalProvider(LocalContentColor provides onArtwork) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = horizontalPadding),
-                    verticalArrangement = Arrangement.spacedBy(verticalSpacing),
+            val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
+
+            @Composable
+            fun ArtworkPanel(modifier: Modifier) {
+                Box(
+                    modifier = modifier,
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Spacer(Modifier.heightIn(min = 4.dp))
+                    NowPlayingArtworkPagerHost(
+                        queue = visualSnapshot.queue,
+                        currentIndex = visualSnapshot.currentIndex,
+                        currentTrack = visualSnapshot.currentTrack,
+                        serversById = serversById,
+                        motionState = artworkMotionState,
+                        visualSkipRequest = visualSkipRequest,
+                        useProgrammaticMotion = useArtworkMotion,
+                        useArtworkBackdrop = useArtworkBackdrop,
+                        modifier = Modifier.fillMaxSize(),
+                        onArtworkClick = {
+                            if (showLyrics) showLyrics = false
+                            else if (hasLyrics) showLyrics = true
+                        },
+                        onUserSelectQueueItem = onSkipToQueueItem,
+                    )
+                    // Lyrics overlay on artwork
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showLyrics && hasLyrics,
+                        enter = fadeIn(tween(250)),
+                        exit = fadeOut(tween(250)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(34.dp))
+                                .background(Color.Black.copy(alpha = visuals.nowPlayingLyricsOverlayAlpha)),
+                        ) {
+                            if (lyrics != null && lyrics.lines.isNotEmpty()) {
+                                SyncedLyricsView(
+                                    lyrics = lyrics,
+                                    playbackProgressFlow = playbackProgressFlow,
+                                    isPlaying = playbackState.isPlaying,
+                                    onSeekTo = onSeekTo,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 40.dp),
+                                    textColor = Color.White,
+                                )
+                            }
+                            IconButton(
+                                onClick = { showLyrics = false },
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.player_close_lyrics),
+                                    tint = Color.White.copy(alpha = 0.7f),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            @Composable
+            fun MoreMenuButton(modifier: Modifier = Modifier) {
+                Box(modifier = modifier) {
+                    PressScaleIconButton(
+                        icon = Icons.Rounded.MoreVert,
+                        contentDescription = stringResource(R.string.player_more),
+                        onClick = { showMenu = true },
+                        compact = true,
+                        tint = LocalContentColor.current,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                            alpha = visuals.nowPlayingMoreControlContainerAlpha,
+                        ),
+                        cornerRadius = visuals.nowPlayingSecondaryControlCornerRadius,
+                        iconSize = visuals.nowPlayingSecondaryControlIconSize,
+                    )
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.player_song_details)) },
+                            onClick = {
+                                showMenu = false
+                                showDetails = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    activeEndpointLabel
+                                        ?: if (isProbing) {
+                                            stringResource(R.string.player_probing)
+                                        } else {
+                                            stringResource(R.string.player_no_endpoint)
+                                        },
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                showEndpointStatus = true
+                            },
+                        )
+                    }
+                }
+            }
+
+            @Composable
+            fun RepeatToggleButton() {
+                val repeatDescription = stringResource(R.string.player_repeat)
+                val repeatOneLabel = stringResource(R.string.player_repeat_one)
+                val repeatAllLabel = stringResource(R.string.player_repeat_all)
+                val repeatOffLabel = stringResource(R.string.player_repeat_off)
+                ToggleIconButton(
+                    icon = if (playbackState.repeatMode == RepeatModeSetting.ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    active = playbackState.repeatMode != RepeatModeSetting.OFF,
+                    contentDescription = repeatDescription,
+                    onClick = {
+                        onCycleRepeatMode()
+                        val label = when (playbackState.repeatMode) {
+                            RepeatModeSetting.OFF -> repeatAllLabel
+                            RepeatModeSetting.ALL -> repeatOneLabel
+                            RepeatModeSetting.ONE -> repeatOffLabel
+                        }
+                        showPlayerSnackbar(label)
+                    },
+                    compact = true,
+                )
+            }
+
+            @Composable
+            fun ShuffleToggleButton() {
+                val shuffleDescription = stringResource(R.string.player_shuffle)
+                val shuffleOnLabel = stringResource(R.string.player_shuffle_on)
+                val shuffleOffLabel = stringResource(R.string.player_shuffle_off)
+                ToggleIconButton(
+                    icon = Icons.Rounded.Shuffle,
+                    active = playbackState.shuffleEnabled,
+                    contentDescription = shuffleDescription,
+                    onClick = {
+                        onToggleShuffle()
+                        val label = if (!playbackState.shuffleEnabled) shuffleOnLabel else shuffleOffLabel
+                        showPlayerSnackbar(label)
+                    },
+                    compact = true,
+                )
+            }
+
+            @Composable
+            fun QueueButtonSlot() {
+                Box(
+                    modifier = Modifier.size(48.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (showQueueAffordance) {
+                        PressScaleIconButton(
+                            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                            contentDescription = stringResource(R.string.player_show_queue),
+                            onClick = { showQueueSheet = true },
+                            compact = true,
+                            tint = LocalContentColor.current,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                alpha = visuals.nowPlayingSecondaryControlContainerAlpha,
+                            ),
+                            cornerRadius = visuals.nowPlayingSecondaryControlCornerRadius,
+                            iconSize = visuals.nowPlayingSecondaryControlIconSize,
+                        )
+                    }
+                }
+            }
+
+            @Composable
+            fun PlayerHeader(
+                includeMore: Boolean,
+                compact: Boolean = false,
+                modifier: Modifier = Modifier,
+            ) {
+                Row(
+                    modifier = modifier,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.player_now_playing),
+                        style = if (compact) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
+                        color = onArtwork,
+                    )
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = stringResource(R.string.player_now_playing),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = onArtwork,
-                        )
                         Surface(
                             shape = MaterialTheme.shapes.large,
                             color = (if (isDark) Color.Black else Color.White).copy(alpha = 0.28f),
@@ -843,329 +1037,452 @@ fun NowPlayingOverlay(
                                     playbackState.isStreamCached -> stringResource(R.string.player_cached)
                                     else -> stringResource(R.string.player_streaming)
                                 } + " • ${localizeQualityLabel(track.qualityLabel)}",
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(
+                                    horizontal = if (compact) 10.dp else 12.dp,
+                                    vertical = if (compact) 6.dp else 8.dp,
+                                ),
+                                style = if (compact) {
+                                    MaterialTheme.typography.labelMedium
+                                } else {
+                                    MaterialTheme.typography.labelLarge
+                                },
                                 color = onArtwork,
                             )
                         }
-                    }
-                    // Cover art — fills remaining vertical space
-                    val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        NowPlayingArtworkPagerHost(
-                            queue = visualSnapshot.queue,
-                            currentIndex = visualSnapshot.currentIndex,
-                            currentTrack = visualSnapshot.currentTrack,
-                            serversById = serversById,
-                            motionState = artworkMotionState,
-                            visualSkipRequest = visualSkipRequest,
-                            useProgrammaticMotion = useArtworkMotion,
-                            useArtworkBackdrop = useArtworkBackdrop,
-                            modifier = Modifier.fillMaxSize(),
-                            onArtworkClick = {
-                                if (showLyrics) showLyrics = false
-                                else if (hasLyrics) showLyrics = true
-                            },
-                            onUserSelectQueueItem = onSkipToQueueItem,
-                        )
-                        // Lyrics overlay on artwork
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = showLyrics && hasLyrics,
-                            enter = fadeIn(tween(250)),
-                            exit = fadeOut(tween(250)),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .aspectRatio(1f)
-                                    .fillMaxHeight()
-                                    .clip(RoundedCornerShape(34.dp))
-                                    .background(Color.Black.copy(alpha = visuals.nowPlayingLyricsOverlayAlpha)),
-                            ) {
-                                if (lyrics != null && lyrics.lines.isNotEmpty()) {
-                                    SyncedLyricsView(
-                                        lyrics = lyrics,
-                                        playbackProgressFlow = playbackProgressFlow,
-                                        isPlaying = playbackState.isPlaying,
-                                        onSeekTo = onSeekTo,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 40.dp),
-                                        textColor = Color.White,
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { showLyrics = false },
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(8.dp),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Close,
-                                        contentDescription = stringResource(R.string.player_close_lyrics),
-                                        tint = Color.White.copy(alpha = 0.7f),
-                                    )
-                                }
-                            }
+                        if (includeMore) {
+                            MoreMenuButton()
                         }
                     }
+                }
+            }
+
+            @Composable
+            fun ControlDeck(
+                largeScreen: Boolean,
+                compactLandscape: Boolean = false,
+                modifier: Modifier = Modifier,
+            ) {
+                @Composable
+                fun TrackIdentity(
+                    modifier: Modifier,
+                    compact: Boolean,
+                ) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(dismissSwipeModifier),
-                        verticalArrangement = Arrangement.spacedBy(verticalSpacing),
+                        modifier = modifier.then(dismissSwipeModifier),
+                        verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else verticalSpacing),
                     ) {
-                        // Repeat / Shuffle / More row
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            val repeatDescription = stringResource(R.string.player_repeat)
-                            val repeatOneLabel = stringResource(R.string.player_repeat_one)
-                            val repeatAllLabel = stringResource(R.string.player_repeat_all)
-                            val repeatOffLabel = stringResource(R.string.player_repeat_off)
-                            val shuffleDescription = stringResource(R.string.player_shuffle)
-                            val shuffleOnLabel = stringResource(R.string.player_shuffle_on)
-                            val shuffleOffLabel = stringResource(R.string.player_shuffle_off)
-                            Row(
-                                modifier = Modifier.offset(x = -visuals.nowPlayingTopControlEdgeOffset),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                ToggleIconButton(
-                                    icon = if (playbackState.repeatMode == RepeatModeSetting.ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                                    active = playbackState.repeatMode != RepeatModeSetting.OFF,
-                                    contentDescription = repeatDescription,
-                                    onClick = {
-                                        onCycleRepeatMode()
-                                        val label = when (playbackState.repeatMode) {
-                                            RepeatModeSetting.OFF -> repeatAllLabel
-                                            RepeatModeSetting.ALL -> repeatOneLabel
-                                            RepeatModeSetting.ONE -> repeatOffLabel
-                                        }
-                                        showPlayerSnackbar(label)
-                                    },
-                                    compact = true,
-                                )
-                                ToggleIconButton(
-                                    icon = Icons.Rounded.Shuffle,
-                                    active = playbackState.shuffleEnabled,
-                                    contentDescription = shuffleDescription,
-                                    onClick = {
-                                        onToggleShuffle()
-                                        val label = if (!playbackState.shuffleEnabled) shuffleOnLabel else shuffleOffLabel
-                                        showPlayerSnackbar(label)
-                                    },
-                                    compact = true,
-                                )
-                            }
-                            Box(modifier = Modifier.offset(x = visuals.nowPlayingTopControlEdgeOffset)) {
-                                PressScaleIconButton(
-                                    icon = Icons.Rounded.MoreVert,
-                                    contentDescription = stringResource(R.string.player_more),
-                                    onClick = { showMenu = true },
-                                    compact = true,
-                                    tint = LocalContentColor.current,
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
-                                        alpha = visuals.nowPlayingMoreControlContainerAlpha,
-                                    ),
-                                    cornerRadius = visuals.nowPlayingSecondaryControlCornerRadius,
-                                    iconSize = visuals.nowPlayingSecondaryControlIconSize,
-                                )
-                                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.player_song_details)) },
-                                        onClick = {
-                                            showMenu = false
-                                            showDetails = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                activeEndpointLabel
-                                                    ?: if (isProbing) {
-                                                        stringResource(R.string.player_probing)
-                                                    } else {
-                                                        stringResource(R.string.player_no_endpoint)
-                                                    },
-                                            )
-                                        },
-                                        onClick = {
-                                            showMenu = false
-                                            showEndpointStatus = true
-                                        },
-                                    )
-                                }
-                            }
-                        }
                         Text(
                             text = track.title,
-                            style = titleStyle,
+                            style = when {
+                                largeScreen -> MaterialTheme.typography.headlineMedium.copy(
+                                    fontSize = if (denseTitle) 26.sp else 28.sp,
+                                    lineHeight = if (denseTitle) 32.sp else 34.sp,
+                                )
+                                compact -> MaterialTheme.typography.titleLarge.copy(
+                                    fontSize = if (denseTitle) 22.sp else 24.sp,
+                                    lineHeight = 28.sp,
+                                )
+                                else -> titleStyle
+                            },
                             color = onArtwork,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            maxLines = 1,
+                                .then(
+                                    if (largeScreen) {
+                                        Modifier
+                                    } else {
+                                        Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                                    },
+                                ),
+                            maxLines = if (largeScreen) 2 else 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         MetadataLinkRow(
                             track = track,
-                            textStyle = metadataStyle,
+                            textStyle = when {
+                                largeScreen -> metadataStyle.copy(fontSize = 18.sp, lineHeight = 24.sp)
+                                compact -> metadataStyle.copy(fontSize = 16.sp, lineHeight = 20.sp)
+                                else -> metadataStyle
+                            },
                             linkColor = sliderActiveColor,
                             canOpenArtist = canOpenArtist,
                             onOpenArtist = onOpenArtist,
                             onOpenAlbum = onOpenAlbum,
                         )
                     }
-                    val isCachedTrack = track.isCached || playbackState.isStreamCached
-                    NowPlayingProgressSection(
-                        playbackProgressFlow = playbackProgressFlow,
-                        trackId = track.songId,
-                        isCachedTrack = isCachedTrack,
-                        sliderActiveColor = sliderActiveColor,
-                        sliderInactiveColor = sliderInactiveColor,
-                        onArtwork = onArtwork,
-                        verticalSpacing = verticalSpacing,
-                        onSeekTo = onSeekTo,
-                    )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(queueSwipeModifier),
-                        verticalArrangement = Arrangement.spacedBy(verticalSpacing),
+                }
+
+                @Composable
+                fun SecondaryControls(
+                    modifier: Modifier,
+                    spacing: Dp,
+                ) {
+                    Row(
+                        modifier = modifier,
+                        horizontalArrangement = Arrangement.spacedBy(spacing),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            PlayerActionButton(
-                                icon = Icons.Rounded.SkipPrevious,
-                                label = stringResource(R.string.player_previous),
-                                onClick = {
-                                    requestVisualSkip(-1)
-                                    onSkipToPrevious()
-                                },
-                                compact = compactControls,
-                            )
-                            Spacer(Modifier.width(14.dp))
-                            Surface(
-                                modifier = Modifier.size(
-                                    width = if (compactControls) 132.dp else 148.dp,
-                                    height = if (compactControls) 64.dp else 72.dp,
-                                ),
-                                shape = RoundedCornerShape(visuals.nowPlayingPrimaryControlCornerRadius),
-                                color = playButtonColor,
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clickable(onClick = onPlayPause)
-                                        .padding(horizontal = visuals.nowPlayingPrimaryControlHorizontalPadding),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(
-                                        imageVector = if (playbackState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                        contentDescription = null,
-                                        tint = onPlayButtonColor,
-                                        modifier = Modifier.size(visuals.nowPlayingPrimaryControlIconSize),
-                                    )
-                                    Text(
-                                        text = if (playbackState.isPlaying) {
-                                            stringResource(R.string.player_pause)
-                                        } else {
-                                            stringResource(R.string.player_play)
-                                        },
-                                        modifier = Modifier.padding(start = visuals.nowPlayingPrimaryControlLabelSpacing),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = onPlayButtonColor,
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.width(14.dp))
-                            PlayerActionButton(
-                                icon = Icons.Rounded.SkipNext,
-                                label = stringResource(R.string.player_next),
-                                onClick = {
-                                    requestVisualSkip(1)
-                                    onSkipToNext()
-                                },
-                                compact = compactControls,
-                            )
-                        }
-                        // Tech info bar
-                        val techTextCandidate = track
-                            .compactTechnicalInfoParts(
-                                playbackState.runtimeInfo?.takeIf { runtimeInfo -> runtimeInfo.hasCompactTechnicalInfo() },
-                            )
-                            .joinToString(" | ")
-                        var visibleTechText by remember { mutableStateOf("") }
-                        var visibleTechMediaId by remember { mutableStateOf<String?>(null) }
-                        LaunchedEffect(track.mediaId, techTextCandidate) {
-                            if (visibleTechMediaId != track.mediaId) {
-                                visibleTechMediaId = track.mediaId
-                                visibleTechText = ""
-                            }
-                            if (techTextCandidate.isBlank()) {
-                                visibleTechText = ""
-                            } else {
-                                delay(COMPACT_TECH_INFO_SETTLE_MS)
-                                visibleTechText = techTextCandidate
-                            }
-                        }
-                        AnimatedContent(
-                            targetState = visibleTechText,
-                            modifier = Modifier.fillMaxWidth(),
-                            transitionSpec = {
-                                fadeIn(tween(COMPACT_TECH_INFO_FADE_MS)) togetherWith
-                                    fadeOut(tween(COMPACT_TECH_INFO_FADE_MS))
+                        RepeatToggleButton()
+                        ShuffleToggleButton()
+                        QueueButtonSlot()
+                    }
+                }
+
+                @Composable
+                fun TransportControls(modifier: Modifier) {
+                    Row(
+                        modifier = modifier,
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        PlayerActionButton(
+                            icon = Icons.Rounded.SkipPrevious,
+                            label = stringResource(R.string.player_previous),
+                            onClick = {
+                                requestVisualSkip(-1)
+                                onSkipToPrevious()
                             },
-                            label = "compact-tech-info",
-                        ) { text ->
-                            Text(
-                                text = text,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (text.isEmpty()) {
-                                            Modifier.clearAndSetSemantics {}
-                                        } else {
-                                            Modifier
-                                        },
-                                    ),
-                                textAlign = TextAlign.Center,
-                                minLines = 1,
-                                maxLines = 1,
-                            )
-                        }
-                        // Queue toggle — always reserves a constant-height slot so the transport
-                        // deck does not reflow (shift down) when there is no queue to expand.
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(24.dp),
-                            contentAlignment = Alignment.Center,
+                            compact = compactControls,
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Surface(
+                            modifier = Modifier.size(
+                                width = if (compactControls) 132.dp else 148.dp,
+                                height = if (compactControls) 64.dp else 72.dp,
+                            ),
+                            shape = RoundedCornerShape(visuals.nowPlayingPrimaryControlCornerRadius),
+                            color = playButtonColor,
                         ) {
-                            if (showQueueAffordance) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clickable(onClick = onPlayPause)
+                                    .padding(horizontal = visuals.nowPlayingPrimaryControlHorizontalPadding),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
                                 Icon(
-                                    Icons.Rounded.KeyboardArrowUp,
-                                    contentDescription = stringResource(R.string.player_show_queue),
-                                    modifier = Modifier
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                        ) { showQueueSheet = true },
+                                    imageVector = if (playbackState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = onPlayButtonColor,
+                                    modifier = Modifier.size(visuals.nowPlayingPrimaryControlIconSize),
+                                )
+                                Text(
+                                    text = if (playbackState.isPlaying) {
+                                        stringResource(R.string.player_pause)
+                                    } else {
+                                        stringResource(R.string.player_play)
+                                    },
+                                    modifier = Modifier.padding(start = visuals.nowPlayingPrimaryControlLabelSpacing),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = onPlayButtonColor,
                                 )
                             }
                         }
+                        Spacer(Modifier.width(14.dp))
+                        PlayerActionButton(
+                            icon = Icons.Rounded.SkipNext,
+                            label = stringResource(R.string.player_next),
+                            onClick = {
+                                requestVisualSkip(1)
+                                onSkipToNext()
+                            },
+                            compact = compactControls,
+                        )
+                    }
+                }
+
+                val isCachedTrack = track.isCached || playbackState.isStreamCached
+                if (compactLandscape) {
+                    Column(
+                        modifier = modifier,
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        PlayerHeader(
+                            includeMore = true,
+                            compact = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TrackIdentity(
+                                modifier = Modifier.weight(1f),
+                                compact = true,
+                            )
+                            SecondaryControls(
+                                modifier = Modifier,
+                                spacing = 8.dp,
+                            )
+                        }
+                        TransportControls(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(queueSwipeModifier),
+                        )
+                        NowPlayingProgressSection(
+                            playbackProgressFlow = playbackProgressFlow,
+                            trackId = track.songId,
+                            isCachedTrack = isCachedTrack,
+                            sliderActiveColor = sliderActiveColor,
+                            sliderInactiveColor = sliderInactiveColor,
+                            onArtwork = onArtwork,
+                            verticalSpacing = 0.dp,
+                            onSeekTo = onSeekTo,
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = modifier,
+                        verticalArrangement = if (largeScreen) {
+                            Arrangement.SpaceBetween
+                        } else {
+                            Arrangement.spacedBy(verticalSpacing)
+                        },
+                    ) {
+                        if (largeScreen) {
+                            PlayerHeader(
+                                includeMore = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (!largeScreen) {
+                            // Repeat / Shuffle / More row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Row(
+                                    modifier = Modifier.offset(x = -visuals.nowPlayingTopControlEdgeOffset),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    RepeatToggleButton()
+                                    ShuffleToggleButton()
+                                }
+                                MoreMenuButton(
+                                    modifier = Modifier.offset(x = visuals.nowPlayingTopControlEdgeOffset),
+                                )
+                            }
+                        }
+                        TrackIdentity(
+                            modifier = Modifier.fillMaxWidth(),
+                            compact = false,
+                        )
+                        NowPlayingProgressSection(
+                            playbackProgressFlow = playbackProgressFlow,
+                            trackId = track.songId,
+                            isCachedTrack = isCachedTrack,
+                            sliderActiveColor = sliderActiveColor,
+                            sliderInactiveColor = sliderInactiveColor,
+                            onArtwork = onArtwork,
+                            verticalSpacing = verticalSpacing,
+                            onSeekTo = onSeekTo,
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(queueSwipeModifier),
+                            verticalArrangement = Arrangement.spacedBy(
+                                if (largeScreen) {
+                                    NOW_PLAYING_LARGE_SCREEN_CONTROL_GROUP_SPACING
+                                } else {
+                                    verticalSpacing
+                                },
+                            ),
+                        ) {
+                            TransportControls(modifier = Modifier.fillMaxWidth())
+                            if (largeScreen) {
+                                SecondaryControls(
+                                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                                    spacing = 12.dp,
+                                )
+                            }
+                            NowPlayingTechnicalInfoLabel(
+                                track = track,
+                                runtimeInfo = playbackState.runtimeInfo,
+                                modifier = Modifier.fillMaxWidth(),
+                                alignment = TextAlign.Center,
+                            )
+                            if (!largeScreen) {
+                                // Queue toggle — always reserves a constant-height slot so the transport
+                                // deck does not reflow (shift down) when there is no queue to expand.
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(24.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (showQueueAffordance) {
+                                        Icon(
+                                            Icons.Rounded.KeyboardArrowUp,
+                                            contentDescription = stringResource(R.string.player_show_queue),
+                                            modifier = Modifier
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                ) { showQueueSheet = true },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            CompositionLocalProvider(LocalContentColor provides onArtwork) {
+                if (useLargeScreenLandscapeLayout) {
+                    val availableStageWidth = (
+                        overlayMaxWidth - NOW_PLAYING_LARGE_SCREEN_HORIZONTAL_PADDING * 2
+                        ).coerceAtLeast(0.dp)
+                    val balancedPaneWidth = (
+                        (availableStageWidth - NOW_PLAYING_LARGE_SCREEN_PANE_GAP) / 2f
+                        ).coerceAtLeast(0.dp)
+                    val availableStageHeight = (overlayMaxHeight - 48.dp).coerceAtLeast(0.dp)
+                    val artworkSize = minOf(
+                        NOW_PLAYING_LARGE_SCREEN_ARTWORK_MAX_SIZE,
+                        balancedPaneWidth,
+                        availableStageHeight,
+                    )
+                    val controlWidth = minOf(
+                        NOW_PLAYING_LARGE_SCREEN_CONTROL_MAX_WIDTH,
+                        balancedPaneWidth,
+                    )
+                    val controlHeight = minOf(
+                        availableStageHeight,
+                        artworkSize + NOW_PLAYING_LARGE_SCREEN_CONTROL_HEIGHT_EXTENSION,
+                    )
+                    val stageWidth = artworkSize + NOW_PLAYING_LARGE_SCREEN_PANE_GAP + controlWidth
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                horizontal = NOW_PLAYING_LARGE_SCREEN_HORIZONTAL_PADDING,
+                                vertical = 24.dp,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(
+                            modifier = Modifier.width(stageWidth),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ArtworkPanel(modifier = Modifier.size(artworkSize))
+                            Spacer(Modifier.width(NOW_PLAYING_LARGE_SCREEN_PANE_GAP))
+                            ControlDeck(
+                                largeScreen = true,
+                                modifier = Modifier
+                                    .width(controlWidth)
+                                    .height(controlHeight),
+                            )
+                        }
+                    }
+                } else if (useCompactLandscapeLayout) {
+                    val availableStageWidth = (
+                        overlayMaxWidth - NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING * 2
+                        ).coerceAtLeast(0.dp)
+                    val availableStageHeight = (
+                        overlayMaxHeight - NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING * 2
+                        ).coerceAtLeast(0.dp)
+                    val reservedControlWidth = minOf(
+                        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_WIDTH,
+                        availableStageWidth * 0.60f,
+                    )
+                    val artworkSize = minOf(
+                        NOW_PLAYING_COMPACT_LANDSCAPE_ARTWORK_MAX_SIZE,
+                        availableStageHeight,
+                        (
+                            availableStageWidth -
+                                NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP -
+                                reservedControlWidth
+                            ).coerceAtLeast(0.dp),
+                    )
+                    val controlWidth = minOf(
+                        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH,
+                        (
+                            availableStageWidth -
+                                NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP -
+                                artworkSize
+                            ).coerceAtLeast(0.dp),
+                    )
+                    val controlHeight = minOf(
+                        availableStageHeight,
+                        artworkSize + NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_HEIGHT_EXTENSION,
+                    )
+                    val stageWidth = artworkSize + NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP + controlWidth
+                    val systemBarCenteringOffset = (
+                        (safeTopInset - safeBottomInset) / 2f
+                        ).coerceAtLeast(0.dp)
+                    val availableCenteringOffset = (
+                        (overlayMaxHeight - artworkSize) / 2f
+                        ).coerceAtLeast(0.dp)
+                    val upwardCenteringOffset = minOf(
+                        systemBarCenteringOffset,
+                        availableCenteringOffset,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                horizontal = NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING,
+                                vertical = NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .width(stageWidth)
+                                .offset(y = -upwardCenteringOffset),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier.size(artworkSize),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                ArtworkPanel(modifier = Modifier.fillMaxSize())
+                                NowPlayingTechnicalInfoLabel(
+                                    track = track,
+                                    runtimeInfo = playbackState.runtimeInfo,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .offset(y = NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_OFFSET),
+                                    alignment = TextAlign.Center,
+                                )
+                            }
+                            Spacer(Modifier.width(NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP))
+                            ControlDeck(
+                                largeScreen = false,
+                                compactLandscape = true,
+                                modifier = Modifier
+                                    .width(controlWidth)
+                                    .height(controlHeight)
+                                    .offset(y = NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_VERTICAL_OFFSET)
+                                    .padding(end = NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_END_INSET),
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = horizontalPadding),
+                        verticalArrangement = Arrangement.spacedBy(verticalSpacing),
+                    ) {
+                        Spacer(Modifier.heightIn(min = 4.dp))
+                        PlayerHeader(
+                            includeMore = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        ArtworkPanel(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        )
+                        ControlDeck(
+                            largeScreen = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -1261,13 +1578,39 @@ fun NowPlayingOverlay(
                     Text(stringResource(R.string.common_close))
                 }
             },
+            dismissButton = {
+                TextButton(
+                    onClick = onReprobeEndpoints,
+                    enabled = !isProbing,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Text(
+                        if (isProbing) {
+                            stringResource(R.string.player_probing)
+                        } else {
+                            stringResource(R.string.player_retest_endpoints)
+                        },
+                    )
+                }
+            },
             title = { Text(stringResource(R.string.player_endpoint_status)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 280.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     if (endpointProbeResults.isEmpty()) {
-                        Text(stringResource(R.string.player_no_probe_results), style = MaterialTheme.typography.bodyMedium)
+                        item {
+                            Text(
+                                stringResource(R.string.player_no_probe_results),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                     } else {
-                        endpointProbeResults.forEach { result ->
+                        items(endpointProbeResults.size) { index ->
+                            val result = endpointProbeResults[index]
                             val isActive = result.id == activeEndpointId
                             Surface(
                                 onClick = { onForceEndpoint(result.id) },
@@ -1310,6 +1653,8 @@ fun NowPlayingOverlay(
                                             } else {
                                                 MaterialTheme.colorScheme.onSurfaceVariant
                                             },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                     }
                                     Text(
@@ -1329,22 +1674,65 @@ fun NowPlayingOverlay(
                             }
                         }
                     }
-                    Button(
-                        onClick = onReprobeEndpoints,
-                        enabled = !isProbing,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.small,
-                    ) {
-                        Text(
-                            if (isProbing) {
-                                stringResource(R.string.player_probing)
-                            } else {
-                                stringResource(R.string.player_retest_endpoints)
-                            },
-                        )
-                    }
                 }
             },
+        )
+    }
+}
+
+@Composable
+private fun NowPlayingTechnicalInfoLabel(
+    track: PlaybackQueueItem,
+    runtimeInfo: PlaybackRuntimeInfo?,
+    modifier: Modifier = Modifier,
+    alignment: TextAlign = TextAlign.Center,
+) {
+    val techTextCandidate = track
+        .compactTechnicalInfoParts(
+            runtimeInfo?.takeIf { info -> info.hasCompactTechnicalInfo() },
+        )
+        .joinToString(" | ")
+    var visibleTechText by remember { mutableStateOf("") }
+    var visibleTechMediaId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(track.mediaId, techTextCandidate) {
+        if (visibleTechMediaId != track.mediaId) {
+            visibleTechMediaId = track.mediaId
+            visibleTechText = ""
+        }
+        if (techTextCandidate.isBlank()) {
+            visibleTechText = ""
+        } else {
+            delay(COMPACT_TECH_INFO_SETTLE_MS)
+            visibleTechText = techTextCandidate
+        }
+    }
+
+    AnimatedContent(
+        targetState = visibleTechText,
+        modifier = modifier,
+        transitionSpec = {
+            fadeIn(tween(COMPACT_TECH_INFO_FADE_MS)) togetherWith
+                fadeOut(tween(COMPACT_TECH_INFO_FADE_MS))
+        },
+        label = "compact-tech-info",
+    ) { text ->
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (text.isEmpty()) {
+                        Modifier.clearAndSetSemantics {}
+                    } else {
+                        Modifier
+                    },
+                ),
+            textAlign = alignment,
+            minLines = 1,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -1777,6 +2165,136 @@ private fun metadataLinkScrollDurationMillis(distancePx: Int, speedPxPerMs: Floa
 
 private enum class QueueSheetAnchor { Hidden, Partial, Expanded }
 
+@Composable
+private fun LandscapeQueuePane(
+    queue: List<PlaybackQueueItem>,
+    currentIndex: Int,
+    serversById: Map<Long, ServerConfig>,
+    panelWidth: Dp,
+    compactRows: Boolean,
+    onSkipToQueueItem: (Int) -> Unit,
+    onRemoveQueueItem: (Int) -> Unit,
+    onDismissed: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val panelWidthPx = with(density) { panelWidth.toPx() }
+    val hiddenTranslation = if (layoutDirection == LayoutDirection.Ltr) panelWidthPx else -panelWidthPx
+    val settleSpec = remember {
+        spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+    }
+    var offsetX by remember(hiddenTranslation) { mutableFloatStateOf(hiddenTranslation) }
+    val scope = rememberCoroutineScope()
+    var motionJob by remember { mutableStateOf<Job?>(null) }
+
+    fun dismissPane() {
+        motionJob?.cancel()
+        motionJob = scope.launch {
+            animate(offsetX, hiddenTranslation, animationSpec = settleSpec) { value, _ -> offsetX = value }
+            onDismissed()
+        }
+    }
+
+    LaunchedEffect(hiddenTranslation) {
+        animate(offsetX, 0f, animationSpec = settleSpec) { value, _ -> offsetX = value }
+    }
+
+    PredictiveBackHandler(enabled = true) { events ->
+        motionJob?.cancel()
+        val from = offsetX
+        try {
+            events.collect { event ->
+                offsetX = lerp(from, hiddenTranslation, event.progress.coerceIn(0f, 1f))
+            }
+            animate(offsetX, hiddenTranslation, animationSpec = settleSpec) { value, _ -> offsetX = value }
+            onDismissed()
+        } catch (_: CancellationException) {
+            animate(offsetX, 0f, animationSpec = settleSpec) { value, _ -> offsetX = value }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = (1f - abs(offsetX / hiddenTranslation)).coerceIn(0f, 1f) * 0.38f
+                }
+                .background(Color.Black)
+                .pointerInput(Unit) { detectTapGestures { dismissPane() } },
+        )
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .width(panelWidth)
+                .fillMaxHeight()
+                .graphicsLayer { translationX = offsetX },
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+            tonalElevation = 2.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top + WindowInsetsSides.End + WindowInsetsSides.Bottom,
+                        ),
+                    ),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.player_queue),
+                        style = if (compactRows) {
+                            MaterialTheme.typography.headlineSmall
+                        } else {
+                            MaterialTheme.typography.headlineMedium
+                        },
+                    )
+                    IconButton(onClick = ::dismissPane) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = stringResource(R.string.common_close),
+                        )
+                    }
+                }
+                val queueListState = rememberLazyListState(
+                    initialFirstVisibleItemIndex = (currentIndex - 2).coerceAtLeast(0),
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    state = queueListState,
+                    contentPadding = PaddingValues(
+                        start = if (compactRows) 12.dp else 16.dp,
+                        end = if (compactRows) 12.dp else 16.dp,
+                        bottom = if (compactRows) 12.dp else 16.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(if (compactRows) 6.dp else 8.dp),
+                ) {
+                    itemsIndexed(queue) { index, item ->
+                        QueueRow(
+                            item = item,
+                            isCurrent = index == currentIndex,
+                            currentServer = item.serverId?.let { serversById[it] },
+                            onClick = { onSkipToQueueItem(index) },
+                            onRemove = { onRemoveQueueItem(index) },
+                            compact = compactRows,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /**
  * Custom anchored queue sheet (issue #317 phase 2).
  *
@@ -1801,6 +2319,25 @@ private fun PlayerQueueSheet(
         spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
     }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val useLandscapePane = maxWidth > maxHeight
+        if (useLandscapePane) {
+            val compactRows = minOf(maxWidth, maxHeight) < NOW_PLAYING_LARGE_SCREEN_MIN_DIMENSION
+            LandscapeQueuePane(
+                queue = queue,
+                currentIndex = currentIndex,
+                serversById = serversById,
+                panelWidth = minOf(
+                    NOW_PLAYING_LANDSCAPE_QUEUE_MAX_WIDTH,
+                    maxWidth * NOW_PLAYING_LANDSCAPE_QUEUE_WIDTH_FRACTION,
+                ),
+                compactRows = compactRows,
+                onSkipToQueueItem = onSkipToQueueItem,
+                onRemoveQueueItem = onRemoveQueueItem,
+                onDismissed = onDismissed,
+            )
+            return@BoxWithConstraints
+        }
+
         val density = LocalDensity.current
         val fullHeightPx = constraints.maxHeight.toFloat()
         val verticalSpacing = if (maxHeight < 640.dp) 8.dp else 12.dp
@@ -2002,6 +2539,7 @@ private fun QueueRow(
     currentServer: ServerConfig?,
     onClick: () -> Unit,
     onRemove: () -> Unit,
+    compact: Boolean = false,
 ) {
     val visuals = SakiTheme.visuals
     Surface(
@@ -2019,25 +2557,32 @@ private fun QueueRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(
+                    horizontal = if (compact) 10.dp else 14.dp,
+                    vertical = if (compact) 8.dp else 12.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ArtworkCard(
                 model = item.queueArtworkModel(currentServer),
                 contentDescription = item.title,
-                modifier = Modifier.size(48.dp),
-                cornerRadiusDp = 16,
+                modifier = Modifier.size(if (compact) 40.dp else 48.dp),
+                cornerRadiusDp = if (compact) 12 else 16,
                 requestSizePx = THUMBNAIL_COVER_ART_SIZE_PX,
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 12.dp),
+                    .padding(start = if (compact) 10.dp else 12.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = if (compact) {
+                        MaterialTheme.typography.titleSmall
+                    } else {
+                        MaterialTheme.typography.titleMedium
+                    },
                     color = if (isCurrent) {
                         MaterialTheme.colorScheme.onPrimaryContainer
                     } else {
@@ -2048,7 +2593,11 @@ private fun QueueRow(
                 )
                 Text(
                     text = listOfNotNull(item.artist, item.album).joinToString(" • "),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = if (compact) {
+                        MaterialTheme.typography.bodySmall
+                    } else {
+                        MaterialTheme.typography.bodyMedium
+                    },
                     color = if (isCurrent) {
                         MaterialTheme.colorScheme.onPrimaryContainer
                     } else {
@@ -2414,10 +2963,12 @@ private fun NowPlayingArtworkPagerHost(
         initialPage = targetPage,
         pageCount = { stableQueue.size.coerceAtLeast(1) },
     )
+    val isPagerDragged by artworkPagerState.interactionSource.collectIsDraggedAsState()
+    var userPagerGestureArmed by remember { mutableStateOf(false) }
 
     var lastTrackId by remember { mutableStateOf(currentTrack.songId) }
     // Programmatic sync keeps pager state aligned but never drives playback.
-    // Any other settled page change comes from the user's pager gesture.
+    // Playback is driven only after the pager emits a real DragInteraction.
     var programmaticPagerSync by remember { mutableStateOf(false) }
     var lastProgrammaticSettledPage by remember { mutableStateOf<Int?>(null) }
     var lastPlaybackTargetPage by remember { mutableStateOf(targetPage) }
@@ -2433,7 +2984,6 @@ private fun NowPlayingArtworkPagerHost(
         queueIdentity,
         useProgrammaticMotion,
     ) {
-        val expectedPage = lastPlaybackTargetPage
         val isLocalVisualSkip = requestedVisualPage != null && requestedVisualPage != targetPage
         if (isLocalVisualSkip && artworkPagerState.currentPage != visualTargetPage) {
             stableQueue = queue
@@ -2459,18 +3009,15 @@ private fun NowPlayingArtworkPagerHost(
             }
         }
         if (!isLocalVisualSkip && currentTrack.songId == lastTrackId && artworkPagerState.currentPage != targetPage) {
-            val userMovedBeforeStabilize =
-                artworkPagerState.currentPage != expectedPage ||
-                    artworkPagerState.settledPage != expectedPage
             stableQueue = queue
             withFrameNanos { }
             while (artworkPagerState.isScrollInProgress) {
                 withFrameNanos { }
             }
-            val userMovedPager =
-                userMovedBeforeStabilize ||
-                    artworkPagerState.currentPage != expectedPage ||
-                    artworkPagerState.settledPage != expectedPage
+            // A size/orientation remeasure can temporarily move currentPage without any touch.
+            // Only an actual drag interaction is allowed to preserve a different page; otherwise
+            // restore the pager to playback without driving playback from the visual relayout.
+            val userMovedPager = userPagerGestureArmed || isPagerDragged
             if (!userMovedPager && artworkPagerState.currentPage != targetPage) {
                 programmaticPagerSync = true
                 try {
@@ -2480,13 +3027,6 @@ private fun NowPlayingArtworkPagerHost(
                 } finally {
                     lastProgrammaticSettledPage = artworkPagerState.settledPage
                     programmaticPagerSync = false
-                }
-            } else {
-                stableQueue = queue
-                val selectedPage = artworkPagerState.settledPage
-                if (selectedPage != targetPage && selectedPage in queue.indices) {
-                    lastProgrammaticSettledPage = null
-                    latestOnUserSelectQueueItem(selectedPage)
                 }
             }
         } else {
@@ -2534,17 +3074,32 @@ private fun NowPlayingArtworkPagerHost(
     val currentPlaybackIndex by rememberUpdatedState(currentIndex)
     val currentQueueSize by rememberUpdatedState(queue.size)
     LaunchedEffect(artworkPagerState) {
-        snapshotFlow { artworkPagerState.settledPage to programmaticPagerSync }
+        snapshotFlow {
+            Triple(
+                artworkPagerState.settledPage,
+                artworkPagerState.isScrollInProgress,
+                isPagerDragged,
+            )
+        }
             .distinctUntilChanged()
-            .collect { (page, isProgrammatic) ->
-                if (isProgrammatic) {
+            .collect { (page, isScrolling, isDragged) ->
+                if (isDragged) {
+                    userPagerGestureArmed = true
+                    return@collect
+                }
+                if (isScrolling) return@collect
+                if (programmaticPagerSync) {
                     lastProgrammaticSettledPage = page
                     return@collect
                 }
                 if (lastProgrammaticSettledPage == page) {
                     lastProgrammaticSettledPage = null
+                    userPagerGestureArmed = false
                     return@collect
                 }
+                if (!userPagerGestureArmed) return@collect
+
+                userPagerGestureArmed = false
                 if (page != currentPlaybackIndex && page in 0 until currentQueueSize) {
                     latestOnUserSelectQueueItem(page)
                 }
@@ -2717,6 +3272,25 @@ private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
 private const val PROGRAMMATIC_ARTWORK_SPRING_BASE_STIFFNESS = 140f
 private const val PROGRAMMATIC_ARTWORK_SPRING_DISTANCE_STIFFNESS = 60f
 private const val PROGRAMMATIC_ARTWORK_MAX_INITIAL_VELOCITY_PAGES = 8f
+private val NOW_PLAYING_LARGE_SCREEN_MIN_DIMENSION = 600.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING = 16.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING = 8.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_ARTWORK_MAX_SIZE = 300.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_TECH_LABEL_OFFSET = 24.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_HEIGHT_EXTENSION = 24.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_VERTICAL_OFFSET = 8.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_END_INSET = 8.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MIN_WIDTH = 360.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH = 520.dp
+private val NOW_PLAYING_COMPACT_LANDSCAPE_PANE_GAP = 20.dp
+private const val NOW_PLAYING_LANDSCAPE_QUEUE_WIDTH_FRACTION = 0.52f
+private val NOW_PLAYING_LANDSCAPE_QUEUE_MAX_WIDTH = 520.dp
+private val NOW_PLAYING_LARGE_SCREEN_HORIZONTAL_PADDING = 32.dp
+private val NOW_PLAYING_LARGE_SCREEN_ARTWORK_MAX_SIZE = 420.dp
+private val NOW_PLAYING_LARGE_SCREEN_CONTROL_MAX_WIDTH = 440.dp
+private val NOW_PLAYING_LARGE_SCREEN_CONTROL_HEIGHT_EXTENSION = 40.dp
+private val NOW_PLAYING_LARGE_SCREEN_CONTROL_GROUP_SPACING = 20.dp
+private val NOW_PLAYING_LARGE_SCREEN_PANE_GAP = 36.dp
 private val MINI_PLAYER_LANDSCAPE_MAX_WIDTH = 520.dp
 private val MINI_PLAYER_LANDSCAPE_WIDTH_LIMIT_HEIGHT = 480.dp
 private val artworkPresentationCache = LruCache<String, ArtworkPresentation>(ARTWORK_PRESENTATION_CACHE_ENTRIES)
