@@ -81,6 +81,48 @@ class PlayerChromeInteractionTest {
     }
 
     @Test
+    fun controlPriorityTransportAdaptsAtNarrowWindowBoundaries() {
+        assertEquals(
+            NowPlayingTransportLayout.Standard,
+            controlPriorityNowPlayingTransportLayout(296.dp),
+        )
+        assertEquals(
+            NowPlayingTransportLayout.CompactIconOnly,
+            controlPriorityNowPlayingTransportLayout(280.dp),
+        )
+        assertEquals(
+            NowPlayingTransportLayout.CompactIconOnly,
+            controlPriorityNowPlayingTransportLayout(248.dp),
+        )
+        assertEquals(
+            NowPlayingTransportLayout.Stacked,
+            controlPriorityNowPlayingTransportLayout(200.dp),
+        )
+    }
+
+    @Test
+    fun resizingIntoControlPriorityLayoutDismissesLyrics() {
+        assertTrue(
+            shouldDismissLyricsForControlPriorityLayout(
+                showLyrics = true,
+                useControlPriorityLayout = true,
+            ),
+        )
+        assertFalse(
+            shouldDismissLyricsForControlPriorityLayout(
+                showLyrics = true,
+                useControlPriorityLayout = false,
+            ),
+        )
+        assertFalse(
+            shouldDismissLyricsForControlPriorityLayout(
+                showLyrics = false,
+                useControlPriorityLayout = true,
+            ),
+        )
+    }
+
+    @Test
     fun tooNarrowLandscapeFallsBackToControlPriorityLayout() {
         assertFalse(supportsLargeScreenNowPlayingLayout(450.dp, 400.dp))
         assertFalse(supportsCompactLandscapeNowPlayingLayout(450.dp, 400.dp))

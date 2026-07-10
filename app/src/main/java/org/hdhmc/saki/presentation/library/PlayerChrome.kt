@@ -751,6 +751,16 @@ fun NowPlayingOverlay(
             val useControlPriorityLandscapeLayout = isLandscapeLayout &&
                 !useLargeScreenLandscapeLayout &&
                 !useCompactLandscapeLayout
+            LaunchedEffect(useControlPriorityLandscapeLayout) {
+                if (
+                    shouldDismissLyricsForControlPriorityLayout(
+                        showLyrics = showLyrics,
+                        useControlPriorityLayout = useControlPriorityLandscapeLayout,
+                    )
+                ) {
+                    showLyrics = false
+                }
+            }
             val shortScreen = overlayMaxHeight < 700.dp
             val titleStyle = when {
                 track.title.length >= 34 -> MaterialTheme.typography.titleLarge.copy(
@@ -1070,6 +1080,7 @@ fun NowPlayingOverlay(
             fun ControlDeck(
                 largeScreen: Boolean,
                 compactLandscape: Boolean = false,
+                transportLayout: NowPlayingTransportLayout = NowPlayingTransportLayout.Standard,
                 modifier: Modifier = Modifier,
             ) {
                 @Composable
@@ -1140,11 +1151,14 @@ fun NowPlayingOverlay(
 
                 @Composable
                 fun TransportControls(modifier: Modifier) {
-                    Row(
-                        modifier = modifier,
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                    val playPauseLabel = if (playbackState.isPlaying) {
+                        stringResource(R.string.player_pause)
+                    } else {
+                        stringResource(R.string.player_play)
+                    }
+
+                    @Composable
+                    fun PreviousButton() {
                         PlayerActionButton(
                             icon = Icons.Rounded.SkipPrevious,
                             label = stringResource(R.string.player_previous),
@@ -1154,12 +1168,19 @@ fun NowPlayingOverlay(
                             },
                             compact = compactControls,
                         )
-                        Spacer(Modifier.width(14.dp))
+                    }
+
+                    @Composable
+                    fun PrimaryPlayButton(showLabel: Boolean) {
                         Surface(
-                            modifier = Modifier.size(
-                                width = if (compactControls) 132.dp else 148.dp,
-                                height = if (compactControls) 64.dp else 72.dp,
-                            ),
+                            modifier = if (showLabel) {
+                                Modifier.size(
+                                    width = if (compactControls) 132.dp else 148.dp,
+                                    height = if (compactControls) 64.dp else 72.dp,
+                                )
+                            } else {
+                                Modifier.size(64.dp)
+                            },
                             shape = RoundedCornerShape(visuals.nowPlayingPrimaryControlCornerRadius),
                             color = playButtonColor,
                         ) {
@@ -1167,29 +1188,44 @@ fun NowPlayingOverlay(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clickable(onClick = onPlayPause)
-                                    .padding(horizontal = visuals.nowPlayingPrimaryControlHorizontalPadding),
+                                    .then(
+                                        if (showLabel) {
+                                            Modifier.padding(
+                                                horizontal = visuals.nowPlayingPrimaryControlHorizontalPadding,
+                                            )
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Icon(
-                                    imageVector = if (playbackState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = null,
+                                    imageVector = if (playbackState.isPlaying) {
+                                        Icons.Rounded.Pause
+                                    } else {
+                                        Icons.Rounded.PlayArrow
+                                    },
+                                    contentDescription = playPauseLabel.takeUnless { showLabel },
                                     tint = onPlayButtonColor,
                                     modifier = Modifier.size(visuals.nowPlayingPrimaryControlIconSize),
                                 )
-                                Text(
-                                    text = if (playbackState.isPlaying) {
-                                        stringResource(R.string.player_pause)
-                                    } else {
-                                        stringResource(R.string.player_play)
-                                    },
-                                    modifier = Modifier.padding(start = visuals.nowPlayingPrimaryControlLabelSpacing),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = onPlayButtonColor,
-                                )
+                                if (showLabel) {
+                                    Text(
+                                        text = playPauseLabel,
+                                        modifier = Modifier.padding(
+                                            start = visuals.nowPlayingPrimaryControlLabelSpacing,
+                                        ),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = onPlayButtonColor,
+                                    )
+                                }
                             }
                         }
-                        Spacer(Modifier.width(14.dp))
+                    }
+
+                    @Composable
+                    fun NextButton() {
                         PlayerActionButton(
                             icon = Icons.Rounded.SkipNext,
                             label = stringResource(R.string.player_next),
@@ -1199,6 +1235,48 @@ fun NowPlayingOverlay(
                             },
                             compact = compactControls,
                         )
+                    }
+
+                    when (transportLayout) {
+                        NowPlayingTransportLayout.Standard -> Row(
+                            modifier = modifier,
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PreviousButton()
+                            Spacer(Modifier.width(14.dp))
+                            PrimaryPlayButton(showLabel = true)
+                            Spacer(Modifier.width(14.dp))
+                            NextButton()
+                        }
+
+                        NowPlayingTransportLayout.CompactIconOnly -> Row(
+                            modifier = modifier,
+                            horizontalArrangement = Arrangement.spacedBy(
+                                space = 12.dp,
+                                alignment = Alignment.CenterHorizontally,
+                            ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PreviousButton()
+                            PrimaryPlayButton(showLabel = false)
+                            NextButton()
+                        }
+
+                        NowPlayingTransportLayout.Stacked -> Column(
+                            modifier = modifier,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            PrimaryPlayButton(showLabel = false)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                PreviousButton()
+                                NextButton()
+                            }
+                        }
                     }
                 }
 
@@ -1465,6 +1543,7 @@ fun NowPlayingOverlay(
                     val controlHeight = (
                         overlayMaxHeight - NOW_PLAYING_COMPACT_LANDSCAPE_VERTICAL_PADDING * 2
                         ).coerceAtLeast(0.dp)
+                    val transportLayout = controlPriorityNowPlayingTransportLayout(overlayMaxWidth)
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1477,6 +1556,7 @@ fun NowPlayingOverlay(
                         ControlDeck(
                             largeScreen = false,
                             compactLandscape = true,
+                            transportLayout = transportLayout,
                             modifier = Modifier
                                 .width(controlWidth)
                                 .height(controlHeight)
@@ -3357,6 +3437,38 @@ internal data class CompactLandscapeStageMetrics(
     val controlWidth: Dp,
     val controlHeight: Dp,
 )
+
+internal enum class NowPlayingTransportLayout {
+    Standard,
+    CompactIconOnly,
+    Stacked,
+}
+
+internal fun shouldDismissLyricsForControlPriorityLayout(
+    showLyrics: Boolean,
+    useControlPriorityLayout: Boolean,
+): Boolean = showLyrics && useControlPriorityLayout
+
+internal fun nowPlayingTransportLayoutForWidth(contentWidth: Dp): NowPlayingTransportLayout = when {
+    contentWidth >= 256.dp -> NowPlayingTransportLayout.Standard
+    contentWidth >= 184.dp -> NowPlayingTransportLayout.CompactIconOnly
+    else -> NowPlayingTransportLayout.Stacked
+}
+
+internal fun controlPriorityNowPlayingTransportLayout(
+    overlayWidth: Dp,
+): NowPlayingTransportLayout {
+    val controlWidth = minOf(
+        NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_MAX_WIDTH,
+        (
+            overlayWidth - NOW_PLAYING_COMPACT_LANDSCAPE_HORIZONTAL_PADDING * 2
+            ).coerceAtLeast(0.dp),
+    )
+    val contentWidth = (
+        controlWidth - NOW_PLAYING_COMPACT_LANDSCAPE_CONTROL_END_INSET
+        ).coerceAtLeast(0.dp)
+    return nowPlayingTransportLayoutForWidth(contentWidth)
+}
 
 internal fun supportsLargeScreenNowPlayingLayout(width: Dp, height: Dp): Boolean =
     width > height &&
