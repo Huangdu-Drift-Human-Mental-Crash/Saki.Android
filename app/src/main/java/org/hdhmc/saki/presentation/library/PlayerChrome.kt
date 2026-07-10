@@ -456,6 +456,74 @@ private fun MiniPlayerIconButton(
     }
 }
 
+@Composable
+internal fun AdaptiveNowPlayingHeaderLayout(
+    stacked: Boolean,
+    modifier: Modifier = Modifier,
+    title: @Composable (Modifier) -> Unit,
+    status: @Composable (Modifier) -> Unit,
+    more: (@Composable (Modifier) -> Unit)? = null,
+) {
+    if (stacked) {
+        Column(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                title(Modifier.weight(1f))
+                more?.invoke(Modifier)
+            }
+            status(Modifier.align(Alignment.End))
+        }
+    } else {
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            title(Modifier.weight(1f))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                status(Modifier)
+                more?.invoke(Modifier)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AdaptiveNowPlayingIdentityControlsLayout(
+    stacked: Boolean,
+    modifier: Modifier = Modifier,
+    identity: @Composable (Modifier) -> Unit,
+    controls: @Composable (Modifier) -> Unit,
+) {
+    if (stacked) {
+        Column(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            identity(Modifier.fillMaxWidth())
+            controls(Modifier.align(Alignment.End))
+        }
+    } else {
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            identity(Modifier.weight(1f))
+            controls(Modifier)
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingOverlay(
@@ -1027,53 +1095,66 @@ fun NowPlayingOverlay(
             fun PlayerHeader(
                 includeMore: Boolean,
                 compact: Boolean = false,
+                stacked: Boolean = false,
                 modifier: Modifier = Modifier,
             ) {
-                Row(
-                    modifier = modifier,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.player_now_playing),
-                        style = if (compact) {
-                            MaterialTheme.typography.titleMedium
-                        } else {
-                            MaterialTheme.typography.titleLarge
-                        },
-                        color = onArtwork,
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                @Composable
+                fun StatusPill(modifier: Modifier) {
+                    Surface(
+                        modifier = modifier,
+                        shape = MaterialTheme.shapes.large,
+                        color = (if (isDark) Color.Black else Color.White).copy(alpha = 0.28f),
                     ) {
-                        Surface(
-                            shape = MaterialTheme.shapes.large,
-                            color = (if (isDark) Color.Black else Color.White).copy(alpha = 0.28f),
-                        ) {
-                            Text(
-                                text = when {
-                                    track.isCached -> stringResource(R.string.player_offline)
-                                    playbackState.isStreamCached -> stringResource(R.string.player_cached)
-                                    else -> stringResource(R.string.player_streaming)
-                                } + " • ${localizeQualityLabel(track.qualityLabel)}",
-                                modifier = Modifier.padding(
-                                    horizontal = if (compact) 10.dp else 12.dp,
-                                    vertical = if (compact) 6.dp else 8.dp,
-                                ),
-                                style = if (compact) {
-                                    MaterialTheme.typography.labelMedium
-                                } else {
-                                    MaterialTheme.typography.labelLarge
-                                },
-                                color = onArtwork,
-                            )
-                        }
-                        if (includeMore) {
-                            MoreMenuButton()
-                        }
+                        Text(
+                            text = when {
+                                track.isCached -> stringResource(R.string.player_offline)
+                                playbackState.isStreamCached -> stringResource(R.string.player_cached)
+                                else -> stringResource(R.string.player_streaming)
+                            } + " • ${localizeQualityLabel(track.qualityLabel)}",
+                            modifier = Modifier.padding(
+                                horizontal = if (compact) 10.dp else 12.dp,
+                                vertical = if (compact) 6.dp else 8.dp,
+                            ),
+                            style = if (compact) {
+                                MaterialTheme.typography.labelMedium
+                            } else {
+                                MaterialTheme.typography.labelLarge
+                            },
+                            color = onArtwork,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
+
+                AdaptiveNowPlayingHeaderLayout(
+                    stacked = stacked,
+                    modifier = modifier,
+                    title = { titleModifier ->
+                        Text(
+                            text = stringResource(R.string.player_now_playing),
+                            modifier = titleModifier,
+                            style = if (compact) {
+                                MaterialTheme.typography.titleMedium
+                            } else {
+                                MaterialTheme.typography.titleLarge
+                            },
+                            color = onArtwork,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    status = { statusModifier ->
+                        StatusPill(
+                            statusModifier.widthIn(max = if (compact) 144.dp else 180.dp),
+                        )
+                    },
+                    more = if (includeMore) {
+                        { moreModifier -> MoreMenuButton(moreModifier) }
+                    } else {
+                        null
+                    },
+                )
             }
 
             @Composable
@@ -1282,6 +1363,7 @@ fun NowPlayingOverlay(
 
                 val isCachedTrack = track.isCached || playbackState.isStreamCached
                 if (compactLandscape) {
+                    val stackAuxiliaryControls = transportLayout != NowPlayingTransportLayout.Standard
                     Column(
                         modifier = modifier,
                         verticalArrangement = Arrangement.SpaceBetween,
@@ -1289,22 +1371,25 @@ fun NowPlayingOverlay(
                         PlayerHeader(
                             includeMore = true,
                             compact = true,
+                            stacked = stackAuxiliaryControls,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Row(
+                        AdaptiveNowPlayingIdentityControlsLayout(
+                            stacked = stackAuxiliaryControls,
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TrackIdentity(
-                                modifier = Modifier.weight(1f),
-                                compact = true,
-                            )
-                            SecondaryControls(
-                                modifier = Modifier,
-                                spacing = 8.dp,
-                            )
-                        }
+                            identity = { identityModifier ->
+                                TrackIdentity(
+                                    modifier = identityModifier,
+                                    compact = true,
+                                )
+                            },
+                            controls = { controlsModifier ->
+                                SecondaryControls(
+                                    modifier = controlsModifier,
+                                    spacing = 8.dp,
+                                )
+                            },
+                        )
                         TransportControls(
                             modifier = Modifier
                                 .fillMaxWidth()
