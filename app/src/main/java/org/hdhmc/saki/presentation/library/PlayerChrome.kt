@@ -19,9 +19,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -1173,32 +1173,35 @@ fun NowPlayingOverlay(
                         modifier = modifier.then(dismissSwipeModifier),
                         verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else verticalSpacing),
                     ) {
-                        Text(
-                            text = track.title,
-                            style = when {
-                                largeScreen -> MaterialTheme.typography.headlineMedium.copy(
-                                    fontSize = if (denseTitle) 26.sp else 28.sp,
-                                    lineHeight = if (denseTitle) 32.sp else 34.sp,
-                                )
-                                compact -> MaterialTheme.typography.titleLarge.copy(
-                                    fontSize = if (denseTitle) 22.sp else 24.sp,
-                                    lineHeight = 28.sp,
-                                )
-                                else -> titleStyle
-                            },
-                            color = onArtwork,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(
-                                    if (largeScreen) {
-                                        Modifier
-                                    } else {
-                                        Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                                    },
-                                ),
-                            maxLines = if (largeScreen) 2 else 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        val trackTitleStyle = when {
+                            largeScreen -> MaterialTheme.typography.headlineMedium.copy(
+                                fontSize = if (denseTitle) 26.sp else 28.sp,
+                                lineHeight = if (denseTitle) 32.sp else 34.sp,
+                            )
+                            compact -> MaterialTheme.typography.titleLarge.copy(
+                                fontSize = if (denseTitle) 22.sp else 24.sp,
+                                lineHeight = 28.sp,
+                            )
+                            else -> titleStyle
+                        }
+                        if (largeScreen) {
+                            Text(
+                                text = track.title,
+                                style = trackTitleStyle,
+                                color = onArtwork,
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        } else {
+                            NowPlayingAutoScrollingText(
+                                text = track.title,
+                                style = trackTitleStyle,
+                                color = onArtwork,
+                                scrollKey = "${track.mediaId}|${track.title}",
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                         MetadataLinkRow(
                             track = track,
                             textStyle = when {
@@ -2183,6 +2186,72 @@ private fun PressScaleIconButton(
 
 
 @Composable
+private fun rememberNowPlayingAutoScrollState(scrollKey: Any?): ScrollState {
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    LaunchedEffect(scrollKey, scrollState.maxValue, density) {
+        scrollState.scrollTo(0)
+        if (scrollState.maxValue <= 0 || scrollState.maxValue == Int.MAX_VALUE) return@LaunchedEffect
+        if (coroutineContext[MotionDurationScale.Key]?.scaleFactor == 0f) return@LaunchedEffect
+
+        delay(NOW_PLAYING_AUTO_SCROLL_EDGE_PAUSE_MS)
+        val speedPxPerMs = with(density) {
+            NOW_PLAYING_AUTO_SCROLL_SPEED_DP_PER_SECOND.dp.toPx()
+        } / 1000f
+        while (scrollState.maxValue > 0 && scrollState.maxValue != Int.MAX_VALUE) {
+            val forwardDistance = (scrollState.maxValue - scrollState.value).coerceAtLeast(0)
+            if (forwardDistance > 0) {
+                scrollState.animateScrollTo(
+                    scrollState.maxValue,
+                    animationSpec = tween(
+                        durationMillis = nowPlayingAutoScrollDurationMillis(forwardDistance, speedPxPerMs),
+                        easing = LinearEasing,
+                    ),
+                )
+            }
+            delay(NOW_PLAYING_AUTO_SCROLL_EDGE_PAUSE_MS)
+
+            val backwardDistance = scrollState.value.coerceAtLeast(0)
+            if (backwardDistance > 0) {
+                scrollState.animateScrollTo(
+                    0,
+                    animationSpec = tween(
+                        durationMillis = nowPlayingAutoScrollDurationMillis(backwardDistance, speedPxPerMs),
+                        easing = LinearEasing,
+                    ),
+                )
+            }
+            delay(NOW_PLAYING_AUTO_SCROLL_EDGE_PAUSE_MS)
+        }
+    }
+    return scrollState
+}
+
+@Composable
+private fun NowPlayingAutoScrollingText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    scrollKey: Any?,
+    modifier: Modifier = Modifier,
+) {
+    val scrollState = rememberNowPlayingAutoScrollState(scrollKey)
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier.horizontalScroll(scrollState, enabled = false),
+        ) {
+            Text(
+                text = text,
+                style = style,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
+        }
+    }
+}
+
+@Composable
 private fun MetadataLinkRow(
     track: PlaybackQueueItem,
     textStyle: TextStyle,
@@ -2201,7 +2270,6 @@ private fun MetadataLinkRow(
             },
         )
     }
-    val scrollState = rememberScrollState()
     val scrollKey = remember(track.mediaId, artistLinks, track.album, track.albumId) {
         buildString {
             append(track.mediaId)
@@ -2217,42 +2285,7 @@ private fun MetadataLinkRow(
             append(track.albumId.orEmpty())
         }
     }
-    val density = LocalDensity.current
-    LaunchedEffect(scrollKey, scrollState.maxValue, density) {
-        scrollState.scrollTo(0)
-        if (scrollState.maxValue <= 0 || scrollState.maxValue == Int.MAX_VALUE) return@LaunchedEffect
-        if (coroutineContext[MotionDurationScale.Key]?.scaleFactor == 0f) return@LaunchedEffect
-
-        delay(METADATA_LINK_SCROLL_EDGE_PAUSE_MS)
-        val speedPxPerMs = with(density) {
-            METADATA_LINK_SCROLL_SPEED_DP_PER_SECOND.dp.toPx()
-        } / 1000f
-        while (scrollState.maxValue > 0 && scrollState.maxValue != Int.MAX_VALUE) {
-            val forwardDistance = (scrollState.maxValue - scrollState.value).coerceAtLeast(0)
-            if (forwardDistance > 0) {
-                scrollState.animateScrollTo(
-                    scrollState.maxValue,
-                    animationSpec = tween(
-                        durationMillis = metadataLinkScrollDurationMillis(forwardDistance, speedPxPerMs),
-                        easing = LinearEasing,
-                    ),
-                )
-            }
-            delay(METADATA_LINK_SCROLL_EDGE_PAUSE_MS)
-
-            val backwardDistance = scrollState.value.coerceAtLeast(0)
-            if (backwardDistance > 0) {
-                scrollState.animateScrollTo(
-                    0,
-                    animationSpec = tween(
-                        durationMillis = metadataLinkScrollDurationMillis(backwardDistance, speedPxPerMs),
-                        easing = LinearEasing,
-                    ),
-                )
-            }
-            delay(METADATA_LINK_SCROLL_EDGE_PAUSE_MS)
-        }
-    }
+    val scrollState = rememberNowPlayingAutoScrollState(scrollKey)
 
     Box(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -2343,11 +2376,11 @@ private fun MetadataLinkText(
     )
 }
 
-private fun metadataLinkScrollDurationMillis(distancePx: Int, speedPxPerMs: Float): Int {
-    if (speedPxPerMs <= 0f) return METADATA_LINK_SCROLL_MIN_DURATION_MS
+internal fun nowPlayingAutoScrollDurationMillis(distancePx: Int, speedPxPerMs: Float): Int {
+    if (speedPxPerMs <= 0f) return NOW_PLAYING_AUTO_SCROLL_MIN_DURATION_MS
     return (distancePx / speedPxPerMs)
         .roundToInt()
-        .coerceAtLeast(METADATA_LINK_SCROLL_MIN_DURATION_MS)
+        .coerceAtLeast(NOW_PLAYING_AUTO_SCROLL_MIN_DURATION_MS)
 }
 
 private enum class QueueSheetAnchor { Hidden, Partial, Expanded }
@@ -3466,9 +3499,9 @@ private const val ARTWORK_BUTTON_SKIP_INITIAL_VELOCITY_PAGES = 3.5f
 private const val COMPACT_TECH_INFO_SETTLE_MS = 700L
 private const val COMPACT_TECH_INFO_FADE_MS = 700
 private const val KARAOKE_PROGRESS_CORRECTION_THRESHOLD_MS = 1_200L
-private const val METADATA_LINK_SCROLL_EDGE_PAUSE_MS = 1_200L
-private const val METADATA_LINK_SCROLL_MIN_DURATION_MS = 350
-private const val METADATA_LINK_SCROLL_SPEED_DP_PER_SECOND = 32f
+private const val NOW_PLAYING_AUTO_SCROLL_EDGE_PAUSE_MS = 1_200L
+private const val NOW_PLAYING_AUTO_SCROLL_MIN_DURATION_MS = 350
+private const val NOW_PLAYING_AUTO_SCROLL_SPEED_DP_PER_SECOND = 32f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_SCALE = 1.1f
 private const val NOW_PLAYING_ARTWORK_BACKDROP_BLUR_RADIUS_PX = 60f
 private const val PROGRAMMATIC_ARTWORK_SPRING_BASE_STIFFNESS = 140f
