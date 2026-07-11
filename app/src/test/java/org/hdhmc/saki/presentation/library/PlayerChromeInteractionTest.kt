@@ -62,6 +62,9 @@ class PlayerChromeInteractionTest {
 
     @Test
     fun miniPlayerUsesCompactWidthInShortLandscapeWindows() {
+        assertEquals(500.dp, calculateMiniPlayerMaxWidth(500.dp, 400.dp))
+        assertEquals(520.dp, calculateMiniPlayerMaxWidth(599.dp, 400.dp))
+        assertEquals(520.dp, calculateMiniPlayerMaxWidth(600.dp, 400.dp))
         assertEquals(520.dp, calculateMiniPlayerMaxWidth(869.dp, 400.dp))
     }
 

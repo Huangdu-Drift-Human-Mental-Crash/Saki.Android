@@ -3578,11 +3578,12 @@ private const val MINI_PLAYER_WIDE_LANDSCAPE_WIDTH_FRACTION = 0.68f
 private val artworkPresentationCache = LruCache<String, ArtworkPresentation>(ARTWORK_PRESENTATION_CACHE_ENTRIES)
 
 internal fun calculateMiniPlayerMaxWidth(width: Dp, height: Dp): Dp? {
+    if (width > height && height < MINI_PLAYER_COMPACT_LANDSCAPE_MAX_HEIGHT) {
+        return minOf(width, MINI_PLAYER_COMPACT_LANDSCAPE_MAX_WIDTH)
+    }
     if (width < MINI_PLAYER_WIDE_LAYOUT_MIN_WIDTH) return null
 
     return when {
-        width > height && height < MINI_PLAYER_COMPACT_LANDSCAPE_MAX_HEIGHT ->
-            minOf(width, MINI_PLAYER_COMPACT_LANDSCAPE_MAX_WIDTH)
         width > height ->
             (width * MINI_PLAYER_WIDE_LANDSCAPE_WIDTH_FRACTION).coerceIn(
                 MINI_PLAYER_COMPACT_LANDSCAPE_MAX_WIDTH,
