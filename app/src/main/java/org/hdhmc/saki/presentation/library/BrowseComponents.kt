@@ -270,119 +270,65 @@ fun ArtistDetailScreen(
         albumCount?.let { albumCountText(it) },
         songs.size.takeIf { it > 0 }?.let { songCountText(it) },
     )
-    val useExpressiveSinglePane = SakiTheme.visuals.useExpressiveSurfaceContainers
     AdaptiveLibraryDetailLayout(
         modifier = Modifier.fillMaxSize(),
         singlePane = {
-            if (useExpressiveSinglePane) {
-                val visuals = rememberDetailVisuals()
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = bottomContentPadding(bottomOverlayPadding),
-                ) {
-                    item {
-                        ArtistDetailHeader(
-                            title = artist.name,
-                            artwork = visuals.artworkModel,
-                            accentColor = visuals.accentColor,
-                            metaItems = artistMetaItems,
-                            canPlay = songs.isNotEmpty(),
-                            onPlay = { if (songs.isNotEmpty()) onPlaySongs(songs, 0) },
-                            onBack = onBack,
-                        )
-                    }
-                    when {
-                        isLoading && songs.isEmpty() -> item {
-                            LoadingStateCard(stringResource(R.string.library_loading_artist))
-                        }
-                        error != null && songs.isEmpty() -> item { ErrorStateCard(error) }
-                        else -> {
-                            if (songs.isNotEmpty()) {
-                                item {
-                                    AlbumTrackListCard(
-                                        songs = songs,
-                                        cachedSongsBySongId = cachedSongsBySongId,
-                                        streamCachedSongIds = streamCachedSongIds,
-                                        downloadingSongIds = downloadingSongIds,
-                                        isOfflineDegraded = isOfflineDegraded,
-                                        currentPlaybackSongId = currentPlaybackSongId,
-                                        isPlaying = isPlaying,
-                                        accentColor = visuals.trackAccentColor,
-                                        albumArtistLabel = artist.name,
-                                        collapsedCount = 5,
-                                        useSequentialNumbers = true,
-                                        onPlaySongs = onPlaySongs,
-                                        onShowActions = onShowActions,
-                                    )
-                                }
-                            }
-                            if (visibleAlbums.isNotEmpty()) {
-                                item {
-                                    SectionTitle(
-                                        stringResource(R.string.library_albums),
-                                        stringResource(R.string.library_albums_subtitle_full_release),
-                                    )
-                                }
-                                item {
-                                    LazyRow {
-                                        items(visibleAlbums, key = { it.id }) { album ->
-                                            AlbumMiniCard(
-                                                album = album,
-                                                server = server,
-                                                onOpenAlbum = onOpenAlbum,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            val visuals = rememberDetailVisuals()
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = bottomContentPadding(bottomOverlayPadding),
+            ) {
+                item {
+                    ArtistDetailHeader(
+                        title = artist.name,
+                        artwork = visuals.artworkModel,
+                        accentColor = visuals.accentColor,
+                        metaItems = artistMetaItems,
+                        canPlay = songs.isNotEmpty(),
+                        onPlay = { if (songs.isNotEmpty()) onPlaySongs(songs, 0) },
+                        onBack = onBack,
+                    )
                 }
-            } else {
-                LibraryDetailScaffold(
-                    title = artist.name,
-                    subtitle = if (albumCount != null) albumCountText(albumCount) else null,
-                    artwork = null,
-                    bottomOverlayPadding = bottomOverlayPadding,
-                ) {
-                    when {
-                        isLoading && songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_artist)) }
-                        error != null && songs.isEmpty() -> item { ErrorStateCard(error) }
-                        else -> {
-                            if (songs.isNotEmpty()) {
-                                item {
-                                    SectionTitle(
-                                        stringResource(R.string.library_artist_songs),
-                                        stringResource(R.string.library_artist_songs_subtitle, artist.name),
-                                    )
-                                }
-                                itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
-                                    val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-                                    SongRow(
-                                        song = song,
-                                        server = server,
-                                        cachedSong = cachedSongsBySongId[song.id],
-                                        isStreamCached = song.id in streamCachedSongIds,
-                                        isDownloading = song.id in downloadingSongIds,
-                                        isOfflineDegraded = isOfflineDegraded,
-                                        isOfflinePlayable = isOfflinePlayable,
-                                        onClick = { onPlaySongs(songs, index) },
-                                        onMore = { onShowActions(song) },
-                                    )
-                                }
+                when {
+                    isLoading && songs.isEmpty() -> item {
+                        LoadingStateCard(stringResource(R.string.library_loading_artist))
+                    }
+                    error != null && songs.isEmpty() -> item { ErrorStateCard(error) }
+                    else -> {
+                        if (songs.isNotEmpty()) {
+                            item {
+                                AlbumTrackListCard(
+                                    songs = songs,
+                                    cachedSongsBySongId = cachedSongsBySongId,
+                                    streamCachedSongIds = streamCachedSongIds,
+                                    downloadingSongIds = downloadingSongIds,
+                                    isOfflineDegraded = isOfflineDegraded,
+                                    currentPlaybackSongId = currentPlaybackSongId,
+                                    isPlaying = isPlaying,
+                                    accentColor = visuals.trackAccentColor,
+                                    albumArtistLabel = artist.name,
+                                    collapsedCount = 5,
+                                    useSequentialNumbers = true,
+                                    onPlaySongs = onPlaySongs,
+                                    onShowActions = onShowActions,
+                                )
                             }
-                            if (visibleAlbums.isNotEmpty()) {
-                                item {
-                                    SectionTitle(
-                                        stringResource(R.string.library_albums),
-                                        stringResource(R.string.library_albums_subtitle_full_release),
-                                    )
-                                }
-                                item {
-                                    LazyRow {
-                                        items(visibleAlbums, key = { it.id }) { album ->
-                                            AlbumMiniCard(album = album, server = server, onOpenAlbum = onOpenAlbum)
-                                        }
+                        }
+                        if (visibleAlbums.isNotEmpty()) {
+                            item {
+                                SectionTitle(
+                                    stringResource(R.string.library_albums),
+                                    stringResource(R.string.library_albums_subtitle_full_release),
+                                )
+                            }
+                            item {
+                                LazyRow {
+                                    items(visibleAlbums, key = { it.id }) { album ->
+                                        AlbumMiniCard(
+                                            album = album,
+                                            server = server,
+                                            onOpenAlbum = onOpenAlbum,
+                                        )
                                     }
                                 }
                             }
@@ -390,6 +336,7 @@ fun ArtistDetailScreen(
                     }
                 }
             }
+
         },
         twoPane = { infoModifier, contentModifier ->
             val visuals = rememberDetailVisuals()
@@ -728,7 +675,6 @@ fun AlbumDetailScreen(
         album.year?.toString(),
         if (songCount != null) songCountText(songCount) else null,
     )
-    val subtitle = artistYearSongCount.joinToString(" • ")
     val playAlbum: () -> Unit = {
         if (album.songs.isNotEmpty()) {
             if (isOfflineDegraded) {
@@ -765,88 +711,50 @@ fun AlbumDetailScreen(
         )
     }
 
-    val useExpressiveSinglePane = SakiTheme.visuals.useExpressiveSurfaceContainers
     AdaptiveLibraryDetailLayout(
         modifier = Modifier.fillMaxSize(),
         singlePane = {
-            if (useExpressiveSinglePane) {
-                val visuals = rememberDetailVisuals()
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = bottomContentPadding(bottomOverlayPadding),
-                ) {
-                    item {
-                        AlbumDetailHeroCard(
-                            title = album.name,
-                            artwork = visuals.artworkModel,
-                            accentColor = visuals.accentColor,
-                            metaItems = artistYearSongCount,
-                            canPlay = album.songs.isNotEmpty(),
-                            onPlay = playAlbum,
-                            onBack = onBack,
-                            playContentDescription = stringResource(R.string.library_play_album),
-                        )
-                    }
-
-                    when {
-                        isLoading && album.songs.isEmpty() -> item {
-                            LoadingStateCard(stringResource(R.string.library_loading_album))
-                        }
-                        error != null && album.songs.isEmpty() -> item { ErrorStateCard(error) }
-                        else -> item {
-                            AlbumTrackListCard(
-                                songs = album.songs,
-                                cachedSongsBySongId = cachedSongsBySongId,
-                                streamCachedSongIds = streamCachedSongIds,
-                                downloadingSongIds = downloadingSongIds,
-                                isOfflineDegraded = isOfflineDegraded,
-                                currentPlaybackSongId = currentPlaybackSongId,
-                                isPlaying = isPlaying,
-                                accentColor = visuals.trackAccentColor,
-                                albumArtistLabel = album.artistDisplayLabel(),
-                                onPlaySongs = onPlaySongs,
-                                onShowActions = onShowActions,
-                            )
-                        }
-                    }
+            val visuals = rememberDetailVisuals()
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = bottomContentPadding(bottomOverlayPadding),
+            ) {
+                item {
+                    AlbumDetailHeroCard(
+                        title = album.name,
+                        artwork = visuals.artworkModel,
+                        accentColor = visuals.accentColor,
+                        metaItems = artistYearSongCount,
+                        canPlay = album.songs.isNotEmpty(),
+                        onPlay = playAlbum,
+                        onBack = onBack,
+                        playContentDescription = stringResource(R.string.library_play_album),
+                    )
                 }
-            } else {
-                LibraryDetailScaffold(
-                    title = album.name,
-                    subtitle = subtitle,
-                    artwork = resolveArtworkModel(server, album.coverArtId, null),
-                    bottomOverlayPadding = bottomOverlayPadding,
-                ) {
-                    when {
-                        isLoading && album.songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_album)) }
-                        error != null && album.songs.isEmpty() -> item { ErrorStateCard(error) }
-                        else -> {
-                            item {
-                                SectionTitle(
-                                    title = stringResource(R.string.library_track_list),
-                                    subtitle = album.genre ?: stringResource(R.string.library_album_details),
-                                    actionLabel = stringResource(R.string.library_play_album),
-                                    onAction = playAlbum,
-                                )
-                            }
-                            itemsIndexed(album.songs, key = { _, s -> s.id }) { index, song ->
-                                val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-                                SongRow(
-                                    song = song,
-                                    server = server,
-                                    cachedSong = cachedSongsBySongId[song.id],
-                                    isStreamCached = song.id in streamCachedSongIds,
-                                    isDownloading = song.id in downloadingSongIds,
-                                    isOfflineDegraded = isOfflineDegraded,
-                                    isOfflinePlayable = isOfflinePlayable,
-                                    onClick = { onPlaySongs(album.songs, index) },
-                                    onMore = { onShowActions(song) },
-                                )
-                            }
-                        }
+
+                when {
+                    isLoading && album.songs.isEmpty() -> item {
+                        LoadingStateCard(stringResource(R.string.library_loading_album))
+                    }
+                    error != null && album.songs.isEmpty() -> item { ErrorStateCard(error) }
+                    else -> item {
+                        AlbumTrackListCard(
+                            songs = album.songs,
+                            cachedSongsBySongId = cachedSongsBySongId,
+                            streamCachedSongIds = streamCachedSongIds,
+                            downloadingSongIds = downloadingSongIds,
+                            isOfflineDegraded = isOfflineDegraded,
+                            currentPlaybackSongId = currentPlaybackSongId,
+                            isPlaying = isPlaying,
+                            accentColor = visuals.trackAccentColor,
+                            albumArtistLabel = album.artistDisplayLabel(),
+                            onPlaySongs = onPlaySongs,
+                            onShowActions = onShowActions,
+                        )
                     }
                 }
             }
+
         },
         twoPane = { infoModifier, contentModifier ->
             val visuals = rememberDetailVisuals()
@@ -1585,106 +1493,64 @@ fun PlaylistDetailScreen(
         playlist.owner,
         songCount?.let { songCountText(it) },
     )
-    val useExpressiveSinglePane = SakiTheme.visuals.useExpressiveSurfaceContainers
     AdaptiveLibraryDetailLayout(
         modifier = Modifier.fillMaxSize(),
         singlePane = {
-            if (useExpressiveSinglePane) {
-                val visuals = rememberDetailVisuals()
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = bottomContentPadding(bottomOverlayPadding),
-                ) {
-                    item {
-                        AlbumDetailHeroCard(
-                            title = playlist.name,
-                            artwork = visuals.artworkModel,
-                            accentColor = visuals.accentColor,
-                            metaItems = playlistMetaItems,
-                            canPlay = playlist.songs.isNotEmpty(),
-                            onPlay = playPlaylist,
-                            onBack = onBack,
-                            playContentDescription = stringResource(R.string.library_play_playlist),
-                        )
-                    }
-                    when {
-                        isLoading && playlist.songs.isEmpty() -> item {
-                            LoadingStateCard(stringResource(R.string.library_loading_playlist))
-                        }
-                        error != null && playlist.songs.isEmpty() -> item { ErrorStateCard(error) }
-                        else -> itemsIndexed(
-                            playlist.songs,
-                            key = { index, song -> "${song.id}_$index" },
-                        ) { index, song ->
-                            val isOfflinePlayable = song.isOfflinePlayable(
-                                cachedSongsBySongId,
-                                streamCachedSongIds,
-                            )
-                            AlbumTrackRow(
-                                song = song,
-                                index = index,
-                                useTrackNumbers = false,
-                                albumArtistLabel = null,
-                                cachedSong = cachedSongsBySongId[song.id],
-                                isStreamCached = song.id in streamCachedSongIds,
-                                isDownloading = song.id in downloadingSongIds,
-                                isOfflineDegraded = isOfflineDegraded,
-                                isOfflinePlayable = isOfflinePlayable,
-                                isCurrent = currentPlaybackSongId == song.id,
-                                isPlaying = isPlaying,
-                                accentColor = visuals.trackAccentColor,
-                                artworkModel = resolveArtworkModel(
-                                    server,
-                                    song.coverArtId,
-                                    cachedSongsBySongId[song.id],
-                                ),
-                                onClick = { onPlaySongs(playlist.songs, index) },
-                                onMore = { onShowActions(song) },
-                            )
-                        }
-                    }
+            val visuals = rememberDetailVisuals()
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = bottomContentPadding(bottomOverlayPadding),
+            ) {
+                item {
+                    AlbumDetailHeroCard(
+                        title = playlist.name,
+                        artwork = visuals.artworkModel,
+                        accentColor = visuals.accentColor,
+                        metaItems = playlistMetaItems,
+                        canPlay = playlist.songs.isNotEmpty(),
+                        onPlay = playPlaylist,
+                        onBack = onBack,
+                        playContentDescription = stringResource(R.string.library_play_playlist),
+                    )
                 }
-            } else {
-                val subtitle = listOfNotNull(
-                    playlist.owner,
-                    if (songCount != null) songCountText(songCount) else null,
-                ).joinToString(" • ")
-                LibraryDetailScaffold(
-                    title = playlist.name,
-                    subtitle = subtitle,
-                    artwork = resolveArtworkModel(server, playlist.coverArtId, null),
-                    bottomOverlayPadding = bottomOverlayPadding,
-                ) {
-                    when {
-                        isLoading && playlist.songs.isEmpty() -> item { LoadingStateCard(stringResource(R.string.library_loading_playlist)) }
-                        error != null && playlist.songs.isEmpty() -> item { ErrorStateCard(error) }
-                        else -> {
-                            item {
-                                SectionTitle(
-                                    title = stringResource(R.string.library_tracks),
-                                    subtitle = stringResource(R.string.library_playlist_sequence),
-                                    actionLabel = stringResource(R.string.library_play_playlist),
-                                    onAction = playPlaylist,
-                                )
-                            }
-                            itemsIndexed(playlist.songs, key = { index, s -> "${s.id}_$index" }) { index, song ->
-                                val isOfflinePlayable = song.isOfflinePlayable(cachedSongsBySongId, streamCachedSongIds)
-                                SongRow(
-                                    song = song,
-                                    server = server,
-                                    cachedSong = cachedSongsBySongId[song.id],
-                                    isStreamCached = song.id in streamCachedSongIds,
-                                    isDownloading = song.id in downloadingSongIds,
-                                    isOfflineDegraded = isOfflineDegraded,
-                                    isOfflinePlayable = isOfflinePlayable,
-                                    onClick = { onPlaySongs(playlist.songs, index) },
-                                    onMore = { onShowActions(song) },
-                                )
-                            }
-                        }
+                when {
+                    isLoading && playlist.songs.isEmpty() -> item {
+                        LoadingStateCard(stringResource(R.string.library_loading_playlist))
+                    }
+                    error != null && playlist.songs.isEmpty() -> item { ErrorStateCard(error) }
+                    else -> itemsIndexed(
+                        playlist.songs,
+                        key = { index, song -> "${song.id}_$index" },
+                    ) { index, song ->
+                        val isOfflinePlayable = song.isOfflinePlayable(
+                            cachedSongsBySongId,
+                            streamCachedSongIds,
+                        )
+                        AlbumTrackRow(
+                            song = song,
+                            index = index,
+                            useTrackNumbers = false,
+                            albumArtistLabel = null,
+                            cachedSong = cachedSongsBySongId[song.id],
+                            isStreamCached = song.id in streamCachedSongIds,
+                            isDownloading = song.id in downloadingSongIds,
+                            isOfflineDegraded = isOfflineDegraded,
+                            isOfflinePlayable = isOfflinePlayable,
+                            isCurrent = currentPlaybackSongId == song.id,
+                            isPlaying = isPlaying,
+                            accentColor = visuals.trackAccentColor,
+                            artworkModel = resolveArtworkModel(
+                                server,
+                                song.coverArtId,
+                                cachedSongsBySongId[song.id],
+                            ),
+                            onClick = { onPlaySongs(playlist.songs, index) },
+                            onMore = { onShowActions(song) },
+                        )
                     }
                 }
             }
+
         },
         twoPane = { infoModifier, contentModifier ->
             val visuals = rememberDetailVisuals()
@@ -1729,49 +1595,6 @@ fun PlaylistDetailScreen(
             )
         },
     )
-}
-
-@Composable
-private fun LibraryDetailScaffold(
-    title: String,
-    subtitle: String?,
-    artwork: Any?,
-    bottomOverlayPadding: Dp,
-    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = bottomContentPadding(bottomOverlayPadding),
-    ) {
-        item {
-            Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp)) {
-                if (artwork != null) {
-                    ArtworkCard(
-                        model = artwork,
-                        contentDescription = title,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(320.dp),
-                        cornerRadiusDp = 34,
-                    )
-                }
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.displaySmall,
-                    modifier = Modifier.padding(top = if (artwork != null) 14.dp else 0.dp),
-                )
-                if (!subtitle.isNullOrBlank()) {
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
-            }
-        }
-        content()
-    }
 }
 
 @Composable
@@ -2184,11 +2007,7 @@ fun SectionTitle(
 fun LoadingStateCard(label: String) {
     Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = sakiCardContainerColor())) {
         Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (SakiTheme.visuals.useExpressiveLoadingIndicator) {
-                LoadingIndicator(modifier = Modifier.size(28.dp))
-            } else {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            }
+            LoadingIndicator(modifier = Modifier.size(28.dp))
             Text(text = label, modifier = Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
     }

@@ -15,7 +15,6 @@ import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.AppPreferences
 import org.hdhmc.saki.domain.model.ThemeMode
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
-import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
 import org.hdhmc.saki.domain.model.ArtistSummary
@@ -437,12 +436,6 @@ class SakiAppViewModel @Inject constructor(
                     androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(nightMode)
                 }
             }
-        }
-    }
-
-    fun updateThemeStyle(themeStyle: ThemeStyle) {
-        viewModelScope.launch {
-            appPreferencesRepository.updateThemeStyle(themeStyle)
         }
     }
 

@@ -18,7 +18,6 @@ import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
-import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.normalizeSongsPageSize
 import org.hdhmc.saki.domain.repository.AppPreferencesRepository
 import java.io.IOException
@@ -58,10 +57,6 @@ class DataStoreAppPreferencesRepository @Inject constructor(
 
     override suspend fun updateThemeMode(themeMode: ThemeMode) {
         dataStore.edit { it[KEY_THEME_MODE] = themeMode.storageKey }
-    }
-
-    override suspend fun updateThemeStyle(themeStyle: ThemeStyle) {
-        dataStore.edit { it[KEY_THEME_STYLE] = themeStyle.storageKey }
     }
 
     override suspend fun updateThemeSeed(seedKey: String) {
@@ -141,7 +136,6 @@ class DataStoreAppPreferencesRepository @Inject constructor(
         val KEY_TEXT_SCALE = stringPreferencesKey("text_scale")
         val KEY_LANGUAGE = stringPreferencesKey("app_language")
         val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
-        val KEY_THEME_STYLE = stringPreferencesKey("theme_style")
         val KEY_THEME_SEED = stringPreferencesKey("theme_seed")
         val KEY_PALETTE_STYLE = stringPreferencesKey("palette_style")
         val KEY_ALBUM_VIEW_MODE = stringPreferencesKey("album_view_mode")
@@ -158,7 +152,6 @@ private fun Preferences.toAppPreferences() = AppPreferences(
     textScale = TextScale.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_TEXT_SCALE]),
     language = AppLanguage.fromTag(this[DataStoreAppPreferencesRepository.KEY_LANGUAGE]),
     themeMode = ThemeMode.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_THEME_MODE]),
-    themeStyle = ThemeStyle.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_THEME_STYLE]),
     themeSeedKey = this[DataStoreAppPreferencesRepository.KEY_THEME_SEED] ?: DEFAULT_THEME_SEED_KEY,
     paletteStyle = SakiPaletteStyle.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_PALETTE_STYLE]),
     albumViewMode = AlbumViewMode.fromStorageKey(this[DataStoreAppPreferencesRepository.KEY_ALBUM_VIEW_MODE]),

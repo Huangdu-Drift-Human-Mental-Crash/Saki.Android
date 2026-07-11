@@ -44,7 +44,6 @@ data class AppPreferences(
     val textScale: TextScale = TextScale.DEFAULT,
     val language: AppLanguage = AppLanguage.SYSTEM,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val themeStyle: ThemeStyle = ThemeStyle.SAKI,
     val themeSeedKey: String = DEFAULT_THEME_SEED_KEY,
     val paletteStyle: SakiPaletteStyle = SakiPaletteStyle.TONAL_SPOT,
     val albumViewMode: AlbumViewMode = AlbumViewMode.GRID,
@@ -109,16 +108,6 @@ enum class ThemeMode(val storageKey: String) {
     companion object {
         fun fromStorageKey(storageKey: String?): ThemeMode =
             entries.firstOrNull { it.storageKey == storageKey } ?: SYSTEM
-    }
-}
-
-enum class ThemeStyle(val storageKey: String) {
-    SAKI("saki"),
-    MATERIAL_EXPRESSIVE("material_expressive");
-
-    companion object {
-        fun fromStorageKey(storageKey: String?): ThemeStyle =
-            entries.firstOrNull { it.storageKey == storageKey } ?: SAKI
     }
 }
 

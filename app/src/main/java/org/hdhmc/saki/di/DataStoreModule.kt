@@ -17,7 +17,10 @@ private val Context.settingsDataStore by preferencesDataStore(
     name = "settings",
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
     produceMigrations = { context ->
-        listOf(RoomToDataStoreMigration(context))
+        listOf(
+            RoomToDataStoreMigration(context),
+            RetireLegacyThemeStyleMigration(),
+        )
     },
 )
 

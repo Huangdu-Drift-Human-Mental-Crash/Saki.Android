@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 private val EXCLUDED_SETTING_KEYS = setOf(
     "room_migration_done",
     "onboarding_completed",
+    "theme_style",
     DataStoreAppPreferencesRepository.KEY_RECENT_SEARCH_QUERIES.name,
 )
 
@@ -147,9 +148,6 @@ class ConfigBackupManager @Inject constructor(
                         }
                         DataStoreAppPreferencesRepository.KEY_THEME_MODE.name -> {
                             ds[DataStoreAppPreferencesRepository.KEY_THEME_MODE] = value; settingsApplied = true
-                        }
-                        DataStoreAppPreferencesRepository.KEY_THEME_STYLE.name -> {
-                            ds[DataStoreAppPreferencesRepository.KEY_THEME_STYLE] = value; settingsApplied = true
                         }
                         DataStoreAppPreferencesRepository.KEY_THEME_SEED.name -> {
                             ds[DataStoreAppPreferencesRepository.KEY_THEME_SEED] = value; settingsApplied = true

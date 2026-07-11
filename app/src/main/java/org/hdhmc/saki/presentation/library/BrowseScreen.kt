@@ -813,21 +813,13 @@ private fun BrowsePager(
                             modifier = Modifier.fillMaxSize(),
                             state = pullState,
                             indicator = {
-                                if (SakiTheme.visuals.useExpressiveLoadingIndicator) {
-                                    PullToRefreshDefaults.LoadingIndicator(
-                                        state = pullState,
-                                        isRefreshing = isRefreshing,
-                                        modifier = Modifier
-                                            .align(Alignment.TopCenter)
-                                            .size(SakiTheme.visuals.pullRefreshLoadingIndicatorSize),
-                                    )
-                                } else {
-                                    PullToRefreshDefaults.Indicator(
-                                        state = pullState,
-                                        isRefreshing = isRefreshing,
-                                        modifier = Modifier.align(Alignment.TopCenter),
-                                    )
-                                }
+                                PullToRefreshDefaults.LoadingIndicator(
+                                    state = pullState,
+                                    isRefreshing = isRefreshing,
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .size(SakiTheme.visuals.pullRefreshLoadingIndicatorSize),
+                                )
                             },
                         ) {
                             Column(modifier = Modifier.fillMaxSize()) {

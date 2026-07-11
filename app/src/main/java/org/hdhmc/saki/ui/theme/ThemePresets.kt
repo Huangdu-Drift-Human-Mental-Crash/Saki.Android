@@ -9,11 +9,10 @@ import org.hdhmc.saki.R
 /**
  * A selectable seed color for the Material Expressive theme.
  *
- * Each seed is fed through `rememberDynamicColorScheme` (Expressive / SPEC_2025) in
- * [SakiAndroidTheme]. The global tuning we settled on — the dark-mode secondary→primary
- * remap and the calmer `selectedContainerAlpha` — is applied to the generated scheme
- * regardless of seed, so every preset inherits the same "calm, on-brand" footing instead
- * of leaning on whatever raw tones a seed happens to produce.
+ * Each seed is fed through MaterialKolor's SPEC_2025 generator in [SakiAndroidTheme]. The
+ * app-wide chroma tuning and [SakiTheme.visuals] treatment are applied regardless of seed, so
+ * every preset inherits the same calm, on-brand footing instead of leaning on whichever raw
+ * tones a seed happens to produce.
  *
  * [key] is the stable identifier persisted as the `themeSeedKey` preference; [nameRes] is
  * the localized display label shown by the Settings theme-color picker.

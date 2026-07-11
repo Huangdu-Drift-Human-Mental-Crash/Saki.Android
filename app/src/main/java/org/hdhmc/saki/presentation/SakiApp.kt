@@ -98,7 +98,6 @@ fun SakiApp(
     }
 
     SakiAndroidTheme(
-        themeStyle = rootUiState.appPreferences.themeStyle,
         seedColor = seedColorForKey(rootUiState.appPreferences.themeSeedKey),
         paletteStyle = rootUiState.appPreferences.paletteStyle,
         useSystemColor = isSystemDynamicSeed(rootUiState.appPreferences.themeSeedKey),
@@ -297,7 +296,6 @@ private fun SettingsRoute(
         onUpdateTextScale = viewModel::updateTextScale,
         onUpdateLanguage = viewModel::updateLanguage,
         onUpdateThemeMode = viewModel::updateThemeMode,
-        onUpdateThemeStyle = viewModel::updateThemeStyle,
         onUpdateThemeSeed = viewModel::updateThemeSeed,
         onUpdatePaletteStyle = viewModel::updatePaletteStyle,
         onUpdateDefaultBrowseTab = viewModel::updateDefaultBrowseTab,
