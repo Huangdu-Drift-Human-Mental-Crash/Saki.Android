@@ -2186,13 +2186,22 @@ private fun PressScaleIconButton(
 
 
 @Composable
-private fun rememberNowPlayingAutoScrollState(scrollKey: Any?): ScrollState {
+private fun currentMotionDurationScaleFactor(): Float {
+    val compositionScope = rememberCoroutineScope()
+    return compositionScope.coroutineContext[MotionDurationScale.Key]?.scaleFactor ?: 1f
+}
+
+@Composable
+private fun rememberNowPlayingAutoScrollState(
+    scrollKey: Any?,
+    motionDurationScaleFactor: Float,
+): ScrollState {
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
-    LaunchedEffect(scrollKey, scrollState.maxValue, density) {
+    LaunchedEffect(scrollKey, scrollState.maxValue, density, motionDurationScaleFactor) {
         scrollState.scrollTo(0)
         if (scrollState.maxValue <= 0 || scrollState.maxValue == Int.MAX_VALUE) return@LaunchedEffect
-        if (coroutineContext[MotionDurationScale.Key]?.scaleFactor == 0f) return@LaunchedEffect
+        if (!nowPlayingAutoScrollEnabled(motionDurationScaleFactor)) return@LaunchedEffect
 
         delay(NOW_PLAYING_AUTO_SCROLL_EDGE_PAUSE_MS)
         val speedPxPerMs = with(density) {
@@ -2235,7 +2244,23 @@ private fun NowPlayingAutoScrollingText(
     scrollKey: Any?,
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = rememberNowPlayingAutoScrollState(scrollKey)
+    val motionDurationScaleFactor = currentMotionDurationScaleFactor()
+    if (!nowPlayingAutoScrollEnabled(motionDurationScaleFactor)) {
+        Text(
+            text = text,
+            style = style,
+            color = color,
+            modifier = modifier,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+
+    val scrollState = rememberNowPlayingAutoScrollState(
+        scrollKey = scrollKey,
+        motionDurationScaleFactor = motionDurationScaleFactor,
+    )
     Box(modifier = modifier) {
         Row(
             modifier = Modifier.horizontalScroll(scrollState, enabled = false),
@@ -2285,7 +2310,11 @@ private fun MetadataLinkRow(
             append(track.albumId.orEmpty())
         }
     }
-    val scrollState = rememberNowPlayingAutoScrollState(scrollKey)
+    val motionDurationScaleFactor = currentMotionDurationScaleFactor()
+    val scrollState = rememberNowPlayingAutoScrollState(
+        scrollKey = scrollKey,
+        motionDurationScaleFactor = motionDurationScaleFactor,
+    )
 
     Box(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -2375,6 +2404,9 @@ private fun MetadataLinkText(
         overflow = TextOverflow.Clip,
     )
 }
+
+internal fun nowPlayingAutoScrollEnabled(motionDurationScaleFactor: Float): Boolean =
+    motionDurationScaleFactor > 0f
 
 internal fun nowPlayingAutoScrollDurationMillis(distancePx: Int, speedPxPerMs: Float): Int {
     if (speedPxPerMs <= 0f) return NOW_PLAYING_AUTO_SCROLL_MIN_DURATION_MS

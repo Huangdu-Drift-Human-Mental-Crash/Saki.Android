@@ -123,6 +123,13 @@ class PlayerChromeInteractionTest {
     }
 
     @Test
+    fun nowPlayingAutoScrollTracksRuntimeMotionScale() {
+        assertTrue(nowPlayingAutoScrollEnabled(1f))
+        assertTrue(nowPlayingAutoScrollEnabled(0.5f))
+        assertFalse(nowPlayingAutoScrollEnabled(0f))
+    }
+
+    @Test
     fun nowPlayingAutoScrollUsesSharedVelocityAndMinimumDuration() {
         assertEquals(1_000, nowPlayingAutoScrollDurationMillis(distancePx = 32, speedPxPerMs = 0.032f))
         assertEquals(350, nowPlayingAutoScrollDurationMillis(distancePx = 1, speedPxPerMs = 0.032f))
