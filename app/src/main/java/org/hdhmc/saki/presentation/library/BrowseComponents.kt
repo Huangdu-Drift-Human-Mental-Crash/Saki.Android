@@ -119,6 +119,12 @@ private val LibraryDetailTwoPaneGap = 20.dp
 private val ArtistDetailAlbumGridMinCellWidth = 128.dp
 private val LibraryDetailHeroOuterVerticalPadding = 26.dp
 
+private data class LibraryDetailArtworkVisuals(
+    val artworkModel: Any?,
+    val accentColor: Color,
+    val trackAccentColor: Color,
+)
+
 internal data class LibraryDetailTwoPaneMetrics(
     val infoPaneWidth: Dp,
     val contentPaneWidth: Dp,
@@ -160,8 +166,7 @@ internal fun shouldUseCompactArtistDetailHeader(availableHeight: Dp): Boolean =
 private fun AdaptiveLibraryDetailLayout(
     modifier: Modifier = Modifier,
     singlePane: @Composable () -> Unit,
-    infoPane: @Composable (Modifier) -> Unit,
-    contentPane: @Composable (Modifier) -> Unit,
+    twoPane: @Composable (infoModifier: Modifier, contentModifier: Modifier) -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier) {
         if (!supportsLibraryDetailTwoPane(maxWidth, maxHeight)) {
@@ -177,12 +182,10 @@ private fun AdaptiveLibraryDetailLayout(
                 .align(Alignment.Center),
             horizontalArrangement = Arrangement.spacedBy(LibraryDetailTwoPaneGap),
         ) {
-            infoPane(
+            twoPane(
                 Modifier
                     .width(metrics.infoPaneWidth)
                     .fillMaxHeight(),
-            )
-            contentPane(
                 Modifier
                     .width(metrics.contentPaneWidth)
                     .fillMaxHeight(),
@@ -237,20 +240,32 @@ fun ArtistDetailScreen(
         visibleAlbums.isNotEmpty() -> visibleAlbums.size
         else -> null
     }
-    val heroArtwork = visibleAlbums.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, null) }
-        ?: songs.firstOrNull()?.let { resolveArtworkModel(server, it.coverArtId, cachedSongsBySongId[it.id]) }
-    val accent = animateColorAsState(
-        rememberArtworkAccentColor(
-            heroArtwork,
-            fallback = MaterialTheme.colorScheme.secondaryContainer,
-            harmonizeTarget = MaterialTheme.colorScheme.primary,
-        ),
-        label = "artistAccent",
-    ).value
-    val trackAccent = accent.ensureContrast(
-        MaterialTheme.colorScheme.surfaceContainerHighest,
-        MaterialTheme.colorScheme.primary,
-    )
+
+    @Composable
+    fun rememberDetailVisuals(): LibraryDetailArtworkVisuals {
+        val artworkModel = visibleAlbums.firstOrNull()?.let {
+            resolveArtworkModel(server, it.coverArtId, null)
+        } ?: songs.firstOrNull()?.let {
+            resolveArtworkModel(server, it.coverArtId, cachedSongsBySongId[it.id])
+        }
+        val accentColor = animateColorAsState(
+            rememberArtworkAccentColor(
+                artworkModel,
+                fallback = MaterialTheme.colorScheme.secondaryContainer,
+                harmonizeTarget = MaterialTheme.colorScheme.primary,
+            ),
+            label = "artistAccent",
+        ).value
+        return LibraryDetailArtworkVisuals(
+            artworkModel = artworkModel,
+            accentColor = accentColor,
+            trackAccentColor = accentColor.ensureContrast(
+                MaterialTheme.colorScheme.surfaceContainerHighest,
+                MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+
     val artistMetaItems = listOfNotNull(
         albumCount?.let { albumCountText(it) },
         songs.size.takeIf { it > 0 }?.let { songCountText(it) },
@@ -260,6 +275,7 @@ fun ArtistDetailScreen(
         modifier = Modifier.fillMaxSize(),
         singlePane = {
             if (useExpressiveSinglePane) {
+                val visuals = rememberDetailVisuals()
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = bottomContentPadding(bottomOverlayPadding),
@@ -267,8 +283,8 @@ fun ArtistDetailScreen(
                     item {
                         ArtistDetailHeader(
                             title = artist.name,
-                            artwork = heroArtwork,
-                            accentColor = accent,
+                            artwork = visuals.artworkModel,
+                            accentColor = visuals.accentColor,
                             metaItems = artistMetaItems,
                             canPlay = songs.isNotEmpty(),
                             onPlay = { if (songs.isNotEmpty()) onPlaySongs(songs, 0) },
@@ -291,7 +307,7 @@ fun ArtistDetailScreen(
                                         isOfflineDegraded = isOfflineDegraded,
                                         currentPlaybackSongId = currentPlaybackSongId,
                                         isPlaying = isPlaying,
-                                        accentColor = trackAccent,
+                                        accentColor = visuals.trackAccentColor,
                                         albumArtistLabel = artist.name,
                                         collapsedCount = 5,
                                         useSequentialNumbers = true,
@@ -375,7 +391,8 @@ fun ArtistDetailScreen(
                 }
             }
         },
-        infoPane = { infoModifier ->
+        twoPane = { infoModifier, contentModifier ->
+            val visuals = rememberDetailVisuals()
             BoxWithConstraints(modifier = infoModifier) {
                 val useCompactHeader = shouldUseCompactArtistDetailHeader(maxHeight)
                 LazyVerticalGrid(
@@ -389,8 +406,8 @@ fun ArtistDetailScreen(
                     ) {
                         ArtistDetailHeader(
                             title = artist.name,
-                            artwork = heroArtwork,
-                            accentColor = accent,
+                            artwork = visuals.artworkModel,
+                            accentColor = visuals.accentColor,
                             metaItems = artistMetaItems,
                             canPlay = songs.isNotEmpty(),
                             onPlay = { if (songs.isNotEmpty()) onPlaySongs(songs, 0) },
@@ -419,8 +436,6 @@ fun ArtistDetailScreen(
                     }
                 }
             }
-        },
-        contentPane = { contentModifier ->
             LibraryDetailTrackPane(
                 modifier = contentModifier,
                 server = server,
@@ -436,7 +451,7 @@ fun ArtistDetailScreen(
                 isOfflineDegraded = isOfflineDegraded,
                 currentPlaybackSongId = currentPlaybackSongId,
                 isPlaying = isPlaying,
-                accentColor = trackAccent,
+                accentColor = visuals.trackAccentColor,
                 albumArtistLabel = artist.name,
                 useSequentialNumbers = true,
                 showArtwork = true,
@@ -732,21 +747,30 @@ fun AlbumDetailScreen(
         }
     }
 
-    val artworkModel = resolveArtworkModel(server, album.coverArtId, null)
-    val albumAccent = rememberArtworkAccentColor(
-        artworkModel,
-        fallback = MaterialTheme.colorScheme.primary,
-        harmonizeTarget = MaterialTheme.colorScheme.primary,
-    )
-    val trackAccent = albumAccent.ensureContrast(
-        MaterialTheme.colorScheme.surfaceContainerHighest,
-        MaterialTheme.colorScheme.primary,
-    )
+    @Composable
+    fun rememberDetailVisuals(): LibraryDetailArtworkVisuals {
+        val artworkModel = resolveArtworkModel(server, album.coverArtId, null)
+        val accentColor = rememberArtworkAccentColor(
+            artworkModel,
+            fallback = MaterialTheme.colorScheme.primary,
+            harmonizeTarget = MaterialTheme.colorScheme.primary,
+        )
+        return LibraryDetailArtworkVisuals(
+            artworkModel = artworkModel,
+            accentColor = accentColor,
+            trackAccentColor = accentColor.ensureContrast(
+                MaterialTheme.colorScheme.surfaceContainerHighest,
+                MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+
     val useExpressiveSinglePane = SakiTheme.visuals.useExpressiveSurfaceContainers
     AdaptiveLibraryDetailLayout(
         modifier = Modifier.fillMaxSize(),
         singlePane = {
             if (useExpressiveSinglePane) {
+                val visuals = rememberDetailVisuals()
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = bottomContentPadding(bottomOverlayPadding),
@@ -754,8 +778,8 @@ fun AlbumDetailScreen(
                     item {
                         AlbumDetailHeroCard(
                             title = album.name,
-                            artwork = artworkModel,
-                            accentColor = albumAccent,
+                            artwork = visuals.artworkModel,
+                            accentColor = visuals.accentColor,
                             metaItems = artistYearSongCount,
                             canPlay = album.songs.isNotEmpty(),
                             onPlay = playAlbum,
@@ -778,7 +802,7 @@ fun AlbumDetailScreen(
                                 isOfflineDegraded = isOfflineDegraded,
                                 currentPlaybackSongId = currentPlaybackSongId,
                                 isPlaying = isPlaying,
-                                accentColor = trackAccent,
+                                accentColor = visuals.trackAccentColor,
                                 albumArtistLabel = album.artistDisplayLabel(),
                                 onPlaySongs = onPlaySongs,
                                 onShowActions = onShowActions,
@@ -824,15 +848,16 @@ fun AlbumDetailScreen(
                 }
             }
         },
-        infoPane = { infoModifier ->
+        twoPane = { infoModifier, contentModifier ->
+            val visuals = rememberDetailVisuals()
             LibraryDetailCenteredInfoPane(
                 modifier = infoModifier,
                 bottomOverlayPadding = bottomOverlayPadding,
             ) {
                 AlbumDetailHeroCard(
                     title = album.name,
-                    artwork = artworkModel,
-                    accentColor = albumAccent,
+                    artwork = visuals.artworkModel,
+                    accentColor = visuals.accentColor,
                     metaItems = artistYearSongCount,
                     canPlay = album.songs.isNotEmpty(),
                     onPlay = playAlbum,
@@ -840,8 +865,6 @@ fun AlbumDetailScreen(
                     playContentDescription = stringResource(R.string.library_play_album),
                 )
             }
-        },
-        contentPane = { contentModifier ->
             LibraryDetailTrackPane(
                 modifier = contentModifier,
                 server = server,
@@ -857,7 +880,7 @@ fun AlbumDetailScreen(
                 isOfflineDegraded = isOfflineDegraded,
                 currentPlaybackSongId = currentPlaybackSongId,
                 isPlaying = isPlaying,
-                accentColor = trackAccent,
+                accentColor = visuals.trackAccentColor,
                 albumArtistLabel = album.artistDisplayLabel(),
                 useSequentialNumbers = false,
                 showArtwork = false,
@@ -1540,16 +1563,24 @@ fun PlaylistDetailScreen(
         }
     }
 
-    val artworkModel = resolveArtworkModel(server, playlist.coverArtId, null)
-    val accent = rememberArtworkAccentColor(
-        artworkModel,
-        fallback = MaterialTheme.colorScheme.primary,
-        harmonizeTarget = MaterialTheme.colorScheme.primary,
-    )
-    val trackAccent = accent.ensureContrast(
-        MaterialTheme.colorScheme.surfaceContainerHighest,
-        MaterialTheme.colorScheme.primary,
-    )
+    @Composable
+    fun rememberDetailVisuals(): LibraryDetailArtworkVisuals {
+        val artworkModel = resolveArtworkModel(server, playlist.coverArtId, null)
+        val accentColor = rememberArtworkAccentColor(
+            artworkModel,
+            fallback = MaterialTheme.colorScheme.primary,
+            harmonizeTarget = MaterialTheme.colorScheme.primary,
+        )
+        return LibraryDetailArtworkVisuals(
+            artworkModel = artworkModel,
+            accentColor = accentColor,
+            trackAccentColor = accentColor.ensureContrast(
+                MaterialTheme.colorScheme.surfaceContainerHighest,
+                MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
+
     val playlistMetaItems = listOfNotNull(
         playlist.owner,
         songCount?.let { songCountText(it) },
@@ -1559,6 +1590,7 @@ fun PlaylistDetailScreen(
         modifier = Modifier.fillMaxSize(),
         singlePane = {
             if (useExpressiveSinglePane) {
+                val visuals = rememberDetailVisuals()
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = bottomContentPadding(bottomOverlayPadding),
@@ -1566,8 +1598,8 @@ fun PlaylistDetailScreen(
                     item {
                         AlbumDetailHeroCard(
                             title = playlist.name,
-                            artwork = artworkModel,
-                            accentColor = accent,
+                            artwork = visuals.artworkModel,
+                            accentColor = visuals.accentColor,
                             metaItems = playlistMetaItems,
                             canPlay = playlist.songs.isNotEmpty(),
                             onPlay = playPlaylist,
@@ -1600,7 +1632,7 @@ fun PlaylistDetailScreen(
                                 isOfflinePlayable = isOfflinePlayable,
                                 isCurrent = currentPlaybackSongId == song.id,
                                 isPlaying = isPlaying,
-                                accentColor = trackAccent,
+                                accentColor = visuals.trackAccentColor,
                                 artworkModel = resolveArtworkModel(
                                     server,
                                     song.coverArtId,
@@ -1654,15 +1686,16 @@ fun PlaylistDetailScreen(
                 }
             }
         },
-        infoPane = { infoModifier ->
+        twoPane = { infoModifier, contentModifier ->
+            val visuals = rememberDetailVisuals()
             LibraryDetailCenteredInfoPane(
                 modifier = infoModifier,
                 bottomOverlayPadding = bottomOverlayPadding,
             ) {
                 AlbumDetailHeroCard(
                     title = playlist.name,
-                    artwork = artworkModel,
-                    accentColor = accent,
+                    artwork = visuals.artworkModel,
+                    accentColor = visuals.accentColor,
                     metaItems = playlistMetaItems,
                     canPlay = playlist.songs.isNotEmpty(),
                     onPlay = playPlaylist,
@@ -1670,8 +1703,6 @@ fun PlaylistDetailScreen(
                     playContentDescription = stringResource(R.string.library_play_playlist),
                 )
             }
-        },
-        contentPane = { contentModifier ->
             LibraryDetailTrackPane(
                 modifier = contentModifier,
                 server = server,
@@ -1687,7 +1718,7 @@ fun PlaylistDetailScreen(
                 isOfflineDegraded = isOfflineDegraded,
                 currentPlaybackSongId = currentPlaybackSongId,
                 isPlaying = isPlaying,
-                accentColor = trackAccent,
+                accentColor = visuals.trackAccentColor,
                 albumArtistLabel = null,
                 useSequentialNumbers = true,
                 showArtwork = true,
