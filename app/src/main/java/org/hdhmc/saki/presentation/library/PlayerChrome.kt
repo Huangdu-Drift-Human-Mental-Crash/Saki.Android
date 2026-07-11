@@ -6,7 +6,9 @@ import android.os.Build
 import android.util.LruCache
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -205,6 +207,7 @@ fun NowPlayingCapsule(
     onSkipToPrevious: () -> Unit,
     onSkipToNext: () -> Unit,
     prewarmDynamicColors: Boolean = false,
+    isContentScrolling: Boolean = false,
 ) {
     val visuals = SakiTheme.visuals
     // Warm the current track's artwork color into the cache while the mini player is
@@ -219,6 +222,26 @@ fun NowPlayingCapsule(
     }
     val capsuleContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(
         alpha = visuals.nowPlayingCapsuleContainerAlpha,
+    )
+    val capsuleAlpha by animateFloatAsState(
+        targetValue = if (isContentScrolling) {
+            visuals.miniPlayerScrollingAlpha
+        } else {
+            visuals.miniPlayerRestingAlpha
+        },
+        animationSpec = tween(
+            durationMillis = if (isContentScrolling) {
+                MINI_PLAYER_FADE_OUT_DURATION_MS
+            } else {
+                MINI_PLAYER_FADE_IN_DURATION_MS
+            },
+            easing = if (isContentScrolling) {
+                FastOutLinearInEasing
+            } else {
+                LinearOutSlowInEasing
+            },
+        ),
+        label = "miniPlayerAlpha",
     )
     val elevation by animateDpAsState(
         targetValue = if (isPlaying) 12.dp else 6.dp,
@@ -236,21 +259,17 @@ fun NowPlayingCapsule(
             .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        val constrainLandscapeCapsuleWidth = maxWidth > maxHeight &&
-            maxHeight < MINI_PLAYER_LANDSCAPE_WIDTH_LIMIT_HEIGHT
+        val capsuleMaxWidth = calculateMiniPlayerMaxWidth(maxWidth, maxHeight)
 
         Card(
             onClick = onExpand,
             enabled = track != null,
             modifier = Modifier
                 .then(
-                    if (constrainLandscapeCapsuleWidth) {
-                        Modifier.widthIn(max = MINI_PLAYER_LANDSCAPE_MAX_WIDTH)
-                    } else {
-                        Modifier
-                    },
+                    capsuleMaxWidth?.let { Modifier.widthIn(max = it) } ?: Modifier,
                 )
                 .fillMaxWidth()
+                .graphicsLayer { alpha = capsuleAlpha }
                 .pointerInput(track != null) {
                     if (track == null) return@pointerInput
                     val distanceThresholdPx = 72.dp.toPx()
@@ -3547,9 +3566,34 @@ private val NOW_PLAYING_LARGE_SCREEN_CONTROL_MAX_WIDTH = 440.dp
 private val NOW_PLAYING_LARGE_SCREEN_CONTROL_HEIGHT_EXTENSION = 40.dp
 private val NOW_PLAYING_LARGE_SCREEN_CONTROL_GROUP_SPACING = 20.dp
 private val NOW_PLAYING_LARGE_SCREEN_PANE_GAP = 36.dp
-private val MINI_PLAYER_LANDSCAPE_MAX_WIDTH = 520.dp
-private val MINI_PLAYER_LANDSCAPE_WIDTH_LIMIT_HEIGHT = 480.dp
+private const val MINI_PLAYER_FADE_OUT_DURATION_MS = 160
+private const val MINI_PLAYER_FADE_IN_DURATION_MS = 260
+private val MINI_PLAYER_WIDE_LAYOUT_MIN_WIDTH = 600.dp
+private val MINI_PLAYER_COMPACT_LANDSCAPE_MAX_WIDTH = 520.dp
+private val MINI_PLAYER_COMPACT_LANDSCAPE_MAX_HEIGHT = 480.dp
+private val MINI_PLAYER_WIDE_LANDSCAPE_MAX_WIDTH = 680.dp
+private val MINI_PLAYER_PORTRAIT_MAX_WIDTH = 640.dp
+private val MINI_PLAYER_PORTRAIT_HORIZONTAL_INSET = 48.dp
+private const val MINI_PLAYER_WIDE_LANDSCAPE_WIDTH_FRACTION = 0.68f
 private val artworkPresentationCache = LruCache<String, ArtworkPresentation>(ARTWORK_PRESENTATION_CACHE_ENTRIES)
+
+internal fun calculateMiniPlayerMaxWidth(width: Dp, height: Dp): Dp? {
+    if (width < MINI_PLAYER_WIDE_LAYOUT_MIN_WIDTH) return null
+
+    return when {
+        width > height && height < MINI_PLAYER_COMPACT_LANDSCAPE_MAX_HEIGHT ->
+            minOf(width, MINI_PLAYER_COMPACT_LANDSCAPE_MAX_WIDTH)
+        width > height ->
+            (width * MINI_PLAYER_WIDE_LANDSCAPE_WIDTH_FRACTION).coerceIn(
+                MINI_PLAYER_COMPACT_LANDSCAPE_MAX_WIDTH,
+                minOf(width, MINI_PLAYER_WIDE_LANDSCAPE_MAX_WIDTH),
+            )
+        else -> minOf(
+            width - MINI_PLAYER_PORTRAIT_HORIZONTAL_INSET,
+            MINI_PLAYER_PORTRAIT_MAX_WIDTH,
+        )
+    }
+}
 
 internal fun shouldArmArtworkPagerNavigation(
     isScrollInProgress: Boolean,

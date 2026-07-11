@@ -17,9 +17,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.LocalContentColor
@@ -32,7 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import org.hdhmc.saki.domain.model.PlaybackProgressState
 import org.hdhmc.saki.domain.model.PlaybackSessionState
@@ -156,6 +165,52 @@ private fun RootShell(
     val defaultCapsuleHeightPx = with(density) { 72.dp.roundToPx() }
     var capsuleHeightPx by remember { mutableIntStateOf(defaultCapsuleHeightPx) }
     val capsuleOverlayPadding = with(density) { capsuleHeightPx.toDp() }
+    val contentScrolling = remember { mutableStateOf(false) }
+    val scrollScope = rememberCoroutineScope()
+    val contentScrollConnection = remember(scrollScope) {
+        object : NestedScrollConnection {
+            var idleWatcher: Job? = null
+            var lastVerticalScrollNanos: Long = 0L
+
+            fun recordVerticalScroll(offset: Offset) {
+                if (offset.y == 0f) return
+
+                lastVerticalScrollNanos = System.nanoTime()
+                contentScrolling.value = true
+                if (idleWatcher?.isActive == true) return
+                idleWatcher = scrollScope.launch {
+                    while (true) {
+                        delay(MINI_PLAYER_SCROLL_IDLE_DELAY_MS)
+                        val idleMillis = (System.nanoTime() - lastVerticalScrollNanos) / 1_000_000L
+                        if (idleMillis >= MINI_PLAYER_SCROLL_IDLE_DELAY_MS) {
+                            contentScrolling.value = false
+                            idleWatcher = null
+                            break
+                        }
+                    }
+                }
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                recordVerticalScroll(if (consumed.y != 0f) consumed else available)
+                return Offset.Zero
+            }
+
+            override suspend fun onPostFling(
+                consumed: Velocity,
+                available: Velocity,
+            ): Velocity {
+                idleWatcher?.cancel()
+                idleWatcher = null
+                contentScrolling.value = false
+                return Velocity.Zero
+            }
+        }
+    }
 
     val settingsBackMotion = rememberPredictiveBackMotion(
         enabled = showSettings && !showNowPlaying,
@@ -166,7 +221,8 @@ private fun RootShell(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(shellBackgroundBrush),
+            .background(shellBackgroundBrush)
+            .nestedScroll(contentScrollConnection),
     ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
             Box(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
@@ -211,6 +267,7 @@ private fun RootShell(
                     NowPlayingCapsuleRoute(
                         viewModel = viewModel,
                         onOpenNowPlaying = onOpenNowPlaying,
+                        isContentScrolling = contentScrolling.value,
                     )
                 }
             }
@@ -317,6 +374,7 @@ private fun SettingsRoute(
 private fun NowPlayingCapsuleRoute(
     viewModel: SakiAppViewModel,
     onOpenNowPlaying: () -> Unit,
+    isContentScrolling: Boolean,
 ) {
     val uiState by viewModel.capsuleUiState.collectAsStateWithLifecycle()
     NowPlayingCapsule(
@@ -332,8 +390,11 @@ private fun NowPlayingCapsuleRoute(
         onSkipToPrevious = viewModel::skipToPrevious,
         onSkipToNext = viewModel::skipToNext,
         prewarmDynamicColors = rememberVisualEffectsPolicy().useNowPlayingDynamicArtworkColors,
+        isContentScrolling = isContentScrolling,
     )
 }
+
+private const val MINI_PLAYER_SCROLL_IDLE_DELAY_MS = 220L
 
 @Composable
 private fun NowPlayingOverlayHostRoute(
