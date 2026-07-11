@@ -8,7 +8,6 @@ import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
-import org.hdhmc.saki.domain.model.ThemeStyle
 import kotlinx.coroutines.flow.Flow
 
 interface AppPreferencesRepository {
@@ -21,8 +20,6 @@ interface AppPreferencesRepository {
     suspend fun updateLanguage(language: AppLanguage)
 
     suspend fun updateThemeMode(themeMode: ThemeMode)
-
-    suspend fun updateThemeStyle(themeStyle: ThemeStyle)
 
     suspend fun updateThemeSeed(seedKey: String)
 

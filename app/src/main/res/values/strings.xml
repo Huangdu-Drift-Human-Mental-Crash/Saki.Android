@@ -65,9 +65,6 @@
     <string name="settings_theme_system">System default</string>
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>
-    <string name="settings_theme_style_label">Style</string>
-    <string name="settings_theme_style_saki">Saki</string>
-    <string name="settings_theme_style_material_expressive">Material 3 Expressive</string>
     <string name="settings_palette_style_label">Palette style</string>
     <string name="settings_palette_style_tonal_spot">Tonal</string>
     <string name="settings_palette_style_vibrant">Vibrant</string>

@@ -79,7 +79,6 @@ import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.DEFAULT_THEME_SEED_KEY
 import org.hdhmc.saki.domain.model.ThemeMode
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
-import org.hdhmc.saki.domain.model.ThemeStyle
 import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.BufferStrategy
@@ -138,7 +137,6 @@ fun SettingsScreen(
     onUpdateTextScale: (TextScale) -> Unit,
     onUpdateLanguage: (AppLanguage) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
-    onUpdateThemeStyle: (ThemeStyle) -> Unit,
     onUpdateThemeSeed: (String) -> Unit,
     onUpdatePaletteStyle: (SakiPaletteStyle) -> Unit,
     onUpdateDefaultBrowseTab: (DefaultBrowseTab) -> Unit,
@@ -181,35 +179,30 @@ fun SettingsScreen(
     // drop) and recomputes them every time it is recycled and scrolled back into view.
     val swatchPreviewDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val swatchPaletteStyle = uiState.appPreferences.paletteStyle
-    val swatchThemeStyle = uiState.appPreferences.themeStyle
     val swatchContext = LocalContext.current
     val supportsSystemColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val themeSwatchColors: Map<String, ThemeSeedSwatchColors> =
-        remember(swatchPreviewDark, swatchPaletteStyle, swatchThemeStyle) {
-            if (swatchThemeStyle != ThemeStyle.MATERIAL_EXPRESSIVE) {
-                emptyMap()
-            } else {
-                buildMap {
-                    SakiThemePresets.forEach { preset ->
-                        put(
-                            preset.key,
-                            themeSeedSwatchColors(
-                                sakiExpressiveColorScheme(preset.seed, swatchPreviewDark, swatchPaletteStyle),
+        remember(swatchPreviewDark, swatchPaletteStyle, supportsSystemColor) {
+            buildMap {
+                SakiThemePresets.forEach { preset ->
+                    put(
+                        preset.key,
+                        themeSeedSwatchColors(
+                            sakiExpressiveColorScheme(preset.seed, swatchPreviewDark, swatchPaletteStyle),
+                        ),
+                    )
+                }
+                if (supportsSystemColor) {
+                    put(
+                        SYSTEM_DYNAMIC_THEME_SEED_KEY,
+                        themeSeedSwatchColors(
+                            sakiExpressiveColorScheme(
+                                systemDynamicSeedColor(swatchContext),
+                                swatchPreviewDark,
+                                swatchPaletteStyle,
                             ),
-                        )
-                    }
-                    if (supportsSystemColor) {
-                        put(
-                            SYSTEM_DYNAMIC_THEME_SEED_KEY,
-                            themeSeedSwatchColors(
-                                sakiExpressiveColorScheme(
-                                    systemDynamicSeedColor(swatchContext),
-                                    swatchPreviewDark,
-                                    swatchPaletteStyle,
-                                ),
-                            ),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -509,7 +502,6 @@ fun SettingsScreen(
                 action = null,
             ) {
                 val currentTheme = uiState.appPreferences.themeMode
-                val currentThemeStyle = uiState.appPreferences.themeStyle
                 Text(
                     text = stringResource(R.string.settings_theme_mode_label),
                     style = MaterialTheme.typography.labelLarge,
@@ -534,8 +526,9 @@ fun SettingsScreen(
                         label = { Text(stringResource(R.string.settings_theme_dark)) },
                     )
                 }
+                val currentPaletteStyle = uiState.appPreferences.paletteStyle
                 Text(
-                    text = stringResource(R.string.settings_theme_style_label),
+                    text = stringResource(R.string.settings_palette_style_label),
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(top = 8.dp),
                 )
@@ -544,79 +537,57 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     FilterChip(
-                        selected = currentThemeStyle == ThemeStyle.SAKI,
-                        onClick = { onUpdateThemeStyle(ThemeStyle.SAKI) },
-                        label = { Text(stringResource(R.string.settings_theme_style_saki)) },
+                        selected = currentPaletteStyle == SakiPaletteStyle.TONAL_SPOT,
+                        onClick = { onUpdatePaletteStyle(SakiPaletteStyle.TONAL_SPOT) },
+                        label = { Text(stringResource(R.string.settings_palette_style_tonal_spot)) },
                     )
                     FilterChip(
-                        selected = currentThemeStyle == ThemeStyle.MATERIAL_EXPRESSIVE,
-                        onClick = { onUpdateThemeStyle(ThemeStyle.MATERIAL_EXPRESSIVE) },
-                        label = { Text(stringResource(R.string.settings_theme_style_material_expressive)) },
+                        selected = currentPaletteStyle == SakiPaletteStyle.VIBRANT,
+                        onClick = { onUpdatePaletteStyle(SakiPaletteStyle.VIBRANT) },
+                        label = { Text(stringResource(R.string.settings_palette_style_vibrant)) },
+                    )
+                    FilterChip(
+                        selected = currentPaletteStyle == SakiPaletteStyle.EXPRESSIVE,
+                        onClick = { onUpdatePaletteStyle(SakiPaletteStyle.EXPRESSIVE) },
+                        label = { Text(stringResource(R.string.settings_palette_style_expressive)) },
                     )
                 }
-                if (currentThemeStyle == ThemeStyle.MATERIAL_EXPRESSIVE) {
-                    val currentPaletteStyle = uiState.appPreferences.paletteStyle
-                    Text(
-                        text = stringResource(R.string.settings_palette_style_label),
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FilterChip(
-                            selected = currentPaletteStyle == SakiPaletteStyle.TONAL_SPOT,
-                            onClick = { onUpdatePaletteStyle(SakiPaletteStyle.TONAL_SPOT) },
-                            label = { Text(stringResource(R.string.settings_palette_style_tonal_spot)) },
-                        )
-                        FilterChip(
-                            selected = currentPaletteStyle == SakiPaletteStyle.VIBRANT,
-                            onClick = { onUpdatePaletteStyle(SakiPaletteStyle.VIBRANT) },
-                            label = { Text(stringResource(R.string.settings_palette_style_vibrant)) },
-                        )
-                        FilterChip(
-                            selected = currentPaletteStyle == SakiPaletteStyle.EXPRESSIVE,
-                            onClick = { onUpdatePaletteStyle(SakiPaletteStyle.EXPRESSIVE) },
-                            label = { Text(stringResource(R.string.settings_palette_style_expressive)) },
+                val currentSeedKey = uiState.appPreferences.themeSeedKey
+                // Below Android 12 a stored "system" seed falls back to the brand seed, so show
+                // that preset as selected rather than leaving nothing highlighted.
+                val effectiveSeedKey = if (!supportsSystemColor && isSystemDynamicSeed(currentSeedKey)) {
+                    DEFAULT_THEME_SEED_KEY
+                } else {
+                    currentSeedKey
+                }
+                Text(
+                    text = stringResource(R.string.settings_theme_seed_label),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    themeSwatchColors[SYSTEM_DYNAMIC_THEME_SEED_KEY]?.let { systemColors ->
+                        ThemeSeedSwatch(
+                            colors = systemColors,
+                            isSelected = isSystemDynamicSeed(currentSeedKey),
+                            description = stringResource(R.string.settings_theme_seed_system),
+                            onClick = { onUpdateThemeSeed(SYSTEM_DYNAMIC_THEME_SEED_KEY) },
+                            centerIcon = Icons.Rounded.Smartphone,
                         )
                     }
-                    val currentSeedKey = uiState.appPreferences.themeSeedKey
-                    // Below Android 12 a stored "system" seed falls back to the brand seed, so show
-                    // that preset as selected rather than leaving nothing highlighted.
-                    val effectiveSeedKey = if (!supportsSystemColor && isSystemDynamicSeed(currentSeedKey)) {
-                        DEFAULT_THEME_SEED_KEY
-                    } else {
-                        currentSeedKey
-                    }
-                    Text(
-                        text = stringResource(R.string.settings_theme_seed_label),
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        themeSwatchColors[SYSTEM_DYNAMIC_THEME_SEED_KEY]?.let { systemColors ->
-                            ThemeSeedSwatch(
-                                colors = systemColors,
-                                isSelected = isSystemDynamicSeed(currentSeedKey),
-                                description = stringResource(R.string.settings_theme_seed_system),
-                                onClick = { onUpdateThemeSeed(SYSTEM_DYNAMIC_THEME_SEED_KEY) },
-                                centerIcon = Icons.Rounded.Smartphone,
-                            )
-                        }
-                        SakiThemePresets.forEach { preset ->
-                            ThemeSeedSwatch(
-                                colors = themeSwatchColors.getValue(preset.key),
-                                isSelected = preset.key == effectiveSeedKey,
-                                description = stringResource(preset.nameRes),
-                                onClick = { onUpdateThemeSeed(preset.key) },
-                            )
-                        }
+                    SakiThemePresets.forEach { preset ->
+                        ThemeSeedSwatch(
+                            colors = themeSwatchColors.getValue(preset.key),
+                            isSelected = preset.key == effectiveSeedKey,
+                            description = stringResource(preset.nameRes),
+                            onClick = { onUpdateThemeSeed(preset.key) },
+                        )
                     }
                 }
+
             }
         }
 

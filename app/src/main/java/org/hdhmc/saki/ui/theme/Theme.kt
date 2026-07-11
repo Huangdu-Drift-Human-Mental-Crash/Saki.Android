@@ -1,14 +1,10 @@
 package org.hdhmc.saki.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -19,9 +15,7 @@ import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.dynamicColorScheme
 import com.materialkolor.hct.Hct
-import com.materialkolor.rememberDynamicColorScheme
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
-import org.hdhmc.saki.domain.model.ThemeStyle
 
 /** Brand seed color; all roles are generated from this so the full M3 role set stays consistent. */
 private val BrandSeedColor = HarborBlue
@@ -30,68 +24,35 @@ private val BrandSeedColor = HarborBlue
 @Composable
 fun SakiAndroidTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    themeStyle: ThemeStyle = ThemeStyle.SAKI,
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    // Optional user-selected seed (currently exposed only for the Material Expressive style).
     seedColor: Color? = null,
-    // Palette style for the Material Expressive theme.
     paletteStyle: SakiPaletteStyle = SakiPaletteStyle.TONAL_SPOT,
-    // Source the Material Expressive scheme from the system (Material You) palette instead of
-    // [seedColor]. Honored only on Android 12+; ignored otherwise.
+    // Source the scheme from the system (Material You) palette instead of [seedColor].
+    // Honored only on Android 12+; ignored otherwise.
     useSystemColor: Boolean = false,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
+    // System color is fed in as a seed (not the platform scheme) so the selected palette style
+    // still applies and the app's calm tuning stays consistent.
+    val seed = if (useSystemColor) {
+        systemDynamicSeedColor(LocalContext.current)
+    } else {
+        seedColor ?: BrandSeedColor
+    }
+    val scheme = rememberSakiExpressiveColorScheme(
+        seedColor = seed,
+        isDark = darkTheme,
+        paletteStyle = paletteStyle,
+    )
     CompositionLocalProvider(
-        LocalSakiVisualTokens provides sakiVisualTokens(themeStyle),
+        LocalSakiVisualTokens provides DefaultSakiVisualTokens,
         LocalSakiPaletteStyle provides paletteStyle,
     ) {
-        when (themeStyle) {
-            ThemeStyle.SAKI -> {
-                MaterialTheme(
-                    colorScheme = sakiColorScheme(darkTheme = darkTheme, dynamicColor = dynamicColor),
-                    typography = Typography,
-                    shapes = SakiShapes,
-                    content = content,
-                )
-            }
-
-            ThemeStyle.MATERIAL_EXPRESSIVE -> {
-                // System color is fed in as a seed (not the platform scheme) so the selected
-                // palette style still applies and the app's calm tuning stays consistent.
-                val seed = if (useSystemColor) {
-                    systemDynamicSeedColor(LocalContext.current)
-                } else {
-                    seedColor ?: BrandSeedColor
-                }
-                val scheme = rememberSakiExpressiveColorScheme(
-                    seedColor = seed,
-                    isDark = darkTheme,
-                    paletteStyle = paletteStyle,
-                )
-                MaterialExpressiveTheme(
-                    colorScheme = scheme,
-                    motionScheme = MotionScheme.expressive(),
-                    content = content,
-                )
-            }
-        }
+        MaterialExpressiveTheme(
+            colorScheme = scheme,
+            motionScheme = MotionScheme.expressive(),
+            content = content,
+        )
     }
-}
-
-private fun sakiVisualTokens(themeStyle: ThemeStyle) = when (themeStyle) {
-    ThemeStyle.SAKI -> DefaultSakiVisualTokens
-    ThemeStyle.MATERIAL_EXPRESSIVE -> MaterialExpressiveSakiVisualTokens
-}
-
-@Composable
-private fun sakiColorScheme(darkTheme: Boolean, dynamicColor: Boolean) = when {
-    dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-    }
-
-    else -> rememberDynamicColorScheme(seedColor = BrandSeedColor, isDark = darkTheme)
 }
 
 /** Maps the persisted palette-style preference to MaterialKolor's [PaletteStyle]. */

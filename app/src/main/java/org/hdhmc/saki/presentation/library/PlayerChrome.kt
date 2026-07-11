@@ -217,11 +217,9 @@ fun NowPlayingCapsule(
             prewarmArtworkPresentation(prewarmContext, model)
         }
     }
-    val capsuleContainerColor = if (visuals.useExpressiveSurfaceContainers) {
-        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = visuals.nowPlayingCapsuleContainerAlpha)
-    } else {
-        MaterialTheme.colorScheme.surface.copy(alpha = visuals.nowPlayingCapsuleContainerAlpha)
-    }
+    val capsuleContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(
+        alpha = visuals.nowPlayingCapsuleContainerAlpha,
+    )
     val elevation by animateDpAsState(
         targetValue = if (isPlaying) 12.dp else 6.dp,
         animationSpec = spring(
@@ -685,12 +683,11 @@ fun NowPlayingOverlay(
     ) {
         val colorScheme = MaterialTheme.colorScheme
         val isDark = colorScheme.background.luminance() < 0.5f
-        val isExpressive = visuals.useExpressiveSurfaceContainers
         val paletteStyle = LocalSakiPaletteStyle.current
         // Build a scheme from the current track's seed using the same palette-style mapping
         // as the app theme, so the unplayed bar (and any future role use) tracks the selected
         // palette style automatically — new styles need no change here.
-        val artworkScheme = if (isExpressive && useDynamicArtworkColors) {
+        val artworkScheme = if (useDynamicArtworkColors) {
             val model = remember(track.songId, serversById) {
                 track.queueArtworkModel(track.serverId?.let { serversById[it] })
             }
@@ -709,7 +706,6 @@ fun NowPlayingOverlay(
                 position = artworkMotionState.position,
                 currentIndex = visualSnapshot.currentIndex,
                 freezePresentationUpdates = artworkMotionState.isScrollInProgress || visualSkipRequest != null,
-                expressive = isExpressive,
                 isDark = isDark,
                 fallbackDominant = colorScheme.primary,
                 fallbackAccent = colorScheme.tertiary,
@@ -752,17 +748,7 @@ fun NowPlayingOverlay(
         }
         val onPlayButtonColor = if (isDark) Color.White else Color.Black
         val onArtwork = onPlayButtonColor
-        val sliderActiveColor = remember(dominant, accent, isDark, isExpressive) {
-            if (isExpressive) {
-                accent
-            } else {
-                val hsv = FloatArray(3)
-                android.graphics.Color.colorToHSV(dominant.toArgb(), hsv)
-                hsv[1] = hsv[1].coerceIn(0.30f, 0.55f)
-                hsv[2] = if (isDark) 0.70f else 0.45f
-                Color(android.graphics.Color.HSVToColor(hsv))
-            }
-        }
+        val sliderActiveColor = accent
         val sliderInactiveColor = if (artworkScheme != null) {
             // Take hue/chroma from the scheme's secondary (varies per palette style) but pin
             // the tone to a visible band, so the unplayed track stays legible in dark mode
@@ -3081,7 +3067,6 @@ private fun rememberMotionArtworkColors(
     position: Float,
     currentIndex: Int,
     freezePresentationUpdates: Boolean,
-    expressive: Boolean,
     isDark: Boolean,
     fallbackDominant: Color,
     fallbackAccent: Color,
@@ -3157,9 +3142,7 @@ private fun rememberMotionArtworkColors(
             ?.let { appliedPresentations[it]?.takeIf { presentation -> presentation.hasColors } }
             ?: cachedPresentation?.takeIf { presentation -> presentation.hasColors }
             ?: ArtworkPresentation()
-        if (expressive) {
-            presentation.seedColor?.let { return expressiveArtworkColors(it, isDark) }
-        }
+        presentation.seedColor?.let { return expressiveArtworkColors(it, isDark) }
         return ArtworkColors(
             dominant = presentation.dominantColor ?: fallbackDominant,
             accent = presentation.accentColor ?: fallbackAccent,

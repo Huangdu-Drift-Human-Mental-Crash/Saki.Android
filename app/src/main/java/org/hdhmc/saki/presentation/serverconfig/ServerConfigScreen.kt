@@ -80,7 +80,6 @@ import org.hdhmc.saki.presentation.asString
 import org.hdhmc.saki.presentation.rememberPredictiveBackMotion
 import org.hdhmc.saki.presentation.rememberBrowseBackgroundBrush
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
-import org.hdhmc.saki.ui.theme.SakiTheme
 import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
 import org.hdhmc.saki.ui.theme.SakiAndroidTheme
@@ -312,36 +311,16 @@ fun ServerConfigScreen(
 }
 
 @Composable
-private fun serverCardContainerColor(defaultAlpha: Float): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        sakiCardContainerColor()
-    } else {
-        MaterialTheme.colorScheme.surface.copy(alpha = defaultAlpha)
-    }
+private fun serverCardContainerColor(): Color = sakiCardContainerColor()
 
 @Composable
-private fun serverSheetContainerColor(): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        MaterialTheme.colorScheme.surfaceContainerHigh
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
+private fun serverSheetContainerColor(): Color = MaterialTheme.colorScheme.surfaceContainerHigh
 
 @Composable
-private fun serverTonalContainerColor(defaultAlpha: Float): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        sakiTonalContainerColor()
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = defaultAlpha)
-    }
+private fun serverTonalContainerColor(): Color = sakiTonalContainerColor()
 
 @Composable
-private fun serverBadgeContainerColor(): Color =
-    if (SakiTheme.visuals.useExpressiveSurfaceContainers) {
-        sakiTonalContainerColor()
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
-    }
+private fun serverBadgeContainerColor(): Color = sakiTonalContainerColor()
 
 @Composable
 private fun HeroSection(
@@ -352,7 +331,7 @@ private fun HeroSection(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = serverCardContainerColor(defaultAlpha = 0.88f),
+            containerColor = serverCardContainerColor(),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -400,7 +379,7 @@ private fun EmptyStateCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = serverCardContainerColor(defaultAlpha = 0.92f),
+            containerColor = serverCardContainerColor(),
         ),
     ) {
         Column(
@@ -433,7 +412,7 @@ private fun ServerCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = serverCardContainerColor(defaultAlpha = 0.94f),
+            containerColor = serverCardContainerColor(),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -768,7 +747,7 @@ private fun EndpointEditorCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = serverTonalContainerColor(defaultAlpha = 0.55f),
+            containerColor = serverTonalContainerColor(),
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
