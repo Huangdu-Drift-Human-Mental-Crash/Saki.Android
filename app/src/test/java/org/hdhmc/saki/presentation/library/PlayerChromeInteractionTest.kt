@@ -56,6 +56,30 @@ class PlayerChromeInteractionTest {
     }
 
     @Test
+    fun miniPlayerKeepsPhonePortraitWidthUnconstrained() {
+        assertNull(calculateMiniPlayerMaxWidth(430.dp, 900.dp))
+    }
+
+    @Test
+    fun miniPlayerUsesCompactWidthInShortLandscapeWindows() {
+        assertEquals(500.dp, calculateMiniPlayerMaxWidth(500.dp, 400.dp))
+        assertEquals(520.dp, calculateMiniPlayerMaxWidth(599.dp, 400.dp))
+        assertEquals(520.dp, calculateMiniPlayerMaxWidth(600.dp, 400.dp))
+        assertEquals(520.dp, calculateMiniPlayerMaxWidth(869.dp, 400.dp))
+    }
+
+    @Test
+    fun miniPlayerScalesDownOnHdLandscapeWindows() {
+        assertEquals(544.dp, calculateMiniPlayerMaxWidth(800.dp, 500.dp))
+        assertEquals(680.dp, calculateMiniPlayerMaxWidth(1_280.dp, 800.dp))
+    }
+
+    @Test
+    fun miniPlayerLeavesSideSpaceOnTabletPortraitWindows() {
+        assertEquals(640.dp, calculateMiniPlayerMaxWidth(720.dp, 1_152.dp))
+    }
+
+    @Test
     fun compactLandscapeKeepsMinimumControlBoundsAtFiveHundredByFourHundred() {
         assertTrue(supportsCompactLandscapeNowPlayingLayout(500.dp, 400.dp))
         val metrics = calculateCompactLandscapeStageMetrics(500.dp, 400.dp)

@@ -38,6 +38,8 @@ data class SakiVisualTokens(
     val miniPlayerContainerCornerRadius: Dp = 32.dp,
     val miniPlayerHandleWidth: Dp = 44.dp,
     val miniPlayerHandleAlpha: Float = 0.38f,
+    val miniPlayerRestingAlpha: Float = 0.95f,
+    val miniPlayerScrollingAlpha: Float = 0.30f,
     val miniPlayerArtworkCornerRadius: Dp = 16.dp,
     val miniPlayerControlContainerAlpha: Float = 0.56f,
     val miniPlayerControlCornerRadius: Dp = 22.dp,
