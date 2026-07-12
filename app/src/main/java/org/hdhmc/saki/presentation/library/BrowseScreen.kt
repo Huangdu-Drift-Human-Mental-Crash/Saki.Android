@@ -87,6 +87,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -114,6 +115,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
 import org.hdhmc.saki.R
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlbumListType
@@ -159,6 +162,14 @@ private val BrowseAdaptiveNavigationRailIndicatorHeight = 36.dp
 private val BrowseAdaptiveNavigationContentGap = 12.dp
 private val AlbumAdaptiveGridMinContentWidth = 520.dp
 private val AlbumAdaptiveGridMinCellWidth = 168.dp
+private val FastScrollAdaptiveEdgeProtection = 16.dp
+
+internal fun fastScrollBottomOverlayPadding(width: Dp, overlayPadding: Dp): Dp =
+    if (width >= BrowseAdaptiveNavigationMinWidth) {
+        minOf(overlayPadding, FastScrollAdaptiveEdgeProtection)
+    } else {
+        overlayPadding
+    }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -785,6 +796,7 @@ private fun BrowsePager(
 
     BoxWithConstraints(modifier = modifier) {
         val useAdaptiveNavigation = maxWidth >= BrowseAdaptiveNavigationMinWidth
+        val edgeOverlayBottomPadding = fastScrollBottomOverlayPadding(maxWidth, bottomOverlayPadding)
         val content: @Composable () -> Unit = {
             Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -851,6 +863,7 @@ private fun BrowsePager(
                                             isLoading = uiState.isArtistsLoading,
                                             error = uiState.artistsError?.asString(),
                                             bottomOverlayPadding = bottomOverlayPadding,
+                                            fastScrollBottomOverlayPadding = edgeOverlayBottomPadding,
                                             scrollPosition = scrollState.artistsPosition,
                                             onOpenArtist = onOpenArtist,
                                         )
@@ -869,6 +882,7 @@ private fun BrowsePager(
                                             onUpdateViewMode = onUpdateAlbumViewMode,
                                             onOpenAlbum = onOpenAlbum,
                                             bottomOverlayPadding = bottomOverlayPadding,
+                                            fastScrollBottomOverlayPadding = edgeOverlayBottomPadding,
                                         )
 
                                         BrowseSection.PLAYLISTS -> PlaylistsPage(
@@ -1011,16 +1025,18 @@ private fun BrowseAdaptiveNavigationRail(
     ) {
         sections.forEach { section ->
             val selected = section == selectedSection
+            val itemShape = MaterialTheme.shapes.large
             Surface(
                 modifier = Modifier
                     .width(BrowseAdaptiveNavigationRailItemWidth)
                     .height(BrowseAdaptiveNavigationRailItemHeight)
+                    .clip(itemShape)
                     .selectable(
                         selected = selected,
                         onClick = { onSelectBrowseSection(section) },
                         role = Role.Tab,
                     ),
-                shape = MaterialTheme.shapes.large,
+                shape = itemShape,
                 color = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             ) {
@@ -1547,6 +1563,7 @@ private fun ArtistsPage(
     isLoading: Boolean,
     error: String?,
     bottomOverlayPadding: Dp,
+    fastScrollBottomOverlayPadding: Dp,
     scrollPosition: LazyListScrollPosition,
     onOpenArtist: (String) -> Unit,
 ) {
@@ -1637,7 +1654,7 @@ private fun ArtistsPage(
             exit = androidx.compose.animation.fadeOut(),
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(top = 8.dp, bottom = 8.dp + bottomOverlayPadding),
+                .padding(top = 8.dp, bottom = 8.dp + fastScrollBottomOverlayPadding),
         ) {
             AlphabetScrollBar(
                 labels = visibleScrollLabels,
@@ -1669,6 +1686,7 @@ private fun AlbumsPage(
     onUpdateViewMode: (AlbumViewMode) -> Unit,
     onOpenAlbum: (String) -> Unit,
     bottomOverlayPadding: Dp,
+    fastScrollBottomOverlayPadding: Dp,
 ) {
     val feeds = AlbumListType.defaultBrowseFeeds
     val selectedFeedState = rememberUpdatedState(selectedFeed)
@@ -1747,6 +1765,7 @@ private fun AlbumsPage(
                 onLoadMore = onLoadMore,
                 onOpenAlbum = onOpenAlbum,
                 bottomOverlayPadding = bottomOverlayPadding,
+                fastScrollBottomOverlayPadding = fastScrollBottomOverlayPadding,
             )
         }
     }
@@ -1841,6 +1860,7 @@ private fun AlbumFeedPageContent(
     onLoadMore: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     bottomOverlayPadding: Dp,
+    fastScrollBottomOverlayPadding: Dp,
 ) {
     var fastScrollIndex by remember(feed, ignoredArticles, indexingLocale) {
         mutableStateOf<AlbumFastScrollIndex?>(null)
@@ -1909,7 +1929,7 @@ private fun AlbumFeedPageContent(
                 }
                 AlbumFastScrollOverlay(
                     index = fastScrollIndex,
-                    bottomOverlayPadding = bottomOverlayPadding,
+                    bottomOverlayPadding = fastScrollBottomOverlayPadding,
                     onScrollToAlbumIndex = { itemIndex ->
                         coroutineScope.launch { gridState.scrollToItem(itemIndex) }
                     },
@@ -1968,7 +1988,7 @@ private fun AlbumFeedPageContent(
                 }
                 AlbumFastScrollOverlay(
                     index = fastScrollIndex,
-                    bottomOverlayPadding = bottomOverlayPadding,
+                    bottomOverlayPadding = fastScrollBottomOverlayPadding,
                     onScrollToAlbumIndex = { itemIndex ->
                         coroutineScope.launch { listState.scrollToItem(itemIndex) }
                     },
@@ -2714,6 +2734,78 @@ private fun artistCountText(count: Int): String =
 private fun matchCountText(count: Int): String =
     pluralStringResource(R.plurals.browse_match_count, count, count)
 
+private val FastScrollLabelVerticalPadding = 2.dp
+
+internal data class FastScrollDisplayLabel(
+    val text: String,
+    val sourceIndex: Int,
+    val isGapMarker: Boolean = false,
+)
+
+internal fun fastScrollDisplayLabels(
+    labels: List<String>,
+    availableHeight: Dp,
+    minimumLabelSlotHeight: Dp,
+): List<FastScrollDisplayLabel> {
+    if (labels.isEmpty() || availableHeight <= 0.dp || minimumLabelSlotHeight <= 0.dp) {
+        return emptyList()
+    }
+    if (labels.size == 1) return listOf(FastScrollDisplayLabel(labels.first(), 0))
+
+    val visibleCount = (availableHeight.value / minimumLabelSlotHeight.value)
+        .toInt()
+        .coerceIn(2, labels.size)
+    if (visibleCount == labels.size) {
+        return labels.mapIndexed { index, label -> FastScrollDisplayLabel(label, index) }
+    }
+
+    val latinLabels = labels.mapIndexedNotNull { index, label ->
+        label.singleOrNull()
+            ?.uppercaseChar()
+            ?.takeIf { it in 'A'..'Z' }
+            ?.let { it to index }
+    }
+    if (latinLabels.isEmpty()) {
+        return List(visibleCount) { position ->
+            val sourceIndex = (position * (labels.lastIndex).toFloat() / (visibleCount - 1))
+                .roundToInt()
+            FastScrollDisplayLabel(labels[sourceIndex], sourceIndex)
+        }.distinctBy(FastScrollDisplayLabel::sourceIndex)
+    }
+
+    val leadingSpecial = labels.indexOfFirst { it == "#" }.takeIf { it >= 0 }
+    val trailingSpecial = labels.indexOfLast { it == "…" }.takeIf { it >= 0 }
+    val reserveSpecialLabels = visibleCount >= 6
+    val reservedCount = if (reserveSpecialLabels) {
+        listOfNotNull(leadingSpecial, trailingSpecial).size
+    } else {
+        0
+    }
+    // A gap marker occupies its own slot, so k anchors require 2k - 1 slots.
+    val showGapMarkers = visibleCount >= 3
+    val anchorCount = if (showGapMarkers) {
+        ((visibleCount - reservedCount + 1) / 2).coerceAtLeast(2)
+    } else {
+        2
+    }
+    val result = mutableListOf<FastScrollDisplayLabel>()
+    if (reserveSpecialLabels && leadingSpecial != null) {
+        result += FastScrollDisplayLabel("#", leadingSpecial)
+    }
+    repeat(anchorCount) { position ->
+        if (position > 0 && showGapMarkers) {
+            result += FastScrollDisplayLabel("·", sourceIndex = -1, isGapMarker = true)
+        }
+        val anchor = ('A'.code + (position * 25f / (anchorCount - 1)).roundToInt()).toChar()
+        val source = latinLabels.minBy { (it.first.code - anchor.code).absoluteValue }
+        result += FastScrollDisplayLabel(anchor.toString(), source.second)
+    }
+    if (reserveSpecialLabels && trailingSpecial != null) {
+        result += FastScrollDisplayLabel("…", trailingSpecial)
+    }
+    return result
+}
+
 @Composable
 private fun AlphabetScrollBar(
     labels: List<String>,
@@ -2743,73 +2835,98 @@ private fun AlphabetScrollBar(
         return true
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .semantics {
-                contentDescription = scrollBarDescription
-                stateDescription = currentLabel
-                customActions = listOf(
-                    CustomAccessibilityAction(previousSectionLabel) {
-                        if (safeSelectedIndex <= 0) {
-                            false
-                        } else {
-                            scrollToIndex(safeSelectedIndex - 1, highlight = false)
-                        }
-                    },
-                    CustomAccessibilityAction(nextSectionLabel) {
-                        if (safeSelectedIndex >= labels.lastIndex) {
-                            false
-                        } else {
-                            scrollToIndex(safeSelectedIndex + 1, highlight = false)
-                        }
-                    },
-                )
+    BoxWithConstraints(modifier = modifier.fillMaxHeight()) {
+        val fontSize = if (labels.size > 30) 8.sp else 10.sp
+        val density = LocalDensity.current
+        val minimumLabelSlotHeight = with(density) { fontSize.toDp() } +
+            FastScrollLabelVerticalPadding
+        val displayLabels = remember(labels, maxHeight, minimumLabelSlotHeight) {
+            fastScrollDisplayLabels(
+                labels = labels,
+                availableHeight = maxHeight,
+                minimumLabelSlotHeight = minimumLabelSlotHeight,
+            )
+        }
+        val highlightedDisplayIndex = remember(activeIndex, displayLabels) {
+            if (activeIndex < 0) {
+                -1
+            } else {
+                displayLabels
+                    .withIndex()
+                    .filterNot { it.value.isGapMarker }
+                    .minByOrNull { abs(it.value.sourceIndex - activeIndex) }
+                    ?.index
+                    ?: -1
             }
-            .pointerInput(labels) {
-                detectTapGestures { offset ->
-                    val idx = (offset.y / (size.height.toFloat() / labels.size))
-                        .toInt()
-                        .coerceIn(0, labels.lastIndex)
-                    scrollToIndex(idx, highlight = false)
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .semantics {
+                    contentDescription = scrollBarDescription
+                    stateDescription = currentLabel
+                    customActions = listOf(
+                        CustomAccessibilityAction(previousSectionLabel) {
+                            if (safeSelectedIndex <= 0) {
+                                false
+                            } else {
+                                scrollToIndex(safeSelectedIndex - 1, highlight = false)
+                            }
+                        },
+                        CustomAccessibilityAction(nextSectionLabel) {
+                            if (safeSelectedIndex >= labels.lastIndex) {
+                                false
+                            } else {
+                                scrollToIndex(safeSelectedIndex + 1, highlight = false)
+                            }
+                        },
+                    )
                 }
-            }
-            .pointerInput(labels) {
-                detectVerticalDragGestures(
-                    onDragStart = { offset ->
+                .pointerInput(labels) {
+                    detectTapGestures { offset ->
                         val idx = (offset.y / (size.height.toFloat() / labels.size))
                             .toInt()
                             .coerceIn(0, labels.lastIndex)
-                        scrollToIndex(idx, highlight = true)
-                    },
-                    onDragEnd = { activeIndex = -1 },
-                    onDragCancel = { activeIndex = -1 },
-                    onVerticalDrag = { change, _ ->
-                        val idx = (change.position.y / (size.height.toFloat() / labels.size))
-                            .toInt()
-                            .coerceIn(0, labels.lastIndex)
-                        if (idx != activeIndex) {
+                        scrollToIndex(idx, highlight = false)
+                    }
+                }
+                .pointerInput(labels) {
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            val idx = (offset.y / (size.height.toFloat() / labels.size))
+                                .toInt()
+                                .coerceIn(0, labels.lastIndex)
                             scrollToIndex(idx, highlight = true)
-                        }
+                        },
+                        onDragEnd = { activeIndex = -1 },
+                        onDragCancel = { activeIndex = -1 },
+                        onVerticalDrag = { change, _ ->
+                            val idx = (change.position.y / (size.height.toFloat() / labels.size))
+                                .toInt()
+                                .coerceIn(0, labels.lastIndex)
+                            if (idx != activeIndex) {
+                                scrollToIndex(idx, highlight = true)
+                            }
+                        },
+                    )
+                }
+                .padding(horizontal = 4.dp),
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            displayLabels.forEachIndexed { displayIndex, displayLabel ->
+                Text(
+                    text = displayLabel.text,
+                    fontSize = if (displayLabel.isGapMarker) 8.sp else fontSize,
+                    lineHeight = fontSize,
+                    color = when {
+                        displayLabel.isGapMarker -> MaterialTheme.colorScheme.outline
+                        displayIndex == highlightedDisplayIndex -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
             }
-            .padding(horizontal = 4.dp),
-        verticalArrangement = Arrangement.SpaceEvenly,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        val fontSize = if (labels.size > 30) 8.sp else 10.sp
-        labels.forEachIndexed { index, label ->
-            Text(
-                text = label,
-                fontSize = fontSize,
-                lineHeight = fontSize,
-                color = if (index == activeIndex) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
         }
     }
 }
