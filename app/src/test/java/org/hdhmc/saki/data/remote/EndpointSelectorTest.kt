@@ -5,21 +5,41 @@ import org.junit.Test
 
 class EndpointSelectorTest {
     @Test
-    fun `successful traffic wins over a concurrent failed probe`() {
+    fun `newer invalidation wins over success and older probe completion`() {
+        val probeStartVersion = 0L
+        val success = EndpointReachabilityEvent(version = 1L, reachable = true)
+        val invalidation = EndpointReachabilityEvent(version = 2L, reachable = false)
+
         assertEquals(
             true,
             resolveEndpointReachability(
                 hasProbeLatency = false,
-                succeededDuringProbe = true,
-                probeCompleted = true,
-                previousReachable = true,
+                latestEvent = success,
+                probeStartEventVersion = probeStartVersion,
+                probeCompleted = false,
+                previousReachable = false,
             ),
         )
         assertEquals(
             false,
             resolveEndpointReachability(
+                hasProbeLatency = true,
+                latestEvent = invalidation,
+                probeStartEventVersion = probeStartVersion,
+                probeCompleted = true,
+                previousReachable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `probe ignores endpoint events older than its start`() {
+        assertEquals(
+            false,
+            resolveEndpointReachability(
                 hasProbeLatency = false,
-                succeededDuringProbe = false,
+                latestEvent = EndpointReachabilityEvent(version = 4L, reachable = true),
+                probeStartEventVersion = 4L,
                 probeCompleted = true,
                 previousReachable = true,
             ),

@@ -52,8 +52,8 @@ class EndpointSelector @Inject constructor(
     private val activeProbes = ConcurrentHashMap<Long, ActiveProbe>()
     private val probeGenerations = ConcurrentHashMap<Long, Long>()
     private val probingServers = ConcurrentHashMap<Long, Boolean>()
-    private val lastReachableVersions = ConcurrentHashMap<EndpointKey, Long>()
-    private val successVersion = AtomicLong(0L)
+    private val latestEndpointEvents = ConcurrentHashMap<EndpointKey, EndpointReachabilityEvent>()
+    private val endpointEventVersion = AtomicLong(0L)
     private val offlineRecoveryJobs = ConcurrentHashMap<Long, Job>()
     private val endpointStateLocks = ConcurrentHashMap<Long, Any>()
 
@@ -115,7 +115,7 @@ class EndpointSelector @Inject constructor(
         bestEndpoints.remove(serverId)
         forcedEndpoints.remove(serverId)
         lastProbeResults.remove(serverId)
-        lastReachableVersions.keys.removeAll { it.serverId == serverId }
+        latestEndpointEvents.keys.removeAll { it.serverId == serverId }
         offlineRecoveryJobs.remove(serverId)?.cancel()
         endpointStateLocks.remove(serverId)
         _probeVersion.update { it + 1 }
@@ -145,7 +145,7 @@ class EndpointSelector @Inject constructor(
         serverConfigs[serverId] = server
         val endpoints = server.endpoints.sortedBy(ServerEndpoint::order)
         val generation = nextProbeGeneration(serverId)
-        val probeStartSuccessVersion = successVersion.get()
+        val probeStartEventVersion = endpointEventVersion.get()
         probingServers[serverId] = true
         _probeVersion.update { it + 1 }
         if (endpoints.isEmpty()) {
@@ -178,7 +178,7 @@ class EndpointSelector @Inject constructor(
                             endpoints = endpoints,
                             reachableLatencies = probeResults,
                             completedEndpointIds = completedEndpointIds,
-                            probeStartSuccessVersion = probeStartSuccessVersion,
+                            probeStartEventVersion = probeStartEventVersion,
                             final = false,
                         )
                     }
@@ -190,7 +190,7 @@ class EndpointSelector @Inject constructor(
                     endpoints = endpoints,
                     reachableLatencies = probeResults,
                     completedEndpointIds = completedEndpointIds,
-                    probeStartSuccessVersion = probeStartSuccessVersion,
+                    probeStartEventVersion = probeStartEventVersion,
                     final = true,
                 )
                 selectBestKnownReachableEndpoint(serverId)
@@ -234,13 +234,16 @@ class EndpointSelector @Inject constructor(
     }
 
     fun invalidate(serverId: Long, failedEndpointId: Long) {
-        forcedEndpoints.remove(serverId, failedEndpointId)
-        val removedActiveEndpoint = bestEndpoints.remove(serverId, failedEndpointId)
-        val endpoint = serverConfigs[serverId]?.endpoints?.firstOrNull { it.id == failedEndpointId }
-            ?: return
-        upsertProbeResult(serverId, EndpointProbeResult(endpoint, latencyMs = null, reachable = false))
-        if (removedActiveEndpoint && forcedEndpoints[serverId] == null) {
-            selectBestKnownReachableEndpoint(serverId)
+        synchronized(endpointStateLock(serverId)) {
+            forcedEndpoints.remove(serverId, failedEndpointId)
+            val removedActiveEndpoint = bestEndpoints.remove(serverId, failedEndpointId)
+            val endpoint = serverConfigs[serverId]?.endpoints?.firstOrNull { it.id == failedEndpointId }
+                ?: return
+            recordEndpointEvent(serverId, failedEndpointId, reachable = false)
+            upsertProbeResult(serverId, EndpointProbeResult(endpoint, latencyMs = null, reachable = false))
+            if (removedActiveEndpoint && forcedEndpoints[serverId] == null) {
+                selectBestKnownReachableEndpoint(serverId)
+            }
         }
         _probeVersion.update { it + 1 }
         if (isOfflineDegraded(serverId)) {
@@ -274,10 +277,12 @@ class EndpointSelector @Inject constructor(
     }
 
     fun recordSuccess(serverId: Long, endpoint: ServerEndpoint, latencyMs: Long? = null) {
-        serverConfigs[serverId] ?: return
-        recordReachableEndpoint(serverId, endpoint, latencyMs)
-        activeProbes[serverId]?.firstReachable?.complete(endpoint)
-        offlineRecoveryJobs.remove(serverId)?.cancel()
+        synchronized(endpointStateLock(serverId)) {
+            serverConfigs[serverId] ?: return
+            recordReachableEndpoint(serverId, endpoint, latencyMs)
+            activeProbes[serverId]?.firstReachable?.complete(endpoint)
+            offlineRecoveryJobs.remove(serverId)?.cancel()
+        }
         _probeVersion.update { it + 1 }
     }
 
@@ -346,7 +351,7 @@ class EndpointSelector @Inject constructor(
         latencyMs: Long?,
     ) {
         synchronized(endpointStateLock(serverId)) {
-            lastReachableVersions[EndpointKey(serverId, endpoint.id)] = successVersion.incrementAndGet()
+            recordEndpointEvent(serverId, endpoint.id, reachable = true)
             val previous = lastProbeResults[serverId]
                 .orEmpty()
                 .firstOrNull { it.endpoint.id == endpoint.id }
@@ -394,20 +399,19 @@ class EndpointSelector @Inject constructor(
         endpoints: List<ServerEndpoint>,
         reachableLatencies: Map<Long, Long>,
         completedEndpointIds: Set<Long>,
-        probeStartSuccessVersion: Long,
+        probeStartEventVersion: Long,
         final: Boolean,
     ) {
         synchronized(endpointStateLock(serverId)) {
             val previousById = lastProbeResults[serverId].orEmpty().associateBy { it.endpoint.id }
             lastProbeResults[serverId] = endpoints.mapNotNull { endpoint ->
                 val latency = reachableLatencies[endpoint.id]
-                val succeededDuringProbe = lastReachableVersions[
-                    EndpointKey(serverId, endpoint.id)
-                ]?.let { reachableVersion -> reachableVersion > probeStartSuccessVersion } == true
+                val latestEvent = latestEndpointEvents[EndpointKey(serverId, endpoint.id)]
                 when (
                     resolveEndpointReachability(
                         hasProbeLatency = latency != null,
-                        succeededDuringProbe = succeededDuringProbe,
+                        latestEvent = latestEvent,
+                        probeStartEventVersion = probeStartEventVersion,
                         probeCompleted = final || endpoint.id in completedEndpointIds,
                         previousReachable = previousById[endpoint.id]?.reachable,
                     )
@@ -440,6 +444,13 @@ class EndpointSelector @Inject constructor(
                 orderedEndpoints.mapNotNull { endpoint -> previousById[endpoint.id] }
             }
         }
+    }
+
+    private fun recordEndpointEvent(serverId: Long, endpointId: Long, reachable: Boolean) {
+        latestEndpointEvents[EndpointKey(serverId, endpointId)] = EndpointReachabilityEvent(
+            version = endpointEventVersion.incrementAndGet(),
+            reachable = reachable,
+        )
     }
 
     private fun endpointStateLock(serverId: Long): Any =
@@ -506,13 +517,20 @@ class EndpointSelector @Inject constructor(
     }
 }
 
+internal data class EndpointReachabilityEvent(
+    val version: Long,
+    val reachable: Boolean,
+)
+
 internal fun resolveEndpointReachability(
     hasProbeLatency: Boolean,
-    succeededDuringProbe: Boolean,
+    latestEvent: EndpointReachabilityEvent?,
+    probeStartEventVersion: Long,
     probeCompleted: Boolean,
     previousReachable: Boolean?,
 ): Boolean? = when {
-    hasProbeLatency || succeededDuringProbe -> true
+    latestEvent != null && latestEvent.version > probeStartEventVersion -> latestEvent.reachable
+    hasProbeLatency -> true
     probeCompleted -> false
     else -> previousReachable
 }

@@ -14,9 +14,11 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.SimpleCache
@@ -40,6 +42,7 @@ import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSource
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
 import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
@@ -154,7 +157,38 @@ class SakiPlaybackService : MediaSessionService() {
         val upstreamDataSourceFactory = DefaultDataSource.Factory(
             this,
             OkHttpDataSource.Factory(okHttpClient)
-                .setUserAgent(HTTP_USER_AGENT),
+                .setUserAgent(HTTP_USER_AGENT)
+                .setTransferListener(object : TransferListener {
+                    override fun onTransferInitializing(
+                        source: DataSource,
+                        dataSpec: DataSpec,
+                        isNetwork: Boolean,
+                    ) = Unit
+
+                    override fun onTransferStart(
+                        source: DataSource,
+                        dataSpec: DataSpec,
+                        isNetwork: Boolean,
+                    ) {
+                        if (!isNetwork) return
+                        // Media3 invokes this only after the upstream data source opens successfully.
+                        val selection = dataSpec.customData as? StreamEndpointSelection ?: return
+                        endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
+                    }
+
+                    override fun onBytesTransferred(
+                        source: DataSource,
+                        dataSpec: DataSpec,
+                        isNetwork: Boolean,
+                        bytesTransferred: Int,
+                    ) = Unit
+
+                    override fun onTransferEnd(
+                        source: DataSource,
+                        dataSpec: DataSpec,
+                        isNetwork: Boolean,
+                    ) = Unit
+                }),
         )
         val cacheFactory = CacheDataSource.Factory()
             .setCache(streamCache)
@@ -755,6 +789,11 @@ class SakiPlaybackService : MediaSessionService() {
         return streamCache.getCachedSpans(cacheKey).sumOf { span -> span.length }
     }
 
+    private data class StreamEndpointSelection(
+        val serverId: Long,
+        val endpoint: ServerEndpoint,
+    )
+
     private data class StreamPrefetchPlan(
         val key: String,
         val targets: List<StreamPrefetchTarget>,
@@ -832,11 +871,11 @@ class SakiPlaybackService : MediaSessionService() {
                 throw IOException("No stream candidates for song $songId on server $serverId")
             }
             val candidate = streamRequest.candidates.first()
-            endpointSelector.recordSuccess(serverId, candidate.endpoint)
             val cacheKey = streamCacheRepository.buildCacheKey(serverId, songId, requestedQuality)
             return dataSpec.buildUpon()
                 .setUri(candidate.url)
                 .setKey(cacheKey)
+                .setCustomData(StreamEndpointSelection(serverId, candidate.endpoint))
                 .build()
         }
 
@@ -848,13 +887,13 @@ class SakiPlaybackService : MediaSessionService() {
         }
 
         val candidate = streamRequest.candidates.first()
-        endpointSelector.recordSuccess(serverId, candidate.endpoint)
         val realUrl = candidate.url
         val cacheKey = streamCacheRepository.buildCacheKey(serverId, songId, quality)
 
         return dataSpec.buildUpon()
             .setUri(realUrl)
             .setKey(cachedResourceKey ?: cacheKey)
+            .setCustomData(StreamEndpointSelection(serverId, candidate.endpoint))
             .build()
     }
 
