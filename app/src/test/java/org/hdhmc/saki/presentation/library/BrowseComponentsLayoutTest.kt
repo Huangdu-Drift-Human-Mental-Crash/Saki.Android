@@ -107,4 +107,30 @@ class BrowseComponentsLayoutTest {
         assertEquals(8.dp, fastScrollBottomOverlayPadding(width = 869.dp, overlayPadding = 8.dp))
     }
 
+    @Test
+    fun compactFastScrollHitRegionsFollowDisplayedAnchors() {
+        val displayLabels = fastScrollDisplayLabels(
+            labels = ('A'..'Z').map(Char::toString),
+            availableHeight = 72.dp,
+            minimumLabelSlotHeight = 12.dp,
+        )
+
+        assertEquals(0, fastScrollSourceIndexAtPosition(10f, 100f, displayLabels))
+        assertEquals(7, fastScrollSourceIndexAtPosition(30f, 100f, displayLabels))
+        assertEquals(13, fastScrollSourceIndexAtPosition(50f, 100f, displayLabels))
+        assertEquals(19, fastScrollSourceIndexAtPosition(70f, 100f, displayLabels))
+        assertEquals(25, fastScrollSourceIndexAtPosition(90f, 100f, displayLabels))
+    }
+
+    @Test
+    fun fullFastScrollHitRegionsMapDirectlyToTheirRows() {
+        val displayLabels = ('A'..'D').mapIndexed { index, label ->
+            FastScrollDisplayLabel(label.toString(), sourceIndex = index)
+        }
+
+        assertEquals(0, fastScrollSourceIndexAtPosition(0f, 100f, displayLabels))
+        assertEquals(1, fastScrollSourceIndexAtPosition(25f, 100f, displayLabels))
+        assertEquals(3, fastScrollSourceIndexAtPosition(100f, 100f, displayLabels))
+    }
+
 }

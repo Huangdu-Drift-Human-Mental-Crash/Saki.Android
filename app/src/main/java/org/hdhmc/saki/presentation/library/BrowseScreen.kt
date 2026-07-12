@@ -2806,6 +2806,37 @@ internal fun fastScrollDisplayLabels(
     return result
 }
 
+internal fun fastScrollSourceIndexAtPosition(
+    positionY: Float,
+    height: Float,
+    displayLabels: List<FastScrollDisplayLabel>,
+): Int {
+    if (displayLabels.isEmpty() || height <= 0f) return -1
+
+    val displayIndex = (positionY.coerceIn(0f, height) / height * displayLabels.size)
+        .toInt()
+        .coerceIn(0, displayLabels.lastIndex)
+    val displayLabel = displayLabels[displayIndex]
+    if (!displayLabel.isGapMarker) return displayLabel.sourceIndex
+
+    val previousSourceIndex = displayLabels
+        .subList(0, displayIndex)
+        .lastOrNull { !it.isGapMarker }
+        ?.sourceIndex
+    val nextSourceIndex = displayLabels
+        .subList(displayIndex + 1, displayLabels.size)
+        .firstOrNull { !it.isGapMarker }
+        ?.sourceIndex
+    return when {
+        previousSourceIndex != null && nextSourceIndex != null ->
+            ((previousSourceIndex + nextSourceIndex) / 2f).roundToInt()
+
+        previousSourceIndex != null -> previousSourceIndex
+        nextSourceIndex != null -> nextSourceIndex
+        else -> -1
+    }
+}
+
 @Composable
 private fun AlphabetScrollBar(
     labels: List<String>,
@@ -2883,49 +2914,63 @@ private fun AlphabetScrollBar(
                         },
                     )
                 }
-                .pointerInput(labels) {
+                .pointerInput(labels, displayLabels) {
                     detectTapGestures { offset ->
-                        val idx = (offset.y / (size.height.toFloat() / labels.size))
-                            .toInt()
-                            .coerceIn(0, labels.lastIndex)
-                        scrollToIndex(idx, highlight = false)
+                        val sourceIndex = fastScrollSourceIndexAtPosition(
+                            positionY = offset.y,
+                            height = size.height.toFloat(),
+                            displayLabels = displayLabels,
+                        )
+                        if (sourceIndex >= 0) {
+                            scrollToIndex(sourceIndex, highlight = false)
+                        }
                     }
                 }
-                .pointerInput(labels) {
+                .pointerInput(labels, displayLabels) {
                     detectVerticalDragGestures(
                         onDragStart = { offset ->
-                            val idx = (offset.y / (size.height.toFloat() / labels.size))
-                                .toInt()
-                                .coerceIn(0, labels.lastIndex)
-                            scrollToIndex(idx, highlight = true)
+                            val sourceIndex = fastScrollSourceIndexAtPosition(
+                                positionY = offset.y,
+                                height = size.height.toFloat(),
+                                displayLabels = displayLabels,
+                            )
+                            if (sourceIndex >= 0) {
+                                scrollToIndex(sourceIndex, highlight = true)
+                            }
                         },
                         onDragEnd = { activeIndex = -1 },
                         onDragCancel = { activeIndex = -1 },
                         onVerticalDrag = { change, _ ->
-                            val idx = (change.position.y / (size.height.toFloat() / labels.size))
-                                .toInt()
-                                .coerceIn(0, labels.lastIndex)
-                            if (idx != activeIndex) {
-                                scrollToIndex(idx, highlight = true)
+                            val sourceIndex = fastScrollSourceIndexAtPosition(
+                                positionY = change.position.y,
+                                height = size.height.toFloat(),
+                                displayLabels = displayLabels,
+                            )
+                            if (sourceIndex >= 0 && sourceIndex != activeIndex) {
+                                scrollToIndex(sourceIndex, highlight = true)
                             }
                         },
                     )
                 }
                 .padding(horizontal = 4.dp),
-            verticalArrangement = Arrangement.SpaceEvenly,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             displayLabels.forEachIndexed { displayIndex, displayLabel ->
-                Text(
-                    text = displayLabel.text,
-                    fontSize = if (displayLabel.isGapMarker) 8.sp else fontSize,
-                    lineHeight = fontSize,
-                    color = when {
-                        displayLabel.isGapMarker -> MaterialTheme.colorScheme.outline
-                        displayIndex == highlightedDisplayIndex -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = displayLabel.text,
+                        fontSize = if (displayLabel.isGapMarker) 8.sp else fontSize,
+                        lineHeight = fontSize,
+                        color = when {
+                            displayLabel.isGapMarker -> MaterialTheme.colorScheme.outline
+                            displayIndex == highlightedDisplayIndex -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
         }
     }
