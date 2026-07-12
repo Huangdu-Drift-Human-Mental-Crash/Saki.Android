@@ -13,12 +13,14 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,6 +52,10 @@ class EndpointSelector @Inject constructor(
     private val activeProbes = ConcurrentHashMap<Long, ActiveProbe>()
     private val probeGenerations = ConcurrentHashMap<Long, Long>()
     private val probingServers = ConcurrentHashMap<Long, Boolean>()
+    private val latestEndpointEvents = ConcurrentHashMap<EndpointKey, EndpointReachabilityEvent>()
+    private val endpointEventVersion = AtomicLong(0L)
+    private val offlineRecoveryJobs = ConcurrentHashMap<Long, Job>()
+    private val endpointStateLocks = ConcurrentHashMap<Long, Any>()
 
     private val _probeVersion = MutableStateFlow(0L)
     val probeVersion: StateFlow<Long> = _probeVersion.asStateFlow()
@@ -74,6 +80,11 @@ class EndpointSelector @Inject constructor(
         val firstReachable: CompletableDeferred<ServerEndpoint?>,
     )
 
+    private data class EndpointKey(
+        val serverId: Long,
+        val endpointId: Long,
+    )
+
     private var networkCallbackRegistered = false
 
     fun start() {
@@ -94,23 +105,30 @@ class EndpointSelector @Inject constructor(
     }
 
     fun unregisterServer(serverId: Long) {
+        activeProbes.remove(serverId)?.let { activeProbe ->
+            activeProbe.job.cancel()
+            activeProbe.firstReachable.complete(null)
+        }
+        probeGenerations.remove(serverId)
+        probingServers.remove(serverId)
         serverConfigs.remove(serverId)
         bestEndpoints.remove(serverId)
         forcedEndpoints.remove(serverId)
         lastProbeResults.remove(serverId)
+        latestEndpointEvents.keys.removeAll { it.serverId == serverId }
+        offlineRecoveryJobs.remove(serverId)?.cancel()
+        endpointStateLocks.remove(serverId)
+        _probeVersion.update { it + 1 }
     }
 
     private var reprobeJob: kotlinx.coroutines.Job? = null
 
     private fun onNetworkChanged() {
         forcedEndpoints.clear()
+        cancelOfflineRecoveryJobs()
         reprobeJob?.cancel()
         reprobeJob = scope.launch {
-            val delays = longArrayOf(0, 3_000, 6_000, 12_000)
-            for (d in delays) {
-                if (d > 0) delay(d)
-                serverConfigs.forEach { (serverId, server) -> probe(serverId, server) }
-            }
+            serverConfigs.forEach { (serverId, server) -> probe(serverId, server) }
         }
     }
 
@@ -120,65 +138,83 @@ class EndpointSelector @Inject constructor(
      * Cancels any previous in-flight probe for the same server.
      */
     suspend fun probe(serverId: Long, server: ServerConfig): ServerEndpoint? {
-        activeProbes.remove(serverId)?.let { activeProbe ->
-            activeProbe.job.cancel()
-            activeProbe.firstReachable.complete(null)
-        }
-        serverConfigs[serverId] = server
-        val endpoints = server.endpoints.sortedBy(ServerEndpoint::order)
-        val generation = nextProbeGeneration(serverId)
-        probingServers[serverId] = true
-        _probeVersion.update { it + 1 }
-        if (endpoints.isEmpty()) {
-            lastProbeResults.remove(serverId)
-            bestEndpoints.remove(serverId)
-            probingServers.remove(serverId)
+        val firstReachable = synchronized(endpointStateLock(serverId)) {
+            activeProbes.remove(serverId)?.let { activeProbe ->
+                activeProbe.job.cancel()
+                activeProbe.firstReachable.complete(null)
+            }
+            serverConfigs[serverId] = server
+            val endpoints = server.endpoints.sortedBy(ServerEndpoint::order)
+            val generation = nextProbeGeneration(serverId)
+            val probeStartEventVersion = endpointEventVersion.get()
+            probingServers[serverId] = true
             _probeVersion.update { it + 1 }
-            return null
-        }
+            if (endpoints.isEmpty()) {
+                lastProbeResults.remove(serverId)
+                bestEndpoints.remove(serverId)
+                probingServers.remove(serverId)
+                _probeVersion.update { it + 1 }
+                return null
+            }
 
-        val firstReachable = CompletableDeferred<ServerEndpoint?>()
-        val probeResults = ConcurrentHashMap<Long, Long>()
-        val completedEndpointIds = ConcurrentHashMap.newKeySet<Long>()
-        var probeFinished = false
+            val firstReachable = CompletableDeferred<ServerEndpoint?>()
+            val probeResults = ConcurrentHashMap<Long, Long>()
+            val completedEndpointIds = ConcurrentHashMap.newKeySet<Long>()
+            var probeFinished = false
 
-        val parentJob = scope.launch {
-            try {
-                val jobs = endpoints.map { endpoint ->
-                    launch {
-                        val latency = pingEndpoint(endpoint, server)
-                        if (!isCurrentProbe(serverId, generation)) return@launch
-                        completedEndpointIds += endpoint.id
-                        if (latency != null) {
-                            probeResults[endpoint.id] = latency
-                            recordReachableEndpoint(serverId, endpoint, latency)
-                            firstReachable.complete(endpoint)
+            val parentJob = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val jobs = endpoints.map { endpoint ->
+                        launch {
+                            val latency = pingEndpoint(endpoint, server)
+                            if (!isCurrentProbe(serverId, generation)) return@launch
+                            completedEndpointIds += endpoint.id
+                            if (latency != null) {
+                                probeResults[endpoint.id] = latency
+                                recordReachableEndpoint(serverId, endpoint, latency)
+                                firstReachable.complete(endpoint)
+                            }
+                            publishProbeResults(
+                                serverId = serverId,
+                                endpoints = endpoints,
+                                reachableLatencies = probeResults,
+                                completedEndpointIds = completedEndpointIds,
+                                probeStartEventVersion = probeStartEventVersion,
+                                final = false,
+                            )
                         }
-                        publishProbeResults(serverId, endpoints, probeResults, completedEndpointIds, final = false)
+                    }
+                    jobs.forEach { it.join() }
+                    if (!isCurrentProbe(serverId, generation)) return@launch
+                    publishProbeResults(
+                        serverId = serverId,
+                        endpoints = endpoints,
+                        reachableLatencies = probeResults,
+                        completedEndpointIds = completedEndpointIds,
+                        probeStartEventVersion = probeStartEventVersion,
+                        final = true,
+                    )
+                    clearProbeInProgress(serverId, generation)
+                    if (isOfflineDegraded(serverId)) {
+                        scheduleOfflineRecovery(serverId)
+                    }
+                    probeFinished = true
+                    firstReachable.complete(null)
+                } finally {
+                    if (!probeFinished && isCurrentProbe(serverId, generation)) {
+                        clearProbeInProgress(serverId, generation)
                     }
                 }
-                jobs.forEach { it.join() }
-                if (!isCurrentProbe(serverId, generation)) return@launch
-                if (probeResults.isEmpty() && forcedEndpoints[serverId] == null) {
-                    bestEndpoints.remove(serverId)
-                }
-                publishProbeResults(serverId, endpoints, probeResults, completedEndpointIds, final = true)
-                selectBestKnownReachableEndpoint(serverId)
-                clearProbeInProgress(serverId, generation)
-                probeFinished = true
-                firstReachable.complete(null)
-            } finally {
-                if (!probeFinished && isCurrentProbe(serverId, generation)) {
-                    clearProbeInProgress(serverId, generation)
-                }
             }
-        }
 
-        activeProbes[serverId] = ActiveProbe(
-            generation = generation,
-            job = parentJob,
-            firstReachable = firstReachable,
-        )
+            activeProbes[serverId] = ActiveProbe(
+                generation = generation,
+                job = parentJob,
+                firstReachable = firstReachable,
+            )
+            parentJob.start()
+            firstReachable
+        }
 
         return firstReachable.await()
     }
@@ -200,15 +236,21 @@ class EndpointSelector @Inject constructor(
     }
 
     fun invalidate(serverId: Long, failedEndpointId: Long) {
-        forcedEndpoints.remove(serverId, failedEndpointId)
-        val removedActiveEndpoint = bestEndpoints.remove(serverId, failedEndpointId)
-        val endpoint = serverConfigs[serverId]?.endpoints?.firstOrNull { it.id == failedEndpointId }
-            ?: return
-        upsertProbeResult(serverId, EndpointProbeResult(endpoint, latencyMs = null, reachable = false))
-        if (removedActiveEndpoint && forcedEndpoints[serverId] == null) {
-            selectBestKnownReachableEndpoint(serverId)
+        synchronized(endpointStateLock(serverId)) {
+            forcedEndpoints.remove(serverId, failedEndpointId)
+            val removedActiveEndpoint = bestEndpoints.remove(serverId, failedEndpointId)
+            val endpoint = serverConfigs[serverId]?.endpoints?.firstOrNull { it.id == failedEndpointId }
+                ?: return
+            recordEndpointEvent(serverId, failedEndpointId, reachable = false)
+            upsertProbeResult(serverId, EndpointProbeResult(endpoint, latencyMs = null, reachable = false))
+            if (removedActiveEndpoint && forcedEndpoints[serverId] == null) {
+                selectBestKnownReachableEndpointLocked(serverId)
+            }
         }
         _probeVersion.update { it + 1 }
+        if (isOfflineDegraded(serverId)) {
+            scheduleOfflineRecovery(serverId)
+        }
     }
 
     fun getActiveEndpointId(serverId: Long): Long? = bestEndpoints[serverId]
@@ -224,7 +266,6 @@ class EndpointSelector @Inject constructor(
     fun isProbeInProgress(serverId: Long): Boolean = probingServers[serverId] == true
 
     fun hasCompletedProbe(serverId: Long): Boolean {
-        if (isProbeInProgress(serverId)) return false
         val endpointIds = serverConfigs[serverId]?.endpoints?.map { it.id }?.toSet().orEmpty()
         if (endpointIds.isEmpty()) return false
         val resultIds = lastProbeResults[serverId].orEmpty().map { it.endpoint.id }.toSet()
@@ -238,22 +279,34 @@ class EndpointSelector @Inject constructor(
     }
 
     fun recordSuccess(serverId: Long, endpoint: ServerEndpoint, latencyMs: Long? = null) {
-        serverConfigs[serverId] ?: return
-        recordReachableEndpoint(serverId, endpoint, latencyMs)
+        synchronized(endpointStateLock(serverId)) {
+            serverConfigs[serverId] ?: return
+            recordReachableEndpoint(serverId, endpoint, latencyMs)
+            activeProbes[serverId]?.firstReachable?.complete(endpoint)
+            offlineRecoveryJobs.remove(serverId)?.cancel()
+        }
         _probeVersion.update { it + 1 }
     }
 
     fun forceEndpoint(serverId: Long, endpointId: Long) {
-        forcedEndpoints[serverId] = endpointId
-        bestEndpoints[serverId] = endpointId
+        synchronized(endpointStateLock(serverId)) {
+            forcedEndpoints[serverId] = endpointId
+            bestEndpoints[serverId] = endpointId
+            offlineRecoveryJobs.remove(serverId)?.cancel()
+        }
         _probeVersion.update { it + 1 }
     }
 
     fun clearForce(serverId: Long) {
-        forcedEndpoints.remove(serverId)
-        bestEndpoints.remove(serverId)
-        selectBestKnownReachableEndpoint(serverId)
+        synchronized(endpointStateLock(serverId)) {
+            forcedEndpoints.remove(serverId)
+            bestEndpoints.remove(serverId)
+            selectBestKnownReachableEndpointLocked(serverId)
+        }
         _probeVersion.update { it + 1 }
+        if (isOfflineDegraded(serverId)) {
+            scheduleOfflineRecovery(serverId)
+        }
     }
 
     fun isForced(serverId: Long): Boolean = forcedEndpoints.containsKey(serverId)
@@ -303,42 +356,43 @@ class EndpointSelector @Inject constructor(
         endpoint: ServerEndpoint,
         latencyMs: Long?,
     ) {
-        val previous = lastProbeResults[serverId]
-            .orEmpty()
-            .firstOrNull { it.endpoint.id == endpoint.id }
-        upsertProbeResult(
-            serverId,
-            EndpointProbeResult(
-                endpoint = endpoint,
-                latencyMs = latencyMs ?: previous?.latencyMs,
-                reachable = true,
-            ),
-        )
-        if (forcedEndpoints[serverId] == null) {
-            val currentBestId = bestEndpoints[serverId]
-            val currentBestLatency = lastProbeResults[serverId]
+        synchronized(endpointStateLock(serverId)) {
+            recordEndpointEvent(serverId, endpoint.id, reachable = true)
+            val previous = lastProbeResults[serverId]
                 .orEmpty()
-                .firstOrNull { it.endpoint.id == currentBestId }
-                ?.latencyMs
-            if (
-                currentBestId == null ||
-                latencyMs == null ||
-                currentBestLatency == null ||
-                latencyMs < currentBestLatency
-            ) {
-                bestEndpoints[serverId] = endpoint.id
+                .firstOrNull { it.endpoint.id == endpoint.id }
+            upsertProbeResult(
+                serverId,
+                EndpointProbeResult(
+                    endpoint = endpoint,
+                    latencyMs = latencyMs ?: previous?.latencyMs,
+                    reachable = true,
+                ),
+            )
+            if (forcedEndpoints[serverId] == null) {
+                val currentBestId = bestEndpoints[serverId]
+                val currentBestLatency = lastProbeResults[serverId]
+                    .orEmpty()
+                    .firstOrNull { it.endpoint.id == currentBestId }
+                    ?.latencyMs
+                if (
+                    currentBestId == null ||
+                    latencyMs == null ||
+                    currentBestLatency == null ||
+                    latencyMs < currentBestLatency
+                ) {
+                    bestEndpoints[serverId] = endpoint.id
+                }
             }
         }
     }
 
-    private fun selectBestKnownReachableEndpoint(serverId: Long) {
+    private fun selectBestKnownReachableEndpointLocked(serverId: Long) {
+        check(Thread.holdsLock(endpointStateLock(serverId)))
         if (forcedEndpoints[serverId] != null) return
-        val bestReachable = lastProbeResults[serverId]
-            .orEmpty()
-            .filter { result -> result.reachable }
-            .minByOrNull { result -> result.latencyMs ?: Long.MAX_VALUE }
-        if (bestReachable != null) {
-            bestEndpoints[serverId] = bestReachable.endpoint.id
+        val bestEndpointId = bestReachableEndpointId(lastProbeResults[serverId].orEmpty())
+        if (bestEndpointId != null) {
+            bestEndpoints[serverId] = bestEndpointId
         } else {
             bestEndpoints.remove(serverId)
         }
@@ -349,32 +403,97 @@ class EndpointSelector @Inject constructor(
         endpoints: List<ServerEndpoint>,
         reachableLatencies: Map<Long, Long>,
         completedEndpointIds: Set<Long>,
+        probeStartEventVersion: Long,
         final: Boolean,
     ) {
-        val previousById = lastProbeResults[serverId].orEmpty().associateBy { it.endpoint.id }
-        lastProbeResults[serverId] = endpoints.mapNotNull { endpoint ->
-            val latency = reachableLatencies[endpoint.id]
-            when {
-                latency != null -> EndpointProbeResult(endpoint, latency, reachable = true)
-                final || endpoint.id in completedEndpointIds -> EndpointProbeResult(endpoint, null, reachable = false)
-                else -> previousById[endpoint.id]
+        synchronized(endpointStateLock(serverId)) {
+            val previousById = lastProbeResults[serverId].orEmpty().associateBy { it.endpoint.id }
+            lastProbeResults[serverId] = endpoints.mapNotNull { endpoint ->
+                val latency = reachableLatencies[endpoint.id]
+                val latestEvent = latestEndpointEvents[EndpointKey(serverId, endpoint.id)]
+                when (
+                    resolveEndpointReachability(
+                        hasProbeLatency = latency != null,
+                        latestEvent = latestEvent,
+                        probeStartEventVersion = probeStartEventVersion,
+                        probeCompleted = final || endpoint.id in completedEndpointIds,
+                        previousReachable = previousById[endpoint.id]?.reachable,
+                    )
+                ) {
+                    true -> EndpointProbeResult(
+                        endpoint = endpoint,
+                        latencyMs = latency ?: previousById[endpoint.id]?.latencyMs,
+                        reachable = true,
+                    )
+                    false -> EndpointProbeResult(endpoint, latencyMs = null, reachable = false)
+                    null -> previousById[endpoint.id]
+                }
+            }
+            if (final) {
+                selectBestKnownReachableEndpointLocked(serverId)
             }
         }
         _probeVersion.update { it + 1 }
     }
 
     private fun upsertProbeResult(serverId: Long, result: EndpointProbeResult) {
-        val server = serverConfigs[serverId]
-        val previousById = lastProbeResults[serverId]
-            .orEmpty()
-            .associateBy { it.endpoint.id }
-            .toMutableMap()
-        previousById[result.endpoint.id] = result
-        val orderedEndpoints = server?.endpoints?.sortedBy(ServerEndpoint::order).orEmpty()
-        lastProbeResults[serverId] = if (orderedEndpoints.isEmpty()) {
-            previousById.values.toList()
-        } else {
-            orderedEndpoints.mapNotNull { endpoint -> previousById[endpoint.id] }
+        synchronized(endpointStateLock(serverId)) {
+            val server = serverConfigs[serverId]
+            val previousById = lastProbeResults[serverId]
+                .orEmpty()
+                .associateBy { it.endpoint.id }
+                .toMutableMap()
+            previousById[result.endpoint.id] = result
+            val orderedEndpoints = server?.endpoints?.sortedBy(ServerEndpoint::order).orEmpty()
+            lastProbeResults[serverId] = if (orderedEndpoints.isEmpty()) {
+                previousById.values.toList()
+            } else {
+                orderedEndpoints.mapNotNull { endpoint -> previousById[endpoint.id] }
+            }
+        }
+    }
+
+    private fun recordEndpointEvent(serverId: Long, endpointId: Long, reachable: Boolean) {
+        latestEndpointEvents[EndpointKey(serverId, endpointId)] = EndpointReachabilityEvent(
+            version = endpointEventVersion.incrementAndGet(),
+            reachable = reachable,
+        )
+    }
+
+    private fun endpointStateLock(serverId: Long): Any =
+        endpointStateLocks.computeIfAbsent(serverId) { Any() }
+
+    private fun scheduleOfflineRecovery(serverId: Long) {
+        offlineRecoveryJobs.compute(serverId) { _, existing ->
+            if (existing?.isActive == true) {
+                existing
+            } else {
+                scope.launch {
+                    try {
+                        var attempt = 0
+                        while (isOfflineDegraded(serverId)) {
+                            delay(endpointOfflineRecoveryDelayMs(attempt))
+                            val server = serverConfigs[serverId] ?: break
+                            if (!isOfflineDegraded(serverId)) break
+                            probe(serverId, server)
+                            attempt += 1
+                        }
+                    } finally {
+                        val currentJob = kotlin.coroutines.coroutineContext[Job]
+                        if (currentJob != null) {
+                            offlineRecoveryJobs.remove(serverId, currentJob)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelOfflineRecoveryJobs() {
+        offlineRecoveryJobs.forEach { (serverId, job) ->
+            if (offlineRecoveryJobs.remove(serverId, job)) {
+                job.cancel()
+            }
         }
     }
 
@@ -404,3 +523,35 @@ class EndpointSelector @Inject constructor(
         }
     }
 }
+
+internal fun bestReachableEndpointId(
+    results: List<EndpointSelector.EndpointProbeResult>,
+): Long? = results
+    .asSequence()
+    .filter { result -> result.reachable }
+    .minByOrNull { result -> result.latencyMs ?: Long.MAX_VALUE }
+    ?.endpoint
+    ?.id
+
+internal data class EndpointReachabilityEvent(
+    val version: Long,
+    val reachable: Boolean,
+)
+
+internal fun resolveEndpointReachability(
+    hasProbeLatency: Boolean,
+    latestEvent: EndpointReachabilityEvent?,
+    probeStartEventVersion: Long,
+    probeCompleted: Boolean,
+    previousReachable: Boolean?,
+): Boolean? = when {
+    latestEvent != null && latestEvent.version > probeStartEventVersion -> latestEvent.reachable
+    hasProbeLatency -> true
+    probeCompleted -> false
+    else -> previousReachable
+}
+
+private val EndpointOfflineRecoveryDelaysMs = longArrayOf(5_000L, 15_000L, 30_000L, 60_000L)
+
+internal fun endpointOfflineRecoveryDelayMs(attempt: Int): Long =
+    EndpointOfflineRecoveryDelaysMs[attempt.coerceIn(0, EndpointOfflineRecoveryDelaysMs.lastIndex)]
