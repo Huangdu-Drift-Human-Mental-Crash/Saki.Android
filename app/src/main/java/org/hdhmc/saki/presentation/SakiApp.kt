@@ -166,6 +166,8 @@ private fun RootShell(
     var capsuleHeightPx by remember { mutableIntStateOf(defaultCapsuleHeightPx) }
     val capsuleOverlayPadding = with(density) { capsuleHeightPx.toDp() }
     val contentScrolling = remember { mutableStateOf(false) }
+    val fastScrollActive = remember { mutableStateOf(false) }
+    val onFastScrollActiveChange = remember { { active: Boolean -> fastScrollActive.value = active } }
     val scrollScope = rememberCoroutineScope()
     val contentScrollConnection = remember(scrollScope) {
         object : NestedScrollConnection {
@@ -224,7 +226,10 @@ private fun RootShell(
             .background(shellBackgroundBrush)
             .nestedScroll(contentScrollConnection),
     ) {
-        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+            LocalFastScrollActiveChange provides onFastScrollActiveChange,
+        ) {
             Box(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
                 BrowseRoute(
                     viewModel = viewModel,
@@ -268,6 +273,7 @@ private fun RootShell(
                         viewModel = viewModel,
                         onOpenNowPlaying = onOpenNowPlaying,
                         isContentScrolling = contentScrolling.value,
+                        isFastScrolling = fastScrollActive.value,
                     )
                 }
             }
@@ -375,6 +381,7 @@ private fun NowPlayingCapsuleRoute(
     viewModel: SakiAppViewModel,
     onOpenNowPlaying: () -> Unit,
     isContentScrolling: Boolean,
+    isFastScrolling: Boolean,
 ) {
     val uiState by viewModel.capsuleUiState.collectAsStateWithLifecycle()
     NowPlayingCapsule(
@@ -391,6 +398,7 @@ private fun NowPlayingCapsuleRoute(
         onSkipToNext = viewModel::skipToNext,
         prewarmDynamicColors = rememberVisualEffectsPolicy().useNowPlayingDynamicArtworkColors,
         isContentScrolling = isContentScrolling,
+        isFastScrolling = isFastScrolling,
     )
 }
 

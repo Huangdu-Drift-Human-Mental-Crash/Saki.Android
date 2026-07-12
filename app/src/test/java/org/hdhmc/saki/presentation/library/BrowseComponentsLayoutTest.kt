@@ -123,6 +123,14 @@ class BrowseComponentsLayoutTest {
     }
 
     @Test
+    fun compactFastScrollHighlightStaysInTheTouchedDisplaySlot() {
+        assertEquals(0, fastScrollDisplayIndexAtPosition(10f, 100f, 5))
+        assertEquals(1, fastScrollDisplayIndexAtPosition(30f, 100f, 5))
+        assertEquals(2, fastScrollDisplayIndexAtPosition(50f, 100f, 5))
+        assertEquals(4, fastScrollDisplayIndexAtPosition(100f, 100f, 5))
+    }
+
+    @Test
     fun fullFastScrollHitRegionsMapDirectlyToTheirRows() {
         val displayLabels = ('A'..'D').mapIndexed { index, label ->
             FastScrollDisplayLabel(label.toString(), sourceIndex = index)
