@@ -138,80 +138,83 @@ class EndpointSelector @Inject constructor(
      * Cancels any previous in-flight probe for the same server.
      */
     suspend fun probe(serverId: Long, server: ServerConfig): ServerEndpoint? {
-        activeProbes.remove(serverId)?.let { activeProbe ->
-            activeProbe.job.cancel()
-            activeProbe.firstReachable.complete(null)
-        }
-        serverConfigs[serverId] = server
-        val endpoints = server.endpoints.sortedBy(ServerEndpoint::order)
-        val generation = nextProbeGeneration(serverId)
-        val probeStartEventVersion = endpointEventVersion.get()
-        probingServers[serverId] = true
-        _probeVersion.update { it + 1 }
-        if (endpoints.isEmpty()) {
-            lastProbeResults.remove(serverId)
-            bestEndpoints.remove(serverId)
-            probingServers.remove(serverId)
+        val firstReachable = synchronized(endpointStateLock(serverId)) {
+            activeProbes.remove(serverId)?.let { activeProbe ->
+                activeProbe.job.cancel()
+                activeProbe.firstReachable.complete(null)
+            }
+            serverConfigs[serverId] = server
+            val endpoints = server.endpoints.sortedBy(ServerEndpoint::order)
+            val generation = nextProbeGeneration(serverId)
+            val probeStartEventVersion = endpointEventVersion.get()
+            probingServers[serverId] = true
             _probeVersion.update { it + 1 }
-            return null
-        }
+            if (endpoints.isEmpty()) {
+                lastProbeResults.remove(serverId)
+                bestEndpoints.remove(serverId)
+                probingServers.remove(serverId)
+                _probeVersion.update { it + 1 }
+                return null
+            }
 
-        val firstReachable = CompletableDeferred<ServerEndpoint?>()
-        val probeResults = ConcurrentHashMap<Long, Long>()
-        val completedEndpointIds = ConcurrentHashMap.newKeySet<Long>()
-        var probeFinished = false
+            val firstReachable = CompletableDeferred<ServerEndpoint?>()
+            val probeResults = ConcurrentHashMap<Long, Long>()
+            val completedEndpointIds = ConcurrentHashMap.newKeySet<Long>()
+            var probeFinished = false
 
-        val parentJob = scope.launch(start = CoroutineStart.LAZY) {
-            try {
-                val jobs = endpoints.map { endpoint ->
-                    launch {
-                        val latency = pingEndpoint(endpoint, server)
-                        if (!isCurrentProbe(serverId, generation)) return@launch
-                        completedEndpointIds += endpoint.id
-                        if (latency != null) {
-                            probeResults[endpoint.id] = latency
-                            recordReachableEndpoint(serverId, endpoint, latency)
-                            firstReachable.complete(endpoint)
+            val parentJob = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val jobs = endpoints.map { endpoint ->
+                        launch {
+                            val latency = pingEndpoint(endpoint, server)
+                            if (!isCurrentProbe(serverId, generation)) return@launch
+                            completedEndpointIds += endpoint.id
+                            if (latency != null) {
+                                probeResults[endpoint.id] = latency
+                                recordReachableEndpoint(serverId, endpoint, latency)
+                                firstReachable.complete(endpoint)
+                            }
+                            publishProbeResults(
+                                serverId = serverId,
+                                endpoints = endpoints,
+                                reachableLatencies = probeResults,
+                                completedEndpointIds = completedEndpointIds,
+                                probeStartEventVersion = probeStartEventVersion,
+                                final = false,
+                            )
                         }
-                        publishProbeResults(
-                            serverId = serverId,
-                            endpoints = endpoints,
-                            reachableLatencies = probeResults,
-                            completedEndpointIds = completedEndpointIds,
-                            probeStartEventVersion = probeStartEventVersion,
-                            final = false,
-                        )
+                    }
+                    jobs.forEach { it.join() }
+                    if (!isCurrentProbe(serverId, generation)) return@launch
+                    publishProbeResults(
+                        serverId = serverId,
+                        endpoints = endpoints,
+                        reachableLatencies = probeResults,
+                        completedEndpointIds = completedEndpointIds,
+                        probeStartEventVersion = probeStartEventVersion,
+                        final = true,
+                    )
+                    clearProbeInProgress(serverId, generation)
+                    if (isOfflineDegraded(serverId)) {
+                        scheduleOfflineRecovery(serverId)
+                    }
+                    probeFinished = true
+                    firstReachable.complete(null)
+                } finally {
+                    if (!probeFinished && isCurrentProbe(serverId, generation)) {
+                        clearProbeInProgress(serverId, generation)
                     }
                 }
-                jobs.forEach { it.join() }
-                if (!isCurrentProbe(serverId, generation)) return@launch
-                publishProbeResults(
-                    serverId = serverId,
-                    endpoints = endpoints,
-                    reachableLatencies = probeResults,
-                    completedEndpointIds = completedEndpointIds,
-                    probeStartEventVersion = probeStartEventVersion,
-                    final = true,
-                )
-                clearProbeInProgress(serverId, generation)
-                if (isOfflineDegraded(serverId)) {
-                    scheduleOfflineRecovery(serverId)
-                }
-                probeFinished = true
-                firstReachable.complete(null)
-            } finally {
-                if (!probeFinished && isCurrentProbe(serverId, generation)) {
-                    clearProbeInProgress(serverId, generation)
-                }
             }
-        }
 
-        activeProbes[serverId] = ActiveProbe(
-            generation = generation,
-            job = parentJob,
-            firstReachable = firstReachable,
-        )
-        parentJob.start()
+            activeProbes[serverId] = ActiveProbe(
+                generation = generation,
+                job = parentJob,
+                firstReachable = firstReachable,
+            )
+            parentJob.start()
+            firstReachable
+        }
 
         return firstReachable.await()
     }
