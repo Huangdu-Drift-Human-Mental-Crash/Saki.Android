@@ -1,6 +1,8 @@
 package org.hdhmc.saki.data.remote
 
+import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EndpointSelectorTest {
@@ -30,6 +32,24 @@ class EndpointSelectorTest {
                 previousReachable = true,
             ),
         )
+    }
+
+    @Test
+    fun `invalidation after final publication clears the selected endpoint`() {
+        val endpoint = ServerEndpoint(
+            id = 7L,
+            label = "primary",
+            baseUrl = "https://example.test",
+        )
+        val publishedReachable = listOf(
+            EndpointSelector.EndpointProbeResult(endpoint, latencyMs = 10L, reachable = true),
+        )
+        val invalidated = listOf(
+            EndpointSelector.EndpointProbeResult(endpoint, latencyMs = null, reachable = false),
+        )
+
+        assertEquals(7L, bestReachableEndpointId(publishedReachable))
+        assertNull(bestReachableEndpointId(invalidated))
     }
 
     @Test

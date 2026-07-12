@@ -193,7 +193,6 @@ class EndpointSelector @Inject constructor(
                     probeStartEventVersion = probeStartEventVersion,
                     final = true,
                 )
-                selectBestKnownReachableEndpoint(serverId)
                 clearProbeInProgress(serverId, generation)
                 if (isOfflineDegraded(serverId)) {
                     scheduleOfflineRecovery(serverId)
@@ -242,7 +241,7 @@ class EndpointSelector @Inject constructor(
             recordEndpointEvent(serverId, failedEndpointId, reachable = false)
             upsertProbeResult(serverId, EndpointProbeResult(endpoint, latencyMs = null, reachable = false))
             if (removedActiveEndpoint && forcedEndpoints[serverId] == null) {
-                selectBestKnownReachableEndpoint(serverId)
+                selectBestKnownReachableEndpointLocked(serverId)
             }
         }
         _probeVersion.update { it + 1 }
@@ -287,16 +286,20 @@ class EndpointSelector @Inject constructor(
     }
 
     fun forceEndpoint(serverId: Long, endpointId: Long) {
-        forcedEndpoints[serverId] = endpointId
-        bestEndpoints[serverId] = endpointId
-        offlineRecoveryJobs.remove(serverId)?.cancel()
+        synchronized(endpointStateLock(serverId)) {
+            forcedEndpoints[serverId] = endpointId
+            bestEndpoints[serverId] = endpointId
+            offlineRecoveryJobs.remove(serverId)?.cancel()
+        }
         _probeVersion.update { it + 1 }
     }
 
     fun clearForce(serverId: Long) {
-        forcedEndpoints.remove(serverId)
-        bestEndpoints.remove(serverId)
-        selectBestKnownReachableEndpoint(serverId)
+        synchronized(endpointStateLock(serverId)) {
+            forcedEndpoints.remove(serverId)
+            bestEndpoints.remove(serverId)
+            selectBestKnownReachableEndpointLocked(serverId)
+        }
         _probeVersion.update { it + 1 }
         if (isOfflineDegraded(serverId)) {
             scheduleOfflineRecovery(serverId)
@@ -381,14 +384,12 @@ class EndpointSelector @Inject constructor(
         }
     }
 
-    private fun selectBestKnownReachableEndpoint(serverId: Long) {
+    private fun selectBestKnownReachableEndpointLocked(serverId: Long) {
+        check(Thread.holdsLock(endpointStateLock(serverId)))
         if (forcedEndpoints[serverId] != null) return
-        val bestReachable = lastProbeResults[serverId]
-            .orEmpty()
-            .filter { result -> result.reachable }
-            .minByOrNull { result -> result.latencyMs ?: Long.MAX_VALUE }
-        if (bestReachable != null) {
-            bestEndpoints[serverId] = bestReachable.endpoint.id
+        val bestEndpointId = bestReachableEndpointId(lastProbeResults[serverId].orEmpty())
+        if (bestEndpointId != null) {
+            bestEndpoints[serverId] = bestEndpointId
         } else {
             bestEndpoints.remove(serverId)
         }
@@ -424,6 +425,9 @@ class EndpointSelector @Inject constructor(
                     false -> EndpointProbeResult(endpoint, latencyMs = null, reachable = false)
                     null -> previousById[endpoint.id]
                 }
+            }
+            if (final) {
+                selectBestKnownReachableEndpointLocked(serverId)
             }
         }
         _probeVersion.update { it + 1 }
@@ -516,6 +520,15 @@ class EndpointSelector @Inject constructor(
         }
     }
 }
+
+internal fun bestReachableEndpointId(
+    results: List<EndpointSelector.EndpointProbeResult>,
+): Long? = results
+    .asSequence()
+    .filter { result -> result.reachable }
+    .minByOrNull { result -> result.latencyMs ?: Long.MAX_VALUE }
+    ?.endpoint
+    ?.id
 
 internal data class EndpointReachabilityEvent(
     val version: Long,
