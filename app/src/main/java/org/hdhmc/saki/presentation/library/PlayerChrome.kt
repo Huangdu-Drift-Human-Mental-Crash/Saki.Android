@@ -208,6 +208,7 @@ fun NowPlayingCapsule(
     onSkipToNext: () -> Unit,
     prewarmDynamicColors: Boolean = false,
     isContentScrolling: Boolean = false,
+    isFastScrolling: Boolean = false,
 ) {
     val visuals = SakiTheme.visuals
     // Warm the current track's artwork color into the cache while the mini player is
@@ -224,18 +225,18 @@ fun NowPlayingCapsule(
         alpha = visuals.nowPlayingCapsuleContainerAlpha,
     )
     val capsuleAlpha by animateFloatAsState(
-        targetValue = if (isContentScrolling) {
-            visuals.miniPlayerScrollingAlpha
-        } else {
-            visuals.miniPlayerRestingAlpha
+        targetValue = when {
+            isFastScrolling -> visuals.miniPlayerFastScrollingAlpha
+            isContentScrolling -> visuals.miniPlayerScrollingAlpha
+            else -> visuals.miniPlayerRestingAlpha
         },
         animationSpec = tween(
-            durationMillis = if (isContentScrolling) {
+            durationMillis = if (isFastScrolling || isContentScrolling) {
                 MINI_PLAYER_FADE_OUT_DURATION_MS
             } else {
                 MINI_PLAYER_FADE_IN_DURATION_MS
             },
-            easing = if (isContentScrolling) {
+            easing = if (isFastScrolling || isContentScrolling) {
                 FastOutLinearInEasing
             } else {
                 LinearOutSlowInEasing

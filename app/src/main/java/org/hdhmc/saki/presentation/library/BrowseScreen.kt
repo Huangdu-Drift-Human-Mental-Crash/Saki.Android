@@ -4,6 +4,7 @@ import android.icu.text.AlphabeticIndex
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -78,6 +80,8 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -95,6 +99,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -132,6 +137,7 @@ import org.hdhmc.saki.domain.model.SongFeedType
 import org.hdhmc.saki.domain.model.indexingLocale
 import org.hdhmc.saki.domain.model.isUnknownAlbumPlaceholder
 import org.hdhmc.saki.presentation.BrowseSection
+import org.hdhmc.saki.presentation.LocalFastScrollActiveChange
 import org.hdhmc.saki.presentation.AlbumFeedState
 import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.presentation.bottomContentPadding
@@ -1653,15 +1659,15 @@ private fun ArtistsPage(
             enter = androidx.compose.animation.fadeIn(),
             exit = androidx.compose.animation.fadeOut(),
             modifier = Modifier
-                .align(Alignment.CenterEnd)
+                .fillMaxSize()
                 .padding(top = 8.dp, bottom = 8.dp + fastScrollBottomOverlayPadding),
         ) {
-            AlphabetScrollBar(
+            AlphabetFastScrollOverlay(
                 labels = visibleScrollLabels,
                 onScrollTo = { idx ->
-                    val label = visibleScrollLabels.getOrNull(idx) ?: return@AlphabetScrollBar
-                    val sectionIdx = scrollLabelToSection[label] ?: return@AlphabetScrollBar
-                    val itemIdx = sectionItemIndices[sectionIdx] ?: return@AlphabetScrollBar
+                    val label = visibleScrollLabels.getOrNull(idx) ?: return@AlphabetFastScrollOverlay
+                    val sectionIdx = scrollLabelToSection[label] ?: return@AlphabetFastScrollOverlay
+                    val itemIdx = sectionItemIndices[sectionIdx] ?: return@AlphabetFastScrollOverlay
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     coroutineScope.launch { listState.scrollToItem(itemIdx) }
                 },
@@ -2042,17 +2048,15 @@ private fun AlbumFastScrollOverlay(
             .fillMaxSize()
             .padding(top = 8.dp, bottom = 8.dp + bottomOverlayPadding),
     ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-            AlphabetScrollBar(
-                labels = labels,
-                onScrollTo = { labelIndex ->
-                    val label = labels.getOrNull(labelIndex) ?: return@AlphabetScrollBar
-                    val albumIndex = index.targetAlbumIndices[label] ?: return@AlphabetScrollBar
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onScrollToAlbumIndex(albumIndex)
-                },
-            )
-        }
+        AlphabetFastScrollOverlay(
+            labels = labels,
+            onScrollTo = { labelIndex ->
+                val label = labels.getOrNull(labelIndex) ?: return@AlphabetFastScrollOverlay
+                val albumIndex = index.targetAlbumIndices[label] ?: return@AlphabetFastScrollOverlay
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onScrollToAlbumIndex(albumIndex)
+            },
+        )
     }
 }
 
@@ -2806,16 +2810,28 @@ internal fun fastScrollDisplayLabels(
     return result
 }
 
+internal fun fastScrollDisplayIndexAtPosition(
+    positionY: Float,
+    height: Float,
+    displayLabelCount: Int,
+): Int {
+    if (displayLabelCount <= 0 || height <= 0f) return -1
+    return (positionY.coerceIn(0f, height) / height * displayLabelCount)
+        .toInt()
+        .coerceIn(0, displayLabelCount - 1)
+}
+
 internal fun fastScrollSourceIndexAtPosition(
     positionY: Float,
     height: Float,
     displayLabels: List<FastScrollDisplayLabel>,
 ): Int {
-    if (displayLabels.isEmpty() || height <= 0f) return -1
-
-    val displayIndex = (positionY.coerceIn(0f, height) / height * displayLabels.size)
-        .toInt()
-        .coerceIn(0, displayLabels.lastIndex)
+    val displayIndex = fastScrollDisplayIndexAtPosition(
+        positionY = positionY,
+        height = height,
+        displayLabelCount = displayLabels.size,
+    )
+    if (displayIndex < 0) return -1
     val displayLabel = displayLabels[displayIndex]
     if (!displayLabel.isGapMarker) return displayLabel.sourceIndex
 
@@ -2837,13 +2853,89 @@ internal fun fastScrollSourceIndexAtPosition(
     }
 }
 
+@Immutable
+private data class FastScrollIndicator(
+    val label: String,
+    val positionFraction: Float,
+)
+
 @Composable
-private fun AlphabetScrollBar(
+private fun AlphabetFastScrollOverlay(
     labels: List<String>,
     onScrollTo: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var activeIndicator by remember { mutableStateOf<FastScrollIndicator?>(null) }
+    var lastIndicator by remember { mutableStateOf<FastScrollIndicator?>(null) }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val bubbleSize = 44.dp
+        val bubbleOffsetY = ((maxHeight - bubbleSize).coerceAtLeast(0.dp) *
+            (lastIndicator?.positionFraction ?: 0.5f))
+        val bubbleColor = MaterialTheme.colorScheme.primaryContainer
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = activeIndicator != null,
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 22.dp)
+                .offset(y = bubbleOffsetY),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    modifier = Modifier.size(bubbleSize),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = bubbleColor,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    tonalElevation = 4.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = lastIndicator?.label.orEmpty(),
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                Canvas(modifier = Modifier.size(width = 8.dp, height = 14.dp)) {
+                    drawPath(
+                        path = Path().apply {
+                            moveTo(0f, 0f)
+                            lineTo(size.width, size.height / 2f)
+                            lineTo(0f, size.height)
+                            close()
+                        },
+                        color = bubbleColor,
+                    )
+                }
+            }
+        }
+
+        AlphabetScrollBar(
+            labels = labels,
+            onScrollTo = onScrollTo,
+            onActiveIndicatorChange = { indicator ->
+                if (indicator != null) lastIndicator = indicator
+                activeIndicator = indicator
+            },
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight(),
+        )
+    }
+}
+
+@Composable
+private fun AlphabetScrollBar(
+    labels: List<String>,
+    onScrollTo: (Int) -> Unit,
+    onActiveIndicatorChange: (FastScrollIndicator?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var activeIndex by remember { mutableStateOf(-1) }
+    var activeDisplayIndex by remember { mutableStateOf(-1) }
     var selectedLabel by remember { mutableStateOf<String?>(null) }
     val selectedIndex = selectedLabel
         ?.let(labels::indexOf)
@@ -2854,13 +2946,32 @@ private fun AlphabetScrollBar(
     val currentLabel = labels.getOrNull(safeSelectedIndex).orEmpty()
     val previousSectionLabel = stringResource(R.string.browse_fast_scroll_previous_section)
     val nextSectionLabel = stringResource(R.string.browse_fast_scroll_next_section)
+    val onActiveIndicatorChangeState = rememberUpdatedState(onActiveIndicatorChange)
+    val onFastScrollActiveChangeState = rememberUpdatedState(LocalFastScrollActiveChange.current)
 
-    fun scrollToIndex(index: Int, highlight: Boolean): Boolean {
+    DisposableEffect(Unit) {
+        onDispose {
+            onActiveIndicatorChangeState.value(null)
+            onFastScrollActiveChangeState.value(false)
+        }
+    }
+
+    fun scrollToIndex(
+        index: Int,
+        highlight: Boolean,
+        positionFraction: Float = 0.5f,
+    ): Boolean {
         if (labels.isEmpty()) return false
         val target = index.coerceIn(0, labels.lastIndex)
         selectedLabel = labels[target]
         if (highlight) {
             activeIndex = target
+            onActiveIndicatorChangeState.value(
+                FastScrollIndicator(
+                    label = labels[target],
+                    positionFraction = positionFraction.coerceIn(0f, 1f),
+                ),
+            )
         }
         onScrollTo(target)
         return true
@@ -2878,18 +2989,7 @@ private fun AlphabetScrollBar(
                 minimumLabelSlotHeight = minimumLabelSlotHeight,
             )
         }
-        val highlightedDisplayIndex = remember(activeIndex, displayLabels) {
-            if (activeIndex < 0) {
-                -1
-            } else {
-                displayLabels
-                    .withIndex()
-                    .filterNot { it.value.isGapMarker }
-                    .minByOrNull { abs(it.value.sourceIndex - activeIndex) }
-                    ?.index
-                    ?: -1
-            }
-        }
+        val highlightedDisplayIndex = activeDisplayIndex
 
         Column(
             modifier = Modifier
@@ -2929,25 +3029,65 @@ private fun AlphabetScrollBar(
                 .pointerInput(labels, displayLabels) {
                     detectVerticalDragGestures(
                         onDragStart = { offset ->
+                            onFastScrollActiveChangeState.value(true)
+                            activeDisplayIndex = fastScrollDisplayIndexAtPosition(
+                                positionY = offset.y,
+                                height = size.height.toFloat(),
+                                displayLabelCount = displayLabels.size,
+                            )
                             val sourceIndex = fastScrollSourceIndexAtPosition(
                                 positionY = offset.y,
                                 height = size.height.toFloat(),
                                 displayLabels = displayLabels,
                             )
                             if (sourceIndex >= 0) {
-                                scrollToIndex(sourceIndex, highlight = true)
+                                scrollToIndex(
+                                    index = sourceIndex,
+                                    highlight = true,
+                                    positionFraction = offset.y / size.height.toFloat(),
+                                )
                             }
                         },
-                        onDragEnd = { activeIndex = -1 },
-                        onDragCancel = { activeIndex = -1 },
+                        onDragEnd = {
+                            activeIndex = -1
+                            activeDisplayIndex = -1
+                            onActiveIndicatorChangeState.value(null)
+                            onFastScrollActiveChangeState.value(false)
+                        },
+                        onDragCancel = {
+                            activeIndex = -1
+                            activeDisplayIndex = -1
+                            onActiveIndicatorChangeState.value(null)
+                            onFastScrollActiveChangeState.value(false)
+                        },
                         onVerticalDrag = { change, _ ->
+                            activeDisplayIndex = fastScrollDisplayIndexAtPosition(
+                                positionY = change.position.y,
+                                height = size.height.toFloat(),
+                                displayLabelCount = displayLabels.size,
+                            )
                             val sourceIndex = fastScrollSourceIndexAtPosition(
                                 positionY = change.position.y,
                                 height = size.height.toFloat(),
                                 displayLabels = displayLabels,
                             )
-                            if (sourceIndex >= 0 && sourceIndex != activeIndex) {
-                                scrollToIndex(sourceIndex, highlight = true)
+                            if (sourceIndex >= 0) {
+                                val positionFraction =
+                                    change.position.y / size.height.toFloat()
+                                if (sourceIndex != activeIndex) {
+                                    scrollToIndex(
+                                        index = sourceIndex,
+                                        highlight = true,
+                                        positionFraction = positionFraction,
+                                    )
+                                } else {
+                                    onActiveIndicatorChangeState.value(
+                                        FastScrollIndicator(
+                                            label = labels[sourceIndex],
+                                            positionFraction = positionFraction.coerceIn(0f, 1f),
+                                        ),
+                                    )
+                                }
                             }
                         },
                     )
