@@ -93,6 +93,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,6 +116,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -2873,6 +2875,7 @@ private fun AlphabetFastScrollOverlay(
         val bubbleOffsetY = ((maxHeight - bubbleSize).coerceAtLeast(0.dp) *
             (lastIndicator?.positionFraction ?: 0.5f))
         val bubbleColor = MaterialTheme.colorScheme.primaryContainer
+        val layoutDirection = LocalLayoutDirection.current
 
         androidx.compose.animation.AnimatedVisibility(
             visible = activeIndicator != null,
@@ -2902,9 +2905,15 @@ private fun AlphabetFastScrollOverlay(
                 Canvas(modifier = Modifier.size(width = 8.dp, height = 14.dp)) {
                     drawPath(
                         path = Path().apply {
-                            moveTo(0f, 0f)
-                            lineTo(size.width, size.height / 2f)
-                            lineTo(0f, size.height)
+                            if (layoutDirection == LayoutDirection.Ltr) {
+                                moveTo(0f, 0f)
+                                lineTo(size.width, size.height / 2f)
+                                lineTo(0f, size.height)
+                            } else {
+                                moveTo(size.width, 0f)
+                                lineTo(0f, size.height / 2f)
+                                lineTo(size.width, size.height)
+                            }
                             close()
                         },
                         color = bubbleColor,
@@ -3105,8 +3114,8 @@ private fun AlphabetScrollBar(
                         fontSize = if (displayLabel.isGapMarker) 8.sp else fontSize,
                         lineHeight = fontSize,
                         color = when {
-                            displayLabel.isGapMarker -> MaterialTheme.colorScheme.outline
                             displayIndex == highlightedDisplayIndex -> MaterialTheme.colorScheme.primary
+                            displayLabel.isGapMarker -> MaterialTheme.colorScheme.outline
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
