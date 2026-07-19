@@ -64,6 +64,7 @@ import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -664,7 +665,7 @@ class SakiPlaybackService : MediaSessionService() {
         )
     }
 
-    private fun PlaybackRequest.toStreamPlaceholderUri(): Uri {
+    private fun PlaybackRequest.toStreamPlaceholderUri(streamInstanceId: String? = null): Uri {
         return Uri.Builder()
             .scheme("saki")
             .authority("stream")
@@ -673,6 +674,7 @@ class SakiPlaybackService : MediaSessionService() {
             .apply {
                 maxBitRate?.let { appendQueryParameter("maxBitRate", it.toString()) }
                 format?.let { appendQueryParameter("format", it) }
+                streamInstanceId?.let { appendQueryParameter("instanceId", it) }
             }
             .build()
     }
@@ -1199,7 +1201,7 @@ class SakiPlaybackService : MediaSessionService() {
             val hasCompleteBaseStream = streamCacheRepository.findCachedQualityKey(
                 serverId = request.serverId,
                 songId = request.songId,
-                preferredQuality = preferredQuality,
+                preferredQuality = openedQuality,
             ) != null
             val currentOffsetMs = exoPlayer.currentStreamOffsetMs()
 
@@ -1548,7 +1550,9 @@ class SakiPlaybackService : MediaSessionService() {
             }
 
             // Build placeholder URI — real stream URL resolved at play time by ResolvingDataSource
-            val placeholderUri = request.toStreamPlaceholderUri()
+            val placeholderUri = request.toStreamPlaceholderUri(
+                streamInstanceId = UUID.randomUUID().toString(),
+            )
 
             // Resolve artwork URL using canonical endpoint (first by order) so
             // CoverArtEndpointInterceptor can rewrite it to the current best endpoint at load time
