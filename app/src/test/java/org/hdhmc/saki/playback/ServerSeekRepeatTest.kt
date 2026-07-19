@@ -17,4 +17,12 @@ class ServerSeekRepeatTest {
         assertFalse(shouldPauseOffsetStreamAtEnd(Player.REPEAT_MODE_ALL, mediaItemCount = 3))
         assertFalse(shouldPauseOffsetStreamAtEnd(Player.REPEAT_MODE_OFF, mediaItemCount = 1))
     }
+
+    @Test
+    fun `server-side seek requires confirmed transcoding`() {
+        assertTrue(isConfirmedTranscode(sourceBitRate = 320, requestedBitRate = 128))
+        assertFalse(isConfirmedTranscode(sourceBitRate = 128, requestedBitRate = 320))
+        assertFalse(isConfirmedTranscode(sourceBitRate = null, requestedBitRate = 128))
+        assertFalse(isConfirmedTranscode(sourceBitRate = 320, requestedBitRate = null))
+    }
 }

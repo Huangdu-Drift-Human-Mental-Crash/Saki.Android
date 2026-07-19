@@ -22,6 +22,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -99,6 +100,52 @@ private fun String.forStreamOffset(timeOffsetSeconds: Int?): String =
 private fun Int.forStreamOffset(timeOffsetSeconds: Int?): Int =
     if (timeOffsetSeconds == null) this else this or DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
 
+private class EofTrackingDataSource(
+    private val upstream: DataSource,
+    private val onEof: (DataSpec, Long) -> Unit,
+) : DataSource {
+    private var openedDataSpec: DataSpec? = null
+    private var bytesRead = 0L
+    private var reportedEof = false
+
+    override fun addTransferListener(transferListener: TransferListener) {
+        upstream.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        openedDataSpec = dataSpec
+        bytesRead = 0L
+        reportedEof = false
+        return upstream.open(dataSpec)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val read = upstream.read(buffer, offset, length)
+        if (read == C.RESULT_END_OF_INPUT) {
+            val dataSpec = openedDataSpec
+            if (!reportedEof && dataSpec != null) {
+                reportedEof = true
+                onEof(dataSpec, dataSpec.position + bytesRead)
+            }
+        } else if (read > 0) {
+            bytesRead += read
+        }
+        return read
+    }
+
+    override fun getUri(): Uri? = upstream.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
+
+    override fun close() {
+        try {
+            upstream.close()
+        } finally {
+            openedDataSpec = null
+        }
+    }
+}
+
 private data class ActiveServerSeek(
     val mediaItemIndex: Int,
     val serverId: Long,
@@ -109,6 +156,12 @@ private data class ActiveServerSeek(
 internal fun shouldPauseOffsetStreamAtEnd(repeatMode: Int, mediaItemCount: Int): Boolean =
     repeatMode == Player.REPEAT_MODE_ONE ||
         (repeatMode == Player.REPEAT_MODE_ALL && mediaItemCount == 1)
+
+internal fun isConfirmedTranscode(sourceBitRate: Int?, requestedBitRate: Int?): Boolean {
+    val source = sourceBitRate?.takeIf { it > 0 } ?: return false
+    val requested = requestedBitRate?.takeIf { it > 0 } ?: return false
+    return source > requested
+}
 
 @AndroidEntryPoint
 @UnstableApi
@@ -180,41 +233,44 @@ class SakiPlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        val httpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setUserAgent(HTTP_USER_AGENT)
+            .setTransferListener(object : TransferListener {
+                override fun onTransferInitializing(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                ) = Unit
+
+                override fun onTransferStart(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                ) {
+                    if (!isNetwork) return
+                    // Media3 invokes this only after the upstream data source opens successfully.
+                    val selection = dataSpec.customData as? StreamEndpointSelection ?: return
+                    endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
+                }
+
+                override fun onBytesTransferred(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                    bytesTransferred: Int,
+                ) = Unit
+
+                override fun onTransferEnd(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                ) = Unit
+            })
         val upstreamDataSourceFactory = DefaultDataSource.Factory(
             this,
-            OkHttpDataSource.Factory(okHttpClient)
-                .setUserAgent(HTTP_USER_AGENT)
-                .setTransferListener(object : TransferListener {
-                    override fun onTransferInitializing(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                    ) = Unit
-
-                    override fun onTransferStart(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                    ) {
-                        if (!isNetwork) return
-                        // Media3 invokes this only after the upstream data source opens successfully.
-                        val selection = dataSpec.customData as? StreamEndpointSelection ?: return
-                        endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
-                    }
-
-                    override fun onBytesTransferred(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                        bytesTransferred: Int,
-                    ) = Unit
-
-                    override fun onTransferEnd(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                    ) = Unit
-                }),
+            DataSource.Factory {
+                EofTrackingDataSource(httpDataSourceFactory.createDataSource(), ::recordStreamCacheEof)
+            },
         )
         val cacheFactory = CacheDataSource.Factory()
             .setCache(streamCache)
@@ -868,6 +924,21 @@ class SakiPlaybackService : MediaSessionService() {
         fun planKey(): String = "$serverId:$songId:$qualityKey"
     }
 
+    private fun recordStreamCacheEof(dataSpec: DataSpec, eofPosition: Long) {
+        val cacheKey = dataSpec.key ?: return
+        if (eofPosition <= 0L || parseStreamCacheKey(cacheKey) == null) return
+        runCatching {
+            streamCache.applyContentMetadataMutations(
+                cacheKey,
+                ContentMetadataMutations().set(STREAM_CACHE_EOF_LENGTH_METADATA_KEY, eofPosition),
+            )
+        }.onSuccess {
+            streamCacheRepository.requestSnapshotRefresh()
+        }.onFailure { throwable ->
+            Log.w(STREAM_PREFETCH_LOG_TAG, "Failed to record stream cache EOF for $cacheKey", throwable)
+        }
+    }
+
     /**
      * Resolves placeholder `saki://stream` URIs to real Subsonic stream URLs at the moment
      * ExoPlayer actually opens the data source. This ensures the quality and endpoint are
@@ -1049,6 +1120,7 @@ class SakiPlaybackService : MediaSessionService() {
                 Player.COMMAND_SEEK_BACK,
                 Player.COMMAND_SEEK_FORWARD,
                 Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
+                Player.COMMAND_SEEK_TO_PREVIOUS,
                 Player.COMMAND_SEEK_TO_MEDIA_ITEM,
                 -> true
                 else -> false
@@ -1189,11 +1261,8 @@ class SakiPlaybackService : MediaSessionService() {
         activePlayer.playWhenReady = shouldResume
     }
 
-    private fun PlaybackRequest.supportsServerSideSeek(): Boolean {
-        if (isCached) return false
-        val requestedBitRate = maxBitRate?.takeIf { it > 0 } ?: return false
-        return sourceBitRate?.let { it > requestedBitRate } ?: true
-    }
+    private fun PlaybackRequest.supportsServerSideSeek(): Boolean =
+        !isCached && isConfirmedTranscode(sourceBitRate, maxBitRate)
 
     private fun shouldPreferLocalStreamCache(serverId: Long): Boolean {
         return endpointSelector.isOfflineDegraded(serverId)

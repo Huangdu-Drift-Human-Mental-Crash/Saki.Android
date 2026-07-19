@@ -11,6 +11,7 @@ import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import org.hdhmc.saki.domain.repository.StreamCacheRepository
 import org.hdhmc.saki.playback.ConfigurableLeastRecentlyUsedCacheEvictor
+import org.hdhmc.saki.playback.STREAM_CACHE_EOF_LENGTH_METADATA_KEY
 import org.hdhmc.saki.playback.buildStreamCacheKey
 import org.hdhmc.saki.playback.parseStreamCacheKey
 import dagger.Lazy
@@ -124,9 +125,8 @@ class DefaultStreamCacheRepository @Inject constructor(
         quality: StreamQuality,
     ): StreamCacheProgress? {
         val cacheKey = buildStreamCacheKey(serverId, songId, quality)
-        val contentLength = ContentMetadata.getContentLength(streamCache.getContentMetadata(cacheKey))
-            .takeIf { length -> length != C.LENGTH_UNSET.toLong() && length > 0L }
-            ?: return null
+        val metadata = streamCache.getContentMetadata(cacheKey)
+        val contentLength = completeStreamLength(metadata) ?: return null
         val cachedPrefixBytes = streamCache.getCachedLength(cacheKey, 0L, contentLength)
             .takeIf { length -> length > 0L }
             ?.coerceAtMost(contentLength)
@@ -201,15 +201,8 @@ class DefaultStreamCacheRepository @Inject constructor(
             val cachedBytes = streamCache.getCachedSpans(key).sumOf { span -> span.length }
             bytesByServer[parsed.serverId] = (bytesByServer[parsed.serverId] ?: 0L) + cachedBytes
 
-            val contentLength = ContentMetadata.getContentLength(streamCache.getContentMetadata(key))
-            val isFullyCached = if (contentLength != C.LENGTH_UNSET.toLong() && contentLength > 0L) {
-                streamCache.isCached(key, 0, contentLength)
-            } else {
-                // No Content-Length (e.g. transcoded stream): consider cached if the
-                // resource has a contiguous cached prefix starting at 0. SimpleCache
-                // may split a completed CacheWriter result into multiple spans.
-                hasContiguousCachedPrefix(key)
-            }
+            val completeLength = completeStreamLength(streamCache.getContentMetadata(key))
+            val isFullyCached = completeLength != null && streamCache.isCached(key, 0L, completeLength)
             if (isFullyCached) {
                 cachedSongIdsByServerAndQuality
                     .getOrPut(parsed.serverId) { mutableMapOf() }
@@ -226,20 +219,11 @@ class DefaultStreamCacheRepository @Inject constructor(
         )
     }
 
-    private fun hasContiguousCachedPrefix(key: String): Boolean {
-        val spans = streamCache.getCachedSpans(key).sortedBy { span -> span.position }
-        if (spans.isEmpty() || spans.first().position != 0L) return false
-
-        var coveredUntil = 0L
-        for (span in spans) {
-            if (span.length <= 0L) continue
-            if (span.position > coveredUntil) return false
-            val spanEnd = span.position + span.length
-            if (spanEnd > coveredUntil) {
-                coveredUntil = spanEnd
-            }
-        }
-        return coveredUntil > 0L
+    private fun completeStreamLength(metadata: ContentMetadata): Long? {
+        val contentLength = ContentMetadata.getContentLength(metadata)
+            .takeIf { length -> length != C.LENGTH_UNSET.toLong() && length > 0L }
+        return contentLength ?: metadata.get(STREAM_CACHE_EOF_LENGTH_METADATA_KEY, C.LENGTH_UNSET.toLong())
+            .takeIf { length -> length != C.LENGTH_UNSET.toLong() && length > 0L }
     }
 }
 
