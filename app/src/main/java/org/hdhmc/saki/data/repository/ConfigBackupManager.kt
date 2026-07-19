@@ -8,6 +8,7 @@ import org.hdhmc.saki.domain.model.DEFAULT_SUBSONIC_API_VERSION
 import org.hdhmc.saki.domain.model.DEFAULT_SUBSONIC_CLIENT
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
+import org.hdhmc.saki.domain.model.normalizeBluetoothLyricsOffsetMs
 import org.hdhmc.saki.domain.model.normalizeSongsPageSize
 import org.hdhmc.saki.domain.repository.ServerConfigRepository
 import com.squareup.moshi.JsonClass
@@ -128,6 +129,11 @@ class ConfigBackupManager @Inject constructor(
                         }
                         DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS.name -> {
                             ds[DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS] = value.toBooleanStrictOrNull() ?: return@forEach
+                            settingsApplied = true
+                        }
+                        DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS_OFFSET_MS.name -> {
+                            ds[DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS_OFFSET_MS] =
+                                value.toIntOrNull()?.let(::normalizeBluetoothLyricsOffsetMs) ?: return@forEach
                             settingsApplied = true
                         }
                         DataStorePlaybackPreferencesRepository.KEY_ADAPTIVE_QUALITY.name -> {

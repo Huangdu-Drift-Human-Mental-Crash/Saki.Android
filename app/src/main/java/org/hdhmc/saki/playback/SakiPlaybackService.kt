@@ -48,8 +48,10 @@ import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
 import org.hdhmc.saki.domain.model.PlaybackPreferences
 import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.domain.model.SongLyrics
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
+import org.hdhmc.saki.domain.model.normalizeBluetoothLyricsOffsetMs
 import org.hdhmc.saki.domain.repository.LocalPlayQueueRepository
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import org.hdhmc.saki.domain.repository.SubsonicRepository
@@ -88,6 +90,8 @@ private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
 private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
 private const val STREAM_PREFETCH_REEVALUATION_MS = 30_000L
 private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
+private const val BLUETOOTH_LYRICS_MIN_POLL_DELAY_MS = 50L
+private const val BLUETOOTH_LYRICS_MAX_POLL_DELAY_MS = 500L
 
 private fun Long.coerceKnownDuration(): Long? {
     return takeIf { it != C.TIME_UNSET && it > 0L }
@@ -158,6 +162,36 @@ private data class ActiveServerSeek(
     val offsetMs: Long,
     val streamQuality: StreamQuality,
 )
+
+private data class BluetoothLyricsDisplayConfig(
+    val enabled: Boolean,
+    val offsetMs: Int,
+)
+
+private data class BluetoothLyricsDisplayState(
+    val lyrics: SongLyrics,
+    val offsetMs: Int,
+)
+
+internal fun bluetoothLyricsLookupPositionMs(
+    playbackPositionMs: Long,
+    offsetMs: Int,
+): Long {
+    val safePositionMs = playbackPositionMs.coerceAtLeast(0L)
+    val normalizedOffsetMs = normalizeBluetoothLyricsOffsetMs(offsetMs).toLong()
+    return safePositionMs.coerceAtMost(Long.MAX_VALUE - normalizedOffsetMs) + normalizedOffsetMs
+}
+
+internal fun bluetoothLyricsPollDelayMs(
+    lookupPositionMs: Long,
+    nextLineStartMs: Long?,
+): Long {
+    if (nextLineStartMs == null) return BLUETOOTH_LYRICS_MAX_POLL_DELAY_MS
+    return (nextLineStartMs - lookupPositionMs).coerceIn(
+        BLUETOOTH_LYRICS_MIN_POLL_DELAY_MS,
+        BLUETOOTH_LYRICS_MAX_POLL_DELAY_MS,
+    )
+}
 
 internal fun shouldPauseOffsetStreamAtEnd(repeatMode: Int, mediaItemCount: Int): Boolean =
     repeatMode == Player.REPEAT_MODE_ONE ||
@@ -424,50 +458,72 @@ class SakiPlaybackService : MediaSessionService() {
         playerScope.launch {
             combine(
                 playbackPreferencesRepository.observePreferences()
-                    .map { it.bluetoothLyricsEnabled }
+                    .map { prefs ->
+                        BluetoothLyricsDisplayConfig(
+                            enabled = prefs.bluetoothLyricsEnabled,
+                            offsetMs = normalizeBluetoothLyricsOffsetMs(prefs.bluetoothLyricsOffsetMs),
+                        )
+                    }
                     .distinctUntilChanged(),
                 lyricsHolder.lyrics,
-            ) { enabled, lyrics -> if (enabled) lyrics else null }
-                .collectLatest { lyrics ->
-                    if (lyrics == null || !lyrics.synced) {
-                        restoreOriginalTitle()
-                        return@collectLatest
-                    }
-                    var lastLyricText: String? = null
-                    try {
-                        while (true) {
-                            val activePlayer = player ?: break
-                            if (!activePlayer.isPlaying) {
-                                delay(500)
-                                continue
-                            }
-                            mediaSession ?: break
-                            val positionMs = activePlayer.logicalCurrentPositionMs()
-                            val lines = lyrics.lines
-                            val index = lines.binarySearchLastBefore(positionMs)
-                            val text = if (index >= 0) lines[index].text.takeIf { it.isNotBlank() } else null
-                            if (text != null && text != lastLyricText) {
-                                lastLyricText = text
-                                val item = activePlayer.currentMediaItem ?: break
-                                if (originalMediaTitle == null) {
-                                    originalMediaTitle = item.mediaMetadata.title
-                                    originalMediaId = item.mediaId
-                                }
-                                val updated = item.buildUpon()
-                                    .setMediaMetadata(
-                                        item.mediaMetadata.buildUpon()
-                                            .setTitle(text)
-                                            .build(),
-                                    )
-                                    .build()
-                                activePlayer.replaceMediaItem(activePlayer.currentMediaItemIndex, updated)
-                            }
-                            delay(500)
-                        }
-                    } finally {
-                        restoreOriginalTitle()
-                    }
+            ) { config, lyrics ->
+                if (config.enabled && lyrics != null) {
+                    BluetoothLyricsDisplayState(lyrics = lyrics, offsetMs = config.offsetMs)
+                } else {
+                    null
                 }
+            }.collectLatest { displayState ->
+                if (displayState == null || !displayState.lyrics.synced) {
+                    restoreOriginalTitle()
+                    return@collectLatest
+                }
+                val lyrics = displayState.lyrics
+                var lastLyricText: String? = null
+                try {
+                    while (true) {
+                        val activePlayer = player ?: break
+                        if (!activePlayer.isPlaying) {
+                            delay(500)
+                            continue
+                        }
+                        mediaSession ?: break
+                        // This lead time is intentionally isolated to media-metadata lyrics.
+                        // The in-app scrolling/karaoke lyrics continue to use the unmodified
+                        // playback timeline exposed through LyricsHolder and the player state.
+                        val positionMs = bluetoothLyricsLookupPositionMs(
+                            playbackPositionMs = activePlayer.logicalCurrentPositionMs(),
+                            offsetMs = displayState.offsetMs,
+                        )
+                        val lines = lyrics.lines
+                        val index = lines.binarySearchLastBefore(positionMs)
+                        val text = if (index >= 0) lines[index].text.takeIf { it.isNotBlank() } else null
+                        if (text != null && text != lastLyricText) {
+                            lastLyricText = text
+                            val item = activePlayer.currentMediaItem ?: break
+                            if (originalMediaTitle == null) {
+                                originalMediaTitle = item.mediaMetadata.title
+                                originalMediaId = item.mediaId
+                            }
+                            val updated = item.buildUpon()
+                                .setMediaMetadata(
+                                    item.mediaMetadata.buildUpon()
+                                        .setTitle(text)
+                                        .build(),
+                                )
+                                .build()
+                            activePlayer.replaceMediaItem(activePlayer.currentMediaItemIndex, updated)
+                        }
+                        delay(
+                            bluetoothLyricsPollDelayMs(
+                                lookupPositionMs = positionMs,
+                                nextLineStartMs = lines.getOrNull(index + 1)?.startMs,
+                            ),
+                        )
+                    }
+                } finally {
+                    restoreOriginalTitle()
+                }
+            }
         }
     }
 

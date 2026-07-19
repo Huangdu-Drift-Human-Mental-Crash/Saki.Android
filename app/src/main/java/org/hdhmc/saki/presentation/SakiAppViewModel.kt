@@ -1475,6 +1475,18 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
+    fun updateBluetoothLyricsOffsetMs(offsetMs: Int) {
+        viewModelScope.launch {
+            runCatching {
+                playbackPreferencesRepository.updateBluetoothLyricsOffsetMs(offsetMs)
+            }.onFailure { throwable ->
+                snackbarMessages.emit(
+                    SnackbarMessage(throwable.localizedOr(R.string.error_update_bluetooth_lyrics_offset)),
+                )
+            }
+        }
+    }
+
     fun updateBufferStrategy(strategy: org.hdhmc.saki.domain.model.BufferStrategy) {
         viewModelScope.launch {
             runCatching {

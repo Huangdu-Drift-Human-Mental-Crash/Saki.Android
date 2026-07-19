@@ -47,6 +47,10 @@
     <string name="settings_experimental_body">部分功能可能不适用于所有设备。</string>
     <string name="settings_bluetooth_lyrics_title">蓝牙 / 通知栏歌词</string>
     <string name="settings_bluetooth_lyrics_body">在媒体通知、锁屏和蓝牙设备（车载音响、耳机）上显示当前歌词。</string>
+    <string name="settings_bluetooth_lyrics_offset_title">歌词提前量</string>
+    <string name="settings_bluetooth_lyrics_offset_body">让蓝牙、通知栏和车载歌词提前显示以补偿传输延迟，不影响应用内滚动歌词。</string>
+    <string name="settings_bluetooth_lyrics_offset_none">不调整</string>
+    <string name="settings_bluetooth_lyrics_offset_value">提前 %1$.2f 秒</string>
     <string name="settings_backup_restore_title">备份与恢复</string>
     <string name="settings_backup_restore_body">导出或导入服务器配置和设置。注意：导出文件中的密码为明文。</string>
     <string name="settings_export">导出</string>
@@ -322,6 +326,7 @@
     <string name="message_stream_cache_limit_updated">串流缓存上限已更新。</string>
     <string name="error_update_stream_cache_size">无法更新串流缓存大小。</string>
     <string name="error_update_bluetooth_lyrics">无法更新蓝牙歌词设置。</string>
+    <string name="error_update_bluetooth_lyrics_offset">无法更新蓝牙歌词提前量。</string>
     <string name="message_buffer_strategy_set">缓冲策略已设为 %1$s，重启应用后生效。</string>
     <string name="error_update_buffer_strategy">无法更新缓冲策略。</string>
     <string name="message_custom_buffer_set">自定义缓冲已设为 %1$d 秒，重启应用后生效。</string>

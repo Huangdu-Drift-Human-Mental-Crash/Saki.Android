@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import org.hdhmc.saki.domain.model.BufferStrategy
+import org.hdhmc.saki.domain.model.DEFAULT_BLUETOOTH_LYRICS_OFFSET_MS
 import org.hdhmc.saki.domain.model.DEFAULT_CUSTOM_BUFFER_SECONDS
 import org.hdhmc.saki.domain.model.DEFAULT_IMAGE_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.DEFAULT_STREAM_CACHE_SIZE_MB
@@ -22,6 +23,7 @@ import org.hdhmc.saki.domain.model.PlaybackPreferences
 import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
+import org.hdhmc.saki.domain.model.normalizeBluetoothLyricsOffsetMs
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import java.io.IOException
 import javax.inject.Inject
@@ -79,6 +81,12 @@ class DataStorePlaybackPreferencesRepository @Inject constructor(
         dataStore.edit { it[KEY_BLUETOOTH_LYRICS] = enabled }
     }
 
+    override suspend fun updateBluetoothLyricsOffsetMs(offsetMs: Int) {
+        dataStore.edit {
+            it[KEY_BLUETOOTH_LYRICS_OFFSET_MS] = normalizeBluetoothLyricsOffsetMs(offsetMs)
+        }
+    }
+
     override suspend fun updateBufferStrategy(strategy: BufferStrategy) {
         dataStore.edit { it[KEY_BUFFER_STRATEGY] = strategy.storageKey }
     }
@@ -127,6 +135,7 @@ class DataStorePlaybackPreferencesRepository @Inject constructor(
         val KEY_SOUND_BALANCING_MODE = stringPreferencesKey("sound_balancing_mode")
         val KEY_STREAM_CACHE_SIZE_MB = intPreferencesKey("stream_cache_size_mb")
         val KEY_BLUETOOTH_LYRICS = booleanPreferencesKey("bluetooth_lyrics_enabled")
+        val KEY_BLUETOOTH_LYRICS_OFFSET_MS = intPreferencesKey("bluetooth_lyrics_offset_ms")
         val KEY_BUFFER_STRATEGY = stringPreferencesKey("buffer_strategy")
         val KEY_CUSTOM_BUFFER_SECONDS = intPreferencesKey("custom_buffer_seconds")
         val KEY_IMAGE_CACHE_SIZE_MB = intPreferencesKey("image_cache_size_mb")
@@ -155,6 +164,10 @@ private fun Preferences.toPlaybackPreferences() = PlaybackPreferences(
     streamCacheSizeMb = (this[DataStorePlaybackPreferencesRepository.KEY_STREAM_CACHE_SIZE_MB]
         ?: DEFAULT_STREAM_CACHE_SIZE_MB).normalizeStreamCacheSizeMb(),
     bluetoothLyricsEnabled = this[DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS] ?: false,
+    bluetoothLyricsOffsetMs = normalizeBluetoothLyricsOffsetMs(
+        this[DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS_OFFSET_MS]
+            ?: DEFAULT_BLUETOOTH_LYRICS_OFFSET_MS,
+    ),
     bufferStrategy = BufferStrategy.fromStorageKey(
         this[DataStorePlaybackPreferencesRepository.KEY_BUFFER_STRATEGY],
     ),

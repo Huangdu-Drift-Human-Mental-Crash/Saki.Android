@@ -132,11 +132,30 @@ const val MIN_CUSTOM_BUFFER_SECONDS = 30
 const val MAX_CUSTOM_BUFFER_SECONDS = 1800
 const val CUSTOM_BUFFER_STEP_SECONDS = 30
 
+const val DEFAULT_BLUETOOTH_LYRICS_OFFSET_MS = 0
+const val MIN_BLUETOOTH_LYRICS_OFFSET_MS = 0
+const val MAX_BLUETOOTH_LYRICS_OFFSET_MS = 2_000
+const val BLUETOOTH_LYRICS_OFFSET_STEP_MS = 250
+
 fun normalizeCustomBufferSeconds(seconds: Int): Int {
     val clamped = seconds.coerceIn(MIN_CUSTOM_BUFFER_SECONDS, MAX_CUSTOM_BUFFER_SECONDS)
     val stepsFromMin = ((clamped - MIN_CUSTOM_BUFFER_SECONDS).toFloat() / CUSTOM_BUFFER_STEP_SECONDS).toInt()
     val lower = MIN_CUSTOM_BUFFER_SECONDS + (stepsFromMin * CUSTOM_BUFFER_STEP_SECONDS)
     val upper = (lower + CUSTOM_BUFFER_STEP_SECONDS).coerceAtMost(MAX_CUSTOM_BUFFER_SECONDS)
+    return if (clamped - lower < upper - clamped) lower else upper
+}
+
+fun normalizeBluetoothLyricsOffsetMs(offsetMs: Int): Int {
+    val clamped = offsetMs.coerceIn(
+        MIN_BLUETOOTH_LYRICS_OFFSET_MS,
+        MAX_BLUETOOTH_LYRICS_OFFSET_MS,
+    )
+    val stepsFromMin =
+        (clamped - MIN_BLUETOOTH_LYRICS_OFFSET_MS) / BLUETOOTH_LYRICS_OFFSET_STEP_MS
+    val lower = MIN_BLUETOOTH_LYRICS_OFFSET_MS +
+        (stepsFromMin * BLUETOOTH_LYRICS_OFFSET_STEP_MS)
+    val upper = (lower + BLUETOOTH_LYRICS_OFFSET_STEP_MS)
+        .coerceAtMost(MAX_BLUETOOTH_LYRICS_OFFSET_MS)
     return if (clamped - lower < upper - clamped) lower else upper
 }
 
@@ -149,6 +168,7 @@ data class PlaybackPreferences(
     val soundBalancingMode: SoundBalancingMode = SoundBalancingMode.OFF,
     val streamCacheSizeMb: Int = DEFAULT_STREAM_CACHE_SIZE_MB,
     val bluetoothLyricsEnabled: Boolean = false,
+    val bluetoothLyricsOffsetMs: Int = DEFAULT_BLUETOOTH_LYRICS_OFFSET_MS,
     val bufferStrategy: BufferStrategy = BufferStrategy.NORMAL,
     val customBufferSeconds: Int = DEFAULT_CUSTOM_BUFFER_SECONDS,
     val imageCacheSizeMb: Int = DEFAULT_IMAGE_CACHE_SIZE_MB,

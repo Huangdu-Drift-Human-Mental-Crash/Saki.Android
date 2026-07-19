@@ -70,6 +70,9 @@ class DefaultPlaybackPreferencesRepository @Inject constructor(
         }
     }
 
+    override suspend fun updateBluetoothLyricsOffsetMs(offsetMs: Int) =
+        error("Room-backed repository does not support Bluetooth lyrics offset. Use DataStore implementation.")
+
     override suspend fun updateBufferStrategy(strategy: BufferStrategy) =
         error("Room-backed repository does not support buffer settings. Use DataStore implementation.")
     override suspend fun updateCustomBufferSeconds(seconds: Int) =
