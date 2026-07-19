@@ -365,6 +365,7 @@ private fun SettingsRoute(
         onUpdateDefaultAlbumFeed = viewModel::updateDefaultAlbumFeed,
         onUpdateSongsPageSize = viewModel::updateSongsPageSize,
         onUpdateBluetoothLyrics = viewModel::updateBluetoothLyrics,
+        onUpdateBluetoothLyricsOffsetMs = viewModel::updateBluetoothLyricsOffsetMs,
         onUpdateBufferStrategy = viewModel::updateBufferStrategy,
         onUpdateCustomBufferSeconds = viewModel::updateCustomBufferSeconds,
         onExportConfig = viewModel::exportConfig,

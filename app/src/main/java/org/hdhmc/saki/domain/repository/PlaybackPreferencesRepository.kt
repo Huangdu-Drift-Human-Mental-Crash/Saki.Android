@@ -27,6 +27,8 @@ interface PlaybackPreferencesRepository {
 
     suspend fun updateBluetoothLyrics(enabled: Boolean)
 
+    suspend fun updateBluetoothLyricsOffsetMs(offsetMs: Int)
+
     suspend fun updateBufferStrategy(strategy: BufferStrategy)
 
     suspend fun updateCustomBufferSeconds(seconds: Int)

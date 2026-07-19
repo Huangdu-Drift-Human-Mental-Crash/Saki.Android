@@ -74,28 +74,31 @@ import androidx.compose.ui.unit.dp
 import org.hdhmc.saki.R
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AppLanguage
-import org.hdhmc.saki.domain.model.CachedSong
-import org.hdhmc.saki.domain.model.DefaultBrowseTab
-import org.hdhmc.saki.domain.model.DEFAULT_THEME_SEED_KEY
-import org.hdhmc.saki.domain.model.ThemeMode
-import org.hdhmc.saki.domain.model.SakiPaletteStyle
-import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
-import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.BufferStrategy
+import org.hdhmc.saki.domain.model.BLUETOOTH_LYRICS_OFFSET_STEP_MS
+import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.CUSTOM_BUFFER_STEP_SECONDS
+import org.hdhmc.saki.domain.model.DEFAULT_THEME_SEED_KEY
+import org.hdhmc.saki.domain.model.DefaultBrowseTab
+import org.hdhmc.saki.domain.model.IMAGE_CACHE_SIZE_STEP_MB
+import org.hdhmc.saki.domain.model.MAX_BLUETOOTH_LYRICS_OFFSET_MS
 import org.hdhmc.saki.domain.model.MAX_CUSTOM_BUFFER_SECONDS
 import org.hdhmc.saki.domain.model.MAX_IMAGE_CACHE_SIZE_MB
-import org.hdhmc.saki.domain.model.IMAGE_CACHE_SIZE_STEP_MB
-import org.hdhmc.saki.domain.model.MIN_IMAGE_CACHE_SIZE_MB
-import org.hdhmc.saki.domain.model.MIN_CUSTOM_BUFFER_SECONDS
 import org.hdhmc.saki.domain.model.MAX_SONGS_PAGE_SIZE
+import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
+import org.hdhmc.saki.domain.model.MIN_BLUETOOTH_LYRICS_OFFSET_MS
+import org.hdhmc.saki.domain.model.MIN_CUSTOM_BUFFER_SECONDS
+import org.hdhmc.saki.domain.model.MIN_IMAGE_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_SONGS_PAGE_SIZE
+import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
+import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SONGS_PAGE_SIZE_STEP
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.model.TextScale
+import org.hdhmc.saki.domain.model.ThemeMode
 import org.hdhmc.saki.presentation.SakiSettingsUiState
 import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.presentation.library.ArtworkCard
@@ -143,6 +146,7 @@ fun SettingsScreen(
     onUpdateDefaultAlbumFeed: (AlbumListType) -> Unit,
     onUpdateSongsPageSize: (Int) -> Unit,
     onUpdateBluetoothLyrics: (Boolean) -> Unit,
+    onUpdateBluetoothLyricsOffsetMs: (Int) -> Unit,
     onUpdateBufferStrategy: (BufferStrategy) -> Unit,
     onUpdateCustomBufferSeconds: (Int) -> Unit,
     onExportConfig: (android.net.Uri) -> Unit,
@@ -172,6 +176,10 @@ fun SettingsScreen(
     val configuredSongsPageSize = uiState.appPreferences.songsPageSize
     var songsPageSizeSliderValue by remember(configuredSongsPageSize) {
         mutableFloatStateOf(configuredSongsPageSize.toFloat())
+    }
+    val configuredBluetoothLyricsOffsetMs = uiState.playbackPreferences.bluetoothLyricsOffsetMs
+    var bluetoothLyricsOffsetSliderValue by remember(configuredBluetoothLyricsOffsetMs) {
+        mutableFloatStateOf(configuredBluetoothLyricsOffsetMs.toFloat())
     }
 
     // Precompute the theme-color swatch palette once, off the scroll path. Otherwise the theme
@@ -986,6 +994,52 @@ fun SettingsScreen(
                         onCheckedChange = null,
                     )
                 }
+                if (checked) {
+                    val previewOffsetMs = bluetoothLyricsOffsetSliderValue.toBluetoothLyricsOffsetMs()
+                    Text(
+                        text = stringResource(R.string.settings_bluetooth_lyrics_offset_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_bluetooth_lyrics_offset_body),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = formatBluetoothLyricsOffset(previewOffsetMs),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Slider(
+                        value = bluetoothLyricsOffsetSliderValue,
+                        onValueChange = { bluetoothLyricsOffsetSliderValue = it },
+                        valueRange = MIN_BLUETOOTH_LYRICS_OFFSET_MS.toFloat()..
+                            MAX_BLUETOOTH_LYRICS_OFFSET_MS.toFloat(),
+                        steps = BLUETOOTH_LYRICS_OFFSET_SLIDER_STEPS,
+                        onValueChangeFinished = {
+                            val newOffsetMs = bluetoothLyricsOffsetSliderValue
+                                .toBluetoothLyricsOffsetMs()
+                            bluetoothLyricsOffsetSliderValue = newOffsetMs.toFloat()
+                            if (newOffsetMs != configuredBluetoothLyricsOffsetMs) {
+                                onUpdateBluetoothLyricsOffsetMs(newOffsetMs)
+                            }
+                        },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = formatBluetoothLyricsOffset(MIN_BLUETOOTH_LYRICS_OFFSET_MS),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = formatBluetoothLyricsOffset(MAX_BLUETOOTH_LYRICS_OFFSET_MS),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
 
@@ -1330,6 +1384,10 @@ private const val STREAM_CACHE_SLIDER_STEPS =
 private const val SONGS_PAGE_SIZE_SLIDER_STEPS =
     ((MAX_SONGS_PAGE_SIZE - MIN_SONGS_PAGE_SIZE) / SONGS_PAGE_SIZE_STEP) - 1
 
+private const val BLUETOOTH_LYRICS_OFFSET_SLIDER_STEPS =
+    ((MAX_BLUETOOTH_LYRICS_OFFSET_MS - MIN_BLUETOOTH_LYRICS_OFFSET_MS) /
+        BLUETOOTH_LYRICS_OFFSET_STEP_MS) - 1
+
 private fun Float.toStreamCacheSizeMb(): Int {
     val stepsFromMin = ((this - MIN_STREAM_CACHE_SIZE_MB) / STREAM_CACHE_SIZE_STEP_MB).roundToInt()
     return (MIN_STREAM_CACHE_SIZE_MB + (stepsFromMin * STREAM_CACHE_SIZE_STEP_MB))
@@ -1346,6 +1404,26 @@ private fun Float.toBufferSeconds(): Int {
     val stepsFromMin = ((this - MIN_CUSTOM_BUFFER_SECONDS) / CUSTOM_BUFFER_STEP_SECONDS).roundToInt()
     return (MIN_CUSTOM_BUFFER_SECONDS + (stepsFromMin * CUSTOM_BUFFER_STEP_SECONDS))
         .coerceIn(MIN_CUSTOM_BUFFER_SECONDS, MAX_CUSTOM_BUFFER_SECONDS)
+}
+
+private fun Float.toBluetoothLyricsOffsetMs(): Int {
+    val stepsFromMin =
+        ((this - MIN_BLUETOOTH_LYRICS_OFFSET_MS) / BLUETOOTH_LYRICS_OFFSET_STEP_MS).roundToInt()
+    return (MIN_BLUETOOTH_LYRICS_OFFSET_MS +
+        (stepsFromMin * BLUETOOTH_LYRICS_OFFSET_STEP_MS))
+        .coerceIn(MIN_BLUETOOTH_LYRICS_OFFSET_MS, MAX_BLUETOOTH_LYRICS_OFFSET_MS)
+}
+
+@Composable
+private fun formatBluetoothLyricsOffset(offsetMs: Int): String {
+    return if (offsetMs == 0) {
+        stringResource(R.string.settings_bluetooth_lyrics_offset_none)
+    } else {
+        stringResource(
+            R.string.settings_bluetooth_lyrics_offset_value,
+            offsetMs / 1_000f,
+        )
+    }
 }
 
 @Composable

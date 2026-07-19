@@ -49,6 +49,10 @@
     <string name="settings_experimental_body">Features that may not work on all devices.</string>
     <string name="settings_bluetooth_lyrics_title">Bluetooth / notification lyrics</string>
     <string name="settings_bluetooth_lyrics_body">Show current lyric line in media notification, lock screen, and Bluetooth devices (car stereos, headphones).</string>
+    <string name="settings_bluetooth_lyrics_offset_title">Lyrics lead time</string>
+    <string name="settings_bluetooth_lyrics_offset_body">Show Bluetooth, notification, and car lyrics slightly early to compensate for transport delay. In-app lyrics are unchanged.</string>
+    <string name="settings_bluetooth_lyrics_offset_none">No adjustment</string>
+    <string name="settings_bluetooth_lyrics_offset_value">%1$.2f s early</string>
     <string name="settings_backup_restore_title">Backup &amp; Restore</string>
     <string name="settings_backup_restore_body">Export or import server configuration and settings. Warning: exported files contain server passwords in plaintext.</string>
     <string name="settings_export">Export</string>
@@ -330,6 +334,7 @@
     <string name="message_stream_cache_limit_updated">Stream cache limit updated.</string>
     <string name="error_update_stream_cache_size">Unable to update stream cache size.</string>
     <string name="error_update_bluetooth_lyrics">Unable to update Bluetooth lyrics.</string>
+    <string name="error_update_bluetooth_lyrics_offset">Unable to update Bluetooth lyrics lead time.</string>
     <string name="message_buffer_strategy_set">Buffer strategy set to %1$s. Restart app to apply.</string>
     <string name="error_update_buffer_strategy">Unable to update buffer strategy.</string>
     <string name="message_custom_buffer_set">Custom buffer set to %1$d s. Restart app to apply.</string>
