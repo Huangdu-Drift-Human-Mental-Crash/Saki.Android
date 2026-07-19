@@ -39,6 +39,7 @@ import androidx.media3.session.SessionResult
 import org.hdhmc.saki.MainActivity
 import org.hdhmc.saki.R
 import org.hdhmc.saki.data.remote.HTTP_USER_AGENT
+import org.hdhmc.saki.data.remote.NetworkType
 import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.LyricLine
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
@@ -100,6 +101,9 @@ private fun String.forStreamOffset(timeOffsetSeconds: Int?): String =
 private fun Int.forStreamOffset(timeOffsetSeconds: Int?): Int =
     if (timeOffsetSeconds == null) this else this or DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
 
+internal fun isResourceEof(requestLength: Long, bytesRead: Long): Boolean =
+    requestLength == C.LENGTH_UNSET.toLong() || bytesRead < requestLength
+
 private class EofTrackingDataSource(
     private val upstream: DataSource,
     private val onEof: (DataSpec, Long) -> Unit,
@@ -123,7 +127,7 @@ private class EofTrackingDataSource(
         val read = upstream.read(buffer, offset, length)
         if (read == C.RESULT_END_OF_INPUT) {
             val dataSpec = openedDataSpec
-            if (!reportedEof && dataSpec != null) {
+            if (!reportedEof && dataSpec != null && isResourceEof(dataSpec.length, bytesRead)) {
                 reportedEof = true
                 onEof(dataSpec, dataSpec.position + bytesRead)
             }
@@ -161,6 +165,21 @@ internal fun isConfirmedTranscode(sourceBitRate: Int?, requestedBitRate: Int?): 
     val source = sourceBitRate?.takeIf { it > 0 } ?: return false
     val requested = requestedBitRate?.takeIf { it > 0 } ?: return false
     return source > requested
+}
+
+internal fun selectEffectiveStreamQuality(
+    prefs: PlaybackPreferences,
+    networkType: NetworkType,
+    fallbackMaxBitRate: Int?,
+): StreamQuality {
+    if (!prefs.adaptiveQualityEnabled) {
+        return StreamQuality.entries.find { it.maxBitRate == fallbackMaxBitRate }
+            ?: StreamQuality.ORIGINAL
+    }
+    return when (networkType) {
+        NetworkType.WIFI -> prefs.wifiStreamQuality
+        NetworkType.MOBILE -> prefs.mobileStreamQuality
+    }
 }
 
 @AndroidEntryPoint
@@ -611,16 +630,17 @@ class SakiPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun PlaybackRequest.requestedStreamQuality(prefs: PlaybackPreferences): StreamQuality {
-        return if (prefs.adaptiveQualityEnabled) {
-            when (networkTypeProvider.networkType.value) {
-                org.hdhmc.saki.data.remote.NetworkType.WIFI -> prefs.wifiStreamQuality
-                org.hdhmc.saki.data.remote.NetworkType.MOBILE -> prefs.mobileStreamQuality
-            }
-        } else {
-            StreamQuality.entries.find { it.maxBitRate == maxBitRate } ?: StreamQuality.ORIGINAL
-        }
-    }
+    private fun requestedStreamQuality(
+        prefs: PlaybackPreferences,
+        fallbackMaxBitRate: Int?,
+    ): StreamQuality = selectEffectiveStreamQuality(
+        prefs = prefs,
+        networkType = networkTypeProvider.networkType.value,
+        fallbackMaxBitRate = fallbackMaxBitRate,
+    )
+
+    private fun PlaybackRequest.requestedStreamQuality(prefs: PlaybackPreferences): StreamQuality =
+        requestedStreamQuality(prefs, maxBitRate)
 
     private fun PlaybackRequest.withStreamQuality(quality: StreamQuality): PlaybackRequest {
         return copy(
@@ -964,15 +984,10 @@ class SakiPlaybackService : MediaSessionService() {
 
         // Use cached prefs to avoid blocking; fall back to blocking read if not yet available
         val prefs = cachedPlaybackPrefs ?: runBlocking { playbackPreferencesRepository.getPreferences() }
-        val requestedQuality = if (prefs.adaptiveQualityEnabled) {
-            when (networkTypeProvider.networkType.value) {
-                org.hdhmc.saki.data.remote.NetworkType.WIFI -> prefs.wifiStreamQuality
-                org.hdhmc.saki.data.remote.NetworkType.MOBILE -> prefs.mobileStreamQuality
-            }
-        } else {
-            val maxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull()
-            StreamQuality.entries.find { it.maxBitRate == maxBitRate } ?: StreamQuality.ORIGINAL
-        }
+        val requestedQuality = requestedStreamQuality(
+            prefs = prefs,
+            fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
+        )
         val preferLocalCache = shouldPreferLocalStreamCache(serverId)
         val cacheLookupQuality = if (preferLocalCache) StreamQuality.entries.last() else requestedQuality
         val cachedQualityKey = if (timeOffsetSeconds == null) {
@@ -1136,15 +1151,14 @@ class SakiPlaybackService : MediaSessionService() {
             if (mediaItemIndex == C.INDEX_UNSET) return false
             val item = exoPlayer.currentMediaItem ?: return false
             val request = item.toPlaybackRequestOrNull() ?: return false
-            if (!request.supportsServerSideSeek()) return false
+            val prefs = cachedPlaybackPrefs ?: return false
+            val preferredQuality = request.requestedStreamQuality(prefs)
+            if (!request.supportsServerSideSeek(preferredQuality)) return false
 
             val durationMs = item.metadataDurationMs() ?: return false
             val targetPositionMs = requestedPositionMs
                 .coerceIn(0L, (durationMs - 1_000L).coerceAtLeast(0L))
                 .toWholeSecondOffsetMs()
-            val preferredQuality = StreamQuality.entries
-                .find { quality -> quality.maxBitRate == request.maxBitRate }
-                ?: StreamQuality.ORIGINAL
             val hasCompleteBaseStream = streamCacheRepository.findCachedQualityKey(
                 serverId = request.serverId,
                 songId = request.songId,
@@ -1261,8 +1275,13 @@ class SakiPlaybackService : MediaSessionService() {
         activePlayer.playWhenReady = shouldResume
     }
 
-    private fun PlaybackRequest.supportsServerSideSeek(): Boolean =
-        !isCached && isConfirmedTranscode(sourceBitRate, maxBitRate)
+    private fun PlaybackRequest.supportsServerSideSeek(): Boolean {
+        val prefs = cachedPlaybackPrefs ?: return false
+        return supportsServerSideSeek(requestedStreamQuality(prefs))
+    }
+
+    private fun PlaybackRequest.supportsServerSideSeek(quality: StreamQuality): Boolean =
+        !isCached && isConfirmedTranscode(sourceBitRate, quality.maxBitRate)
 
     private fun shouldPreferLocalStreamCache(serverId: Long): Boolean {
         return endpointSelector.isOfflineDegraded(serverId)
