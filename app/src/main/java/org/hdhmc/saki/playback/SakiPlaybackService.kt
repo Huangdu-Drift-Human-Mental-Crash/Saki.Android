@@ -155,6 +155,7 @@ private data class ActiveServerSeek(
     val serverId: Long,
     val songId: String,
     val offsetMs: Long,
+    val streamQuality: StreamQuality,
 )
 
 internal fun shouldPauseOffsetStreamAtEnd(repeatMode: Int, mediaItemCount: Int): Boolean =
@@ -166,6 +167,15 @@ internal fun isConfirmedTranscode(sourceBitRate: Int?, requestedBitRate: Int?): 
     val requested = requestedBitRate?.takeIf { it > 0 } ?: return false
     return source > requested
 }
+
+internal fun supportsTranscodedServerSeek(
+    isCached: Boolean,
+    sourceBitRate: Int?,
+    openedStreamQuality: StreamQuality?,
+): Boolean =
+    !isCached &&
+        openedStreamQuality != null &&
+        isConfirmedTranscode(sourceBitRate, openedStreamQuality.maxBitRate)
 
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
@@ -242,6 +252,7 @@ class SakiPlaybackService : MediaSessionService() {
     private var activeStreamCacheWriter: CacheWriter? = null
     @Volatile
     private var activeServerSeek: ActiveServerSeek? = null
+    private val openedStreamQualities = ConcurrentHashMap<String, StreamQuality>()
     private var pauseAtEndBeforeServerSeek: Boolean? = null
 
     override fun onCreate() {
@@ -270,6 +281,7 @@ class SakiPlaybackService : MediaSessionService() {
                     // Media3 invokes this only after the upstream data source opens successfully.
                     val selection = dataSpec.customData as? StreamEndpointSelection ?: return
                     endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
+                    openedStreamQualities[selection.placeholderUri] = selection.streamQuality
                 }
 
                 override fun onBytesTransferred(
@@ -789,6 +801,9 @@ class SakiPlaybackService : MediaSessionService() {
     private fun ExoPlayer.logicalCurrentPositionMs(): Long =
         currentPosition.coerceAtLeast(0L) + currentStreamOffsetMs()
 
+    private fun MediaItem.openedStreamQuality(): StreamQuality? =
+        localConfiguration?.uri?.toString()?.let(openedStreamQualities::get)
+
     private fun ExoPlayer.durationForPrefetchMs(
         index: Int,
         mediaItem: MediaItem,
@@ -917,6 +932,8 @@ class SakiPlaybackService : MediaSessionService() {
     private data class StreamEndpointSelection(
         val serverId: Long,
         val endpoint: ServerEndpoint,
+        val placeholderUri: String,
+        val streamQuality: StreamQuality,
     )
 
     private data class StreamPrefetchPlan(
@@ -975,8 +992,9 @@ class SakiPlaybackService : MediaSessionService() {
             ?: throw IOException("Missing serverId in stream placeholder URI")
         val songId = uri.getQueryParameter("songId")
             ?: throw IOException("Missing songId in stream placeholder URI")
-        val timeOffsetSeconds = activeServerSeek
+        val activeSeek = activeServerSeek
             ?.takeIf { seek -> seek.serverId == serverId && seek.songId == songId }
+        val timeOffsetSeconds = activeSeek
             ?.offsetMs
             ?.div(1_000L)
             ?.toInt()
@@ -984,7 +1002,7 @@ class SakiPlaybackService : MediaSessionService() {
 
         // Use cached prefs to avoid blocking; fall back to blocking read if not yet available
         val prefs = cachedPlaybackPrefs ?: runBlocking { playbackPreferencesRepository.getPreferences() }
-        val requestedQuality = requestedStreamQuality(
+        val requestedQuality = activeSeek?.streamQuality ?: requestedStreamQuality(
             prefs = prefs,
             fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
         )
@@ -1000,6 +1018,7 @@ class SakiPlaybackService : MediaSessionService() {
             streamCacheRepository.buildCacheKey(serverId, songId, quality)
         }
         if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
+            openedStreamQualities.remove(uri.toString())
             return dataSpec.buildUpon()
                 .setUri(cachedStreamUri(cachedResourceKey))
                 .setKey(cachedResourceKey)
@@ -1027,7 +1046,14 @@ class SakiPlaybackService : MediaSessionService() {
                 .setUri(candidate.url)
                 .setKey(cacheKey.forStreamOffset(timeOffsetSeconds))
                 .setFlags(dataSpec.flags.forStreamOffset(timeOffsetSeconds))
-                .setCustomData(StreamEndpointSelection(serverId, candidate.endpoint))
+                .setCustomData(
+                    StreamEndpointSelection(
+                        serverId = serverId,
+                        endpoint = candidate.endpoint,
+                        placeholderUri = uri.toString(),
+                        streamQuality = requestedQuality,
+                    ),
+                )
                 .build()
         }
 
@@ -1052,7 +1078,14 @@ class SakiPlaybackService : MediaSessionService() {
             .setUri(realUrl)
             .setKey((cachedResourceKey ?: cacheKey).forStreamOffset(timeOffsetSeconds))
             .setFlags(dataSpec.flags.forStreamOffset(timeOffsetSeconds))
-            .setCustomData(StreamEndpointSelection(serverId, candidate.endpoint))
+            .setCustomData(
+                StreamEndpointSelection(
+                    serverId = serverId,
+                    endpoint = candidate.endpoint,
+                    placeholderUri = uri.toString(),
+                    streamQuality = quality,
+                ),
+            )
             .build()
     }
 
@@ -1063,15 +1096,20 @@ class SakiPlaybackService : MediaSessionService() {
             val state = super.getState()
             val currentItem = exoPlayer.currentMediaItem
             val currentRequest = currentItem?.toPlaybackRequestOrNull()
-            val exposesServerSideSeek = currentRequest?.supportsServerSideSeek() == true &&
+            val openedQuality = currentItem?.openedStreamQuality()
+            val exposesServerSideSeek = currentRequest?.supportsServerSideSeek(openedQuality) == true &&
                 currentItem.metadataDurationMs() != null
             val stateBuilder = state.buildUpon()
                 .setPlaylist(
-                    state.playlist.map { itemData ->
+                    state.playlist.mapIndexed { index, itemData ->
                         val item = itemData.mediaItem
                         val request = item.toPlaybackRequestOrNull()
                         val durationMs = item.metadataDurationMs()
-                        if (request?.supportsServerSideSeek() == true && durationMs != null) {
+                        if (
+                            index == exoPlayer.currentMediaItemIndex &&
+                            request?.supportsServerSideSeek(openedQuality) == true &&
+                            durationMs != null
+                        ) {
                             itemData.buildUpon()
                                 .setLiveConfiguration(null)
                                 .setPresentationStartTimeMs(C.TIME_UNSET)
@@ -1151,9 +1189,8 @@ class SakiPlaybackService : MediaSessionService() {
             if (mediaItemIndex == C.INDEX_UNSET) return false
             val item = exoPlayer.currentMediaItem ?: return false
             val request = item.toPlaybackRequestOrNull() ?: return false
-            val prefs = cachedPlaybackPrefs ?: return false
-            val preferredQuality = request.requestedStreamQuality(prefs)
-            if (!request.supportsServerSideSeek(preferredQuality)) return false
+            val openedQuality = item.openedStreamQuality() ?: return false
+            if (!request.supportsServerSideSeek(openedQuality)) return false
 
             val durationMs = item.metadataDurationMs() ?: return false
             val targetPositionMs = requestedPositionMs
@@ -1181,6 +1218,7 @@ class SakiPlaybackService : MediaSessionService() {
                         serverId = request.serverId,
                         songId = request.songId,
                         offsetMs = serverOffsetMs,
+                        streamQuality = openedQuality,
                     )
                 } else {
                     null
@@ -1275,13 +1313,8 @@ class SakiPlaybackService : MediaSessionService() {
         activePlayer.playWhenReady = shouldResume
     }
 
-    private fun PlaybackRequest.supportsServerSideSeek(): Boolean {
-        val prefs = cachedPlaybackPrefs ?: return false
-        return supportsServerSideSeek(requestedStreamQuality(prefs))
-    }
-
-    private fun PlaybackRequest.supportsServerSideSeek(quality: StreamQuality): Boolean =
-        !isCached && isConfirmedTranscode(sourceBitRate, quality.maxBitRate)
+    private fun PlaybackRequest.supportsServerSideSeek(quality: StreamQuality?): Boolean =
+        supportsTranscodedServerSeek(isCached, sourceBitRate, quality)
 
     private fun shouldPreferLocalStreamCache(serverId: Long): Boolean {
         return endpointSelector.isOfflineDegraded(serverId)
@@ -1311,6 +1344,7 @@ class SakiPlaybackService : MediaSessionService() {
     override fun onDestroy() {
         savePlayQueue(immediate = true)
         cancelStreamPrefetch()
+        openedStreamQualities.clear()
         releaseSoundBalancingEffect()
 
         mediaSession?.release()

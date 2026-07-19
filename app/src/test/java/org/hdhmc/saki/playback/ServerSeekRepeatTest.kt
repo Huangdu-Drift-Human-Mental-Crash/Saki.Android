@@ -32,6 +32,24 @@ class ServerSeekRepeatTest {
     }
 
     @Test
+    fun `server-side seek follows the opened stream quality`() {
+        assertTrue(
+            supportsTranscodedServerSeek(
+                isCached = false,
+                sourceBitRate = 320,
+                openedStreamQuality = StreamQuality.KBPS_128,
+            ),
+        )
+        assertFalse(
+            supportsTranscodedServerSeek(
+                isCached = false,
+                sourceBitRate = 320,
+                openedStreamQuality = StreamQuality.ORIGINAL,
+            ),
+        )
+    }
+
+    @Test
     fun `only whole-resource EOF marks a stream complete`() {
         assertTrue(isResourceEof(requestLength = C.LENGTH_UNSET.toLong(), bytesRead = 8_192L))
         assertTrue(isResourceEof(requestLength = 8_192L, bytesRead = 4_096L))
