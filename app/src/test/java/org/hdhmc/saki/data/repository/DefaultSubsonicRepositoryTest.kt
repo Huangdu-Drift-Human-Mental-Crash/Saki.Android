@@ -137,6 +137,7 @@ class DefaultSubsonicRepositoryTest {
             songId = "song-42",
             maxBitRate = 320,
             format = "raw",
+            timeOffsetSeconds = 42,
         )
 
         assertEquals("song-42", request.songId)
@@ -146,6 +147,7 @@ class DefaultSubsonicRepositoryTest {
         assertTrue(request.candidates.first().url.contains("id=song-42"))
         assertTrue(request.candidates.first().url.contains("maxBitRate=320"))
         assertTrue(request.candidates.first().url.contains("format=raw"))
+        assertTrue(request.candidates.first().url.contains("timeOffset=42"))
         assertTrue(request.candidates.first().url.contains("u=nemo"))
     }
 

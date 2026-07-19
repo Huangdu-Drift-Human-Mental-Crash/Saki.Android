@@ -88,6 +88,7 @@ interface SubsonicRepository {
         songId: String,
         maxBitRate: Int? = null,
         format: String? = null,
+        timeOffsetSeconds: Int? = null,
     ): SubsonicStreamRequest
 
     suspend fun buildDownloadRequest(

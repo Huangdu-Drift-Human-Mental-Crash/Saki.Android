@@ -270,6 +270,7 @@ class DefaultSubsonicRepository @Inject constructor(
         songId: String,
         maxBitRate: Int?,
         format: String?,
+        timeOffsetSeconds: Int?,
     ): SubsonicStreamRequest = withContext(ioDispatcher) {
         SubsonicStreamRequest(
             songId = songId,
@@ -280,6 +281,7 @@ class DefaultSubsonicRepository @Inject constructor(
                     "id" to songId,
                     "maxBitRate" to maxBitRate?.toString(),
                     "format" to format,
+                    "timeOffset" to timeOffsetSeconds?.takeIf { it > 0 }?.toString(),
                 ),
             ),
         )
