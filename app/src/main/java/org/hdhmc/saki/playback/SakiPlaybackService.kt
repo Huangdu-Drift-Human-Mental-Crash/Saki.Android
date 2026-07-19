@@ -9,9 +9,11 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -20,6 +22,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -36,6 +39,7 @@ import androidx.media3.session.SessionResult
 import org.hdhmc.saki.MainActivity
 import org.hdhmc.saki.R
 import org.hdhmc.saki.data.remote.HTTP_USER_AGENT
+import org.hdhmc.saki.data.remote.NetworkType
 import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.LyricLine
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
@@ -49,6 +53,7 @@ import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.repository.LocalPlayQueueRepository
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import org.hdhmc.saki.domain.repository.SubsonicRepository
+import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import dagger.hilt.android.AndroidEntryPoint
@@ -59,6 +64,7 @@ import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +91,106 @@ private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
 
 private fun Long.coerceKnownDuration(): Long? {
     return takeIf { it != C.TIME_UNSET && it > 0L }
+}
+
+private fun Long.toWholeSecondOffsetMs(): Long =
+    coerceAtLeast(0L).div(1_000L).times(1_000L)
+
+private fun String.forStreamOffset(timeOffsetSeconds: Int?): String =
+    timeOffsetSeconds?.let { offset -> "$this|seek=$offset" } ?: this
+
+private fun Int.forStreamOffset(timeOffsetSeconds: Int?): Int =
+    if (timeOffsetSeconds == null) this else this or DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
+
+internal fun isResourceEof(requestLength: Long, bytesRead: Long): Boolean =
+    requestLength == C.LENGTH_UNSET.toLong() || bytesRead < requestLength
+
+private class EofTrackingDataSource(
+    private val upstream: DataSource,
+    private val onEof: (DataSpec, Long) -> Unit,
+) : DataSource {
+    private var openedDataSpec: DataSpec? = null
+    private var bytesRead = 0L
+    private var reportedEof = false
+
+    override fun addTransferListener(transferListener: TransferListener) {
+        upstream.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        openedDataSpec = dataSpec
+        bytesRead = 0L
+        reportedEof = false
+        return upstream.open(dataSpec)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val read = upstream.read(buffer, offset, length)
+        if (read == C.RESULT_END_OF_INPUT) {
+            val dataSpec = openedDataSpec
+            if (!reportedEof && dataSpec != null && isResourceEof(dataSpec.length, bytesRead)) {
+                reportedEof = true
+                onEof(dataSpec, dataSpec.position + bytesRead)
+            }
+        } else if (read > 0) {
+            bytesRead += read
+        }
+        return read
+    }
+
+    override fun getUri(): Uri? = upstream.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
+
+    override fun close() {
+        try {
+            upstream.close()
+        } finally {
+            openedDataSpec = null
+        }
+    }
+}
+
+private data class ActiveServerSeek(
+    val mediaItemIndex: Int,
+    val serverId: Long,
+    val songId: String,
+    val offsetMs: Long,
+    val streamQuality: StreamQuality,
+)
+
+internal fun shouldPauseOffsetStreamAtEnd(repeatMode: Int, mediaItemCount: Int): Boolean =
+    repeatMode == Player.REPEAT_MODE_ONE ||
+        (repeatMode == Player.REPEAT_MODE_ALL && mediaItemCount == 1)
+
+internal fun isConfirmedTranscode(sourceBitRate: Int?, requestedBitRate: Int?): Boolean {
+    val source = sourceBitRate?.takeIf { it > 0 } ?: return false
+    val requested = requestedBitRate?.takeIf { it > 0 } ?: return false
+    return source > requested
+}
+
+internal fun supportsTranscodedServerSeek(
+    isCached: Boolean,
+    sourceBitRate: Int?,
+    openedStreamQuality: StreamQuality?,
+): Boolean =
+    !isCached &&
+        openedStreamQuality != null &&
+        isConfirmedTranscode(sourceBitRate, openedStreamQuality.maxBitRate)
+
+internal fun selectEffectiveStreamQuality(
+    prefs: PlaybackPreferences,
+    networkType: NetworkType,
+    fallbackMaxBitRate: Int?,
+): StreamQuality {
+    if (!prefs.adaptiveQualityEnabled) {
+        return StreamQuality.entries.find { it.maxBitRate == fallbackMaxBitRate }
+            ?: StreamQuality.ORIGINAL
+    }
+    return when (networkType) {
+        NetworkType.WIFI -> prefs.wifiStreamQuality
+        NetworkType.MOBILE -> prefs.mobileStreamQuality
+    }
 }
 
 @AndroidEntryPoint
@@ -145,6 +251,10 @@ class SakiPlaybackService : MediaSessionService() {
     private val deferredStreamPrefetchTargets = ConcurrentHashMap<StreamPrefetchTargetKey, Long>()
     @Volatile
     private var activeStreamCacheWriter: CacheWriter? = null
+    @Volatile
+    private var activeServerSeek: ActiveServerSeek? = null
+    private val openedStreamQualities = ConcurrentHashMap<String, StreamQuality>()
+    private var pauseAtEndBeforeServerSeek: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -154,41 +264,45 @@ class SakiPlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        val httpDataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setUserAgent(HTTP_USER_AGENT)
+            .setTransferListener(object : TransferListener {
+                override fun onTransferInitializing(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                ) = Unit
+
+                override fun onTransferStart(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                ) {
+                    if (!isNetwork) return
+                    // Media3 invokes this only after the upstream data source opens successfully.
+                    val selection = dataSpec.customData as? StreamEndpointSelection ?: return
+                    endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
+                    openedStreamQualities[selection.placeholderUri] = selection.streamQuality
+                }
+
+                override fun onBytesTransferred(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                    bytesTransferred: Int,
+                ) = Unit
+
+                override fun onTransferEnd(
+                    source: DataSource,
+                    dataSpec: DataSpec,
+                    isNetwork: Boolean,
+                ) = Unit
+            })
         val upstreamDataSourceFactory = DefaultDataSource.Factory(
             this,
-            OkHttpDataSource.Factory(okHttpClient)
-                .setUserAgent(HTTP_USER_AGENT)
-                .setTransferListener(object : TransferListener {
-                    override fun onTransferInitializing(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                    ) = Unit
-
-                    override fun onTransferStart(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                    ) {
-                        if (!isNetwork) return
-                        // Media3 invokes this only after the upstream data source opens successfully.
-                        val selection = dataSpec.customData as? StreamEndpointSelection ?: return
-                        endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
-                    }
-
-                    override fun onBytesTransferred(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                        bytesTransferred: Int,
-                    ) = Unit
-
-                    override fun onTransferEnd(
-                        source: DataSource,
-                        dataSpec: DataSpec,
-                        isNetwork: Boolean,
-                    ) = Unit
-                }),
+            DataSource.Factory {
+                EofTrackingDataSource(httpDataSourceFactory.createDataSource(), ::recordStreamCacheEof)
+            },
         )
         val cacheFactory = CacheDataSource.Factory()
             .setCache(streamCache)
@@ -243,6 +357,7 @@ class SakiPlaybackService : MediaSessionService() {
                 addListener(PlayQueueSaveListener())
                 addListener(NotificationMediaButtonListener())
                 addListener(StreamPrefetchListener())
+                addListener(ServerSeekStateListener())
                 addListener(object : Player.Listener {
                     override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
                         val pending = pendingShuffleOrder ?: return
@@ -265,7 +380,7 @@ class SakiPlaybackService : MediaSessionService() {
         )
 
         player = exoPlayer
-        mediaSession = MediaSession.Builder(this, exoPlayer)
+        mediaSession = MediaSession.Builder(this, SakiSessionPlayer(exoPlayer))
             .setSessionActivity(sessionActivity)
             .setCallback(SakiMediaSessionCallback())
             .setBitmapLoader(CoilBitmapLoader(this))
@@ -290,7 +405,11 @@ class SakiPlaybackService : MediaSessionService() {
                 // Keep preload in sync with the same live state the prefetch planner uses, so a
                 // mid-session switch into CUSTOM-long mode can't run prefetch while preload is
                 // still on (which would reintroduce the cache-key contention).
-                player?.preloadConfiguration = preloadConfigurationFor(prefs)
+                player?.preloadConfiguration = if (activeServerSeek == null) {
+                    preloadConfigurationFor(prefs)
+                } else {
+                    ExoPlayer.PreloadConfiguration.DEFAULT
+                }
                 syncCurrentStreamPrefetch()
             }
         }
@@ -323,7 +442,7 @@ class SakiPlaybackService : MediaSessionService() {
                                 continue
                             }
                             mediaSession ?: break
-                            val positionMs = activePlayer.currentPosition
+                            val positionMs = activePlayer.logicalCurrentPositionMs()
                             val lines = lyrics.lines
                             val index = lines.binarySearchLastBefore(positionMs)
                             val text = if (index >= 0) lines[index].text.takeIf { it.isNotBlank() } else null
@@ -524,16 +643,17 @@ class SakiPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun PlaybackRequest.requestedStreamQuality(prefs: PlaybackPreferences): StreamQuality {
-        return if (prefs.adaptiveQualityEnabled) {
-            when (networkTypeProvider.networkType.value) {
-                org.hdhmc.saki.data.remote.NetworkType.WIFI -> prefs.wifiStreamQuality
-                org.hdhmc.saki.data.remote.NetworkType.MOBILE -> prefs.mobileStreamQuality
-            }
-        } else {
-            StreamQuality.entries.find { it.maxBitRate == maxBitRate } ?: StreamQuality.ORIGINAL
-        }
-    }
+    private fun requestedStreamQuality(
+        prefs: PlaybackPreferences,
+        fallbackMaxBitRate: Int?,
+    ): StreamQuality = selectEffectiveStreamQuality(
+        prefs = prefs,
+        networkType = networkTypeProvider.networkType.value,
+        fallbackMaxBitRate = fallbackMaxBitRate,
+    )
+
+    private fun PlaybackRequest.requestedStreamQuality(prefs: PlaybackPreferences): StreamQuality =
+        requestedStreamQuality(prefs, maxBitRate)
 
     private fun PlaybackRequest.withStreamQuality(quality: StreamQuality): PlaybackRequest {
         return copy(
@@ -545,7 +665,7 @@ class SakiPlaybackService : MediaSessionService() {
         )
     }
 
-    private fun PlaybackRequest.toStreamPlaceholderUri(): Uri {
+    private fun PlaybackRequest.toStreamPlaceholderUri(streamInstanceId: String? = null): Uri {
         return Uri.Builder()
             .scheme("saki")
             .authority("stream")
@@ -554,6 +674,7 @@ class SakiPlaybackService : MediaSessionService() {
             .apply {
                 maxBitRate?.let { appendQueryParameter("maxBitRate", it.toString()) }
                 format?.let { appendQueryParameter("format", it) }
+                streamInstanceId?.let { appendQueryParameter("instanceId", it) }
             }
             .build()
     }
@@ -610,7 +731,7 @@ class SakiPlaybackService : MediaSessionService() {
                 request = request,
                 window = window,
             )
-            val positionMs = if (index == currentIndex) currentPosition.coerceAtLeast(0L) else 0L
+            val positionMs = if (index == currentIndex) logicalCurrentPositionMs() else 0L
             val remainingTrackMs = durationMs
                 ?.minus(positionMs)
                 ?.coerceAtLeast(0L)
@@ -668,12 +789,33 @@ class SakiPlaybackService : MediaSessionService() {
         )
     }
 
+    private fun ExoPlayer.currentStreamOffsetMs(): Long {
+        val activeSeek = activeServerSeek ?: return 0L
+        if (currentMediaItemIndex != activeSeek.mediaItemIndex) return 0L
+        val request = currentMediaItem?.toPlaybackRequestOrNull() ?: return 0L
+        return if (request.serverId == activeSeek.serverId && request.songId == activeSeek.songId) {
+            activeSeek.offsetMs
+        } else {
+            0L
+        }
+    }
+
+    private fun ExoPlayer.logicalCurrentPositionMs(): Long =
+        currentPosition.coerceAtLeast(0L) + currentStreamOffsetMs()
+
+    private fun MediaItem.openedStreamQuality(): StreamQuality? =
+        localConfiguration?.uri?.toString()?.let(openedStreamQualities::get)
+
     private fun ExoPlayer.durationForPrefetchMs(
         index: Int,
         mediaItem: MediaItem,
         request: PlaybackRequest,
         window: Timeline.Window,
     ): Long? {
+        if (index == currentMediaItemIndex && currentStreamOffsetMs() > 0L) {
+            return request.durationMs?.coerceKnownDuration()
+                ?: mediaItem.metadataDurationMs()
+        }
         val playerDuration = if (index == currentMediaItemIndex) {
             duration.coerceKnownDuration()
         } else {
@@ -792,6 +934,8 @@ class SakiPlaybackService : MediaSessionService() {
     private data class StreamEndpointSelection(
         val serverId: Long,
         val endpoint: ServerEndpoint,
+        val placeholderUri: String,
+        val streamQuality: StreamQuality,
     )
 
     private data class StreamPrefetchPlan(
@@ -819,6 +963,21 @@ class SakiPlaybackService : MediaSessionService() {
         fun planKey(): String = "$serverId:$songId:$qualityKey"
     }
 
+    private fun recordStreamCacheEof(dataSpec: DataSpec, eofPosition: Long) {
+        val cacheKey = dataSpec.key ?: return
+        if (eofPosition <= 0L || parseStreamCacheKey(cacheKey) == null) return
+        runCatching {
+            streamCache.applyContentMetadataMutations(
+                cacheKey,
+                ContentMetadataMutations().set(STREAM_CACHE_EOF_LENGTH_METADATA_KEY, eofPosition),
+            )
+        }.onSuccess {
+            streamCacheRepository.requestSnapshotRefresh()
+        }.onFailure { throwable ->
+            Log.w(STREAM_PREFETCH_LOG_TAG, "Failed to record stream cache EOF for $cacheKey", throwable)
+        }
+    }
+
     /**
      * Resolves placeholder `saki://stream` URIs to real Subsonic stream URLs at the moment
      * ExoPlayer actually opens the data source. This ensures the quality and endpoint are
@@ -835,26 +994,33 @@ class SakiPlaybackService : MediaSessionService() {
             ?: throw IOException("Missing serverId in stream placeholder URI")
         val songId = uri.getQueryParameter("songId")
             ?: throw IOException("Missing songId in stream placeholder URI")
+        val activeSeek = activeServerSeek
+            ?.takeIf { seek -> seek.serverId == serverId && seek.songId == songId }
+        val timeOffsetSeconds = activeSeek
+            ?.offsetMs
+            ?.div(1_000L)
+            ?.toInt()
+            ?.takeIf { it > 0 }
 
         // Use cached prefs to avoid blocking; fall back to blocking read if not yet available
         val prefs = cachedPlaybackPrefs ?: runBlocking { playbackPreferencesRepository.getPreferences() }
-        val requestedQuality = if (prefs.adaptiveQualityEnabled) {
-            when (networkTypeProvider.networkType.value) {
-                org.hdhmc.saki.data.remote.NetworkType.WIFI -> prefs.wifiStreamQuality
-                org.hdhmc.saki.data.remote.NetworkType.MOBILE -> prefs.mobileStreamQuality
-            }
-        } else {
-            val maxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull()
-            StreamQuality.entries.find { it.maxBitRate == maxBitRate } ?: StreamQuality.ORIGINAL
-        }
+        val requestedQuality = activeSeek?.streamQuality ?: requestedStreamQuality(
+            prefs = prefs,
+            fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
+        )
         val preferLocalCache = shouldPreferLocalStreamCache(serverId)
         val cacheLookupQuality = if (preferLocalCache) StreamQuality.entries.last() else requestedQuality
-        val cachedQualityKey = streamCacheRepository.findCachedQualityKey(serverId, songId, cacheLookupQuality)
+        val cachedQualityKey = if (timeOffsetSeconds == null) {
+            streamCacheRepository.findCachedQualityKey(serverId, songId, cacheLookupQuality)
+        } else {
+            null
+        }
         val cachedQuality = cachedQualityKey?.let { key -> StreamQuality.fromStorageKey(key) }
         val cachedResourceKey = cachedQuality?.let { quality ->
             streamCacheRepository.buildCacheKey(serverId, songId, quality)
         }
         if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
+            openedStreamQualities.remove(uri.toString())
             return dataSpec.buildUpon()
                 .setUri(cachedStreamUri(cachedResourceKey))
                 .setKey(cachedResourceKey)
@@ -865,7 +1031,13 @@ class SakiPlaybackService : MediaSessionService() {
         val format = uri.getQueryParameter("format")
         if (!prefs.adaptiveQualityEnabled && cachedResourceKey == null && format != null && format != requestedQuality.format) {
             val streamRequest = runBlocking {
-                subsonicRepository.buildStreamRequest(serverId, songId, requestedQuality.maxBitRate, format)
+                subsonicRepository.buildStreamRequest(
+                    serverId = serverId,
+                    songId = songId,
+                    maxBitRate = requestedQuality.maxBitRate,
+                    format = format,
+                    timeOffsetSeconds = timeOffsetSeconds,
+                )
             }
             if (streamRequest.candidates.isEmpty()) {
                 throw IOException("No stream candidates for song $songId on server $serverId")
@@ -874,13 +1046,27 @@ class SakiPlaybackService : MediaSessionService() {
             val cacheKey = streamCacheRepository.buildCacheKey(serverId, songId, requestedQuality)
             return dataSpec.buildUpon()
                 .setUri(candidate.url)
-                .setKey(cacheKey)
-                .setCustomData(StreamEndpointSelection(serverId, candidate.endpoint))
+                .setKey(cacheKey.forStreamOffset(timeOffsetSeconds))
+                .setFlags(dataSpec.flags.forStreamOffset(timeOffsetSeconds))
+                .setCustomData(
+                    StreamEndpointSelection(
+                        serverId = serverId,
+                        endpoint = candidate.endpoint,
+                        placeholderUri = uri.toString(),
+                        streamQuality = requestedQuality,
+                    ),
+                )
                 .build()
         }
 
         val streamRequest = runBlocking {
-            subsonicRepository.buildStreamRequest(serverId, songId, quality.maxBitRate, quality.format)
+            subsonicRepository.buildStreamRequest(
+                serverId = serverId,
+                songId = songId,
+                maxBitRate = quality.maxBitRate,
+                format = quality.format,
+                timeOffsetSeconds = timeOffsetSeconds,
+            )
         }
         if (streamRequest.candidates.isEmpty()) {
             throw IOException("No stream candidates for song $songId on server $serverId")
@@ -892,10 +1078,245 @@ class SakiPlaybackService : MediaSessionService() {
 
         return dataSpec.buildUpon()
             .setUri(realUrl)
-            .setKey(cachedResourceKey ?: cacheKey)
-            .setCustomData(StreamEndpointSelection(serverId, candidate.endpoint))
+            .setKey((cachedResourceKey ?: cacheKey).forStreamOffset(timeOffsetSeconds))
+            .setFlags(dataSpec.flags.forStreamOffset(timeOffsetSeconds))
+            .setCustomData(
+                StreamEndpointSelection(
+                    serverId = serverId,
+                    endpoint = candidate.endpoint,
+                    placeholderUri = uri.toString(),
+                    streamQuality = quality,
+                ),
+            )
             .build()
     }
+
+    private inner class SakiSessionPlayer(
+        private val exoPlayer: ExoPlayer,
+    ) : ForwardingSimpleBasePlayer(exoPlayer) {
+        override fun getState(): SimpleBasePlayer.State {
+            val state = super.getState()
+            val currentItem = exoPlayer.currentMediaItem
+            val currentRequest = currentItem?.toPlaybackRequestOrNull()
+            val openedQuality = currentItem?.openedStreamQuality()
+            val exposesServerSideSeek = currentRequest?.supportsServerSideSeek(openedQuality) == true &&
+                currentItem.metadataDurationMs() != null
+            val stateBuilder = state.buildUpon()
+                .setPlaylist(
+                    state.playlist.mapIndexed { index, itemData ->
+                        val item = itemData.mediaItem
+                        val request = item.toPlaybackRequestOrNull()
+                        val durationMs = item.metadataDurationMs()
+                        if (
+                            index == exoPlayer.currentMediaItemIndex &&
+                            request?.supportsServerSideSeek(openedQuality) == true &&
+                            durationMs != null
+                        ) {
+                            itemData.buildUpon()
+                                .setLiveConfiguration(null)
+                                .setPresentationStartTimeMs(C.TIME_UNSET)
+                                .setWindowStartTimeMs(C.TIME_UNSET)
+                                .setElapsedRealtimeEpochOffsetMs(C.TIME_UNSET)
+                                .setIsDynamic(false)
+                                .setIsSeekable(true)
+                                .setDurationUs(durationMs * 1_000L)
+                                .setPeriods(emptyList())
+                                .build()
+                        } else {
+                            itemData
+                        }
+                    },
+                )
+
+            if (!exposesServerSideSeek) {
+                return stateBuilder.build()
+            }
+
+            val logicalDurationMs = currentItem.metadataDurationMs()!!
+            val logicalPosition = SimpleBasePlayer.PositionSupplier {
+                exoPlayer.logicalCurrentPositionMs().coerceAtMost(logicalDurationMs)
+            }
+            val logicalBufferedPosition = SimpleBasePlayer.PositionSupplier {
+                (exoPlayer.contentBufferedPosition.coerceAtLeast(0L) + exoPlayer.currentStreamOffsetMs())
+                    .coerceAtMost(logicalDurationMs)
+            }
+            stateBuilder
+                .setAvailableCommands(
+                    state.availableCommands.buildUpon()
+                        .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
+                        .add(Player.COMMAND_GET_TIMELINE)
+                        .add(Player.COMMAND_GET_METADATA)
+                        .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+                        .add(Player.COMMAND_SEEK_BACK)
+                        .add(Player.COMMAND_SEEK_FORWARD)
+                        .build(),
+                )
+                .setContentPositionMs(logicalPosition)
+                .setContentBufferedPositionMs(logicalBufferedPosition)
+            if (state.hasPositionDiscontinuity) {
+                stateBuilder.setPositionDiscontinuity(
+                    state.positionDiscontinuityReason,
+                    (state.discontinuityPositionMs + exoPlayer.currentStreamOffsetMs())
+                        .coerceAtMost(logicalDurationMs),
+                )
+            }
+            return stateBuilder.build()
+        }
+
+        override fun handleSeek(
+            mediaItemIndex: Int,
+            positionMs: Long,
+            seekCommand: Int,
+        ): ListenableFuture<*> {
+            val targetsCurrentItem = mediaItemIndex == C.INDEX_UNSET ||
+                mediaItemIndex == exoPlayer.currentMediaItemIndex
+            val canUseServerOffset = targetsCurrentItem && when (seekCommand) {
+                Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                Player.COMMAND_SEEK_BACK,
+                Player.COMMAND_SEEK_FORWARD,
+                Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
+                Player.COMMAND_SEEK_TO_PREVIOUS,
+                Player.COMMAND_SEEK_TO_MEDIA_ITEM,
+                -> true
+                else -> false
+            }
+            if (canUseServerOffset && seekTranscodedStream(positionMs)) {
+                return Futures.immediateVoidFuture()
+            }
+            return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+        }
+
+        private fun seekTranscodedStream(requestedPositionMs: Long): Boolean {
+            val mediaItemIndex = exoPlayer.currentMediaItemIndex
+            if (mediaItemIndex == C.INDEX_UNSET) return false
+            val item = exoPlayer.currentMediaItem ?: return false
+            val request = item.toPlaybackRequestOrNull() ?: return false
+            val openedQuality = item.openedStreamQuality() ?: return false
+            if (!request.supportsServerSideSeek(openedQuality)) return false
+
+            val durationMs = item.metadataDurationMs() ?: return false
+            val targetPositionMs = requestedPositionMs
+                .coerceIn(0L, (durationMs - 1_000L).coerceAtLeast(0L))
+                .toWholeSecondOffsetMs()
+            val hasCompleteBaseStream = streamCacheRepository.findCachedQualityKey(
+                serverId = request.serverId,
+                songId = request.songId,
+                preferredQuality = openedQuality,
+            ) != null
+            val currentOffsetMs = exoPlayer.currentStreamOffsetMs()
+
+            if (hasCompleteBaseStream && currentOffsetMs == 0L) {
+                return false
+            }
+
+            val serverOffsetMs = if (hasCompleteBaseStream) 0L else targetPositionMs
+            val rawSeekPositionMs = if (hasCompleteBaseStream) targetPositionMs else 0L
+            val wasPlaying = exoPlayer.playWhenReady
+            exoPlayer.stop()
+            updateActiveServerSeek(
+                if (serverOffsetMs > 0L) {
+                    ActiveServerSeek(
+                        mediaItemIndex = mediaItemIndex,
+                        serverId = request.serverId,
+                        songId = request.songId,
+                        offsetMs = serverOffsetMs,
+                        streamQuality = openedQuality,
+                    )
+                } else {
+                    null
+                },
+            )
+            exoPlayer.seekTo(mediaItemIndex, rawSeekPositionMs)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = wasPlaying
+            return true
+        }
+    }
+
+    private fun updateActiveServerSeek(activeSeek: ActiveServerSeek?) {
+        val previousSeek = activeServerSeek
+        val activePlayer = player
+        if (previousSeek == null && activeSeek != null && activePlayer != null) {
+            pauseAtEndBeforeServerSeek = activePlayer.pauseAtEndOfMediaItems
+        }
+        activeServerSeek = activeSeek
+        activePlayer?.let {
+            if (activeSeek == null) {
+                pauseAtEndBeforeServerSeek?.let(it::setPauseAtEndOfMediaItems)
+                pauseAtEndBeforeServerSeek = null
+            } else {
+                syncOffsetStreamPauseAtEnd(it)
+            }
+            it.preloadConfiguration = if (activeSeek == null) {
+                cachedPlaybackPrefs?.let(::preloadConfigurationFor)
+                    ?: ExoPlayer.PreloadConfiguration.DEFAULT
+            } else {
+                ExoPlayer.PreloadConfiguration.DEFAULT
+            }
+        }
+    }
+
+    private fun syncOffsetStreamPauseAtEnd(activePlayer: ExoPlayer) {
+        val shouldPauseAtEnd = activeServerSeek != null &&
+            shouldPauseOffsetStreamAtEnd(activePlayer.repeatMode, activePlayer.mediaItemCount)
+        val desiredValue = shouldPauseAtEnd || pauseAtEndBeforeServerSeek == true
+        if (activePlayer.pauseAtEndOfMediaItems != desiredValue) {
+            activePlayer.setPauseAtEndOfMediaItems(desiredValue)
+        }
+    }
+
+    private inner class ServerSeekStateListener : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            val activeSeek = activeServerSeek ?: return
+            val activePlayer = player ?: return
+            val request = mediaItem?.toPlaybackRequestOrNull()
+            val remainsOnOffsetStream =
+                activePlayer.currentMediaItemIndex == activeSeek.mediaItemIndex &&
+                    request?.serverId == activeSeek.serverId &&
+                    request.songId == activeSeek.songId
+            if (!remainsOnOffsetStream) {
+                updateActiveServerSeek(null)
+            }
+        }
+
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            val activePlayer = player ?: return
+            if (activeServerSeek != null) {
+                syncOffsetStreamPauseAtEnd(activePlayer)
+            }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (playWhenReady || reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) return
+            val activeSeek = activeServerSeek ?: return
+            val activePlayer = player ?: return
+            if (!shouldPauseOffsetStreamAtEnd(activePlayer.repeatMode, activePlayer.mediaItemCount)) return
+            restartOffsetStreamRepeatFromBeginning(activePlayer, activeSeek.mediaItemIndex, shouldResume = true)
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState != Player.STATE_ENDED) return
+            val activeSeek = activeServerSeek ?: return
+            val activePlayer = player ?: return
+            if (!shouldPauseOffsetStreamAtEnd(activePlayer.repeatMode, activePlayer.mediaItemCount)) return
+            restartOffsetStreamRepeatFromBeginning(activePlayer, activeSeek.mediaItemIndex, shouldResume = true)
+        }
+    }
+
+    private fun restartOffsetStreamRepeatFromBeginning(
+        activePlayer: ExoPlayer,
+        mediaItemIndex: Int,
+        shouldResume: Boolean,
+    ) {
+        activePlayer.stop()
+        updateActiveServerSeek(null)
+        activePlayer.seekTo(mediaItemIndex, 0L)
+        activePlayer.prepare()
+        activePlayer.playWhenReady = shouldResume
+    }
+
+    private fun PlaybackRequest.supportsServerSideSeek(quality: StreamQuality?): Boolean =
+        supportsTranscodedServerSeek(isCached, sourceBitRate, quality)
 
     private fun shouldPreferLocalStreamCache(serverId: Long): Boolean {
         return endpointSelector.isOfflineDegraded(serverId)
@@ -925,6 +1346,7 @@ class SakiPlaybackService : MediaSessionService() {
     override fun onDestroy() {
         savePlayQueue(immediate = true)
         cancelStreamPrefetch()
+        openedStreamQualities.clear()
         releaseSoundBalancingEffect()
 
         mediaSession?.release()
@@ -950,7 +1372,7 @@ class SakiPlaybackService : MediaSessionService() {
             .filter { itemRequest -> itemRequest.serverId == request.serverId }
         val songIds = queueRequests.map(PlaybackRequest::songId)
         if (songIds.isEmpty()) return
-        val positionMs = activePlayer.currentPosition
+        val positionMs = activePlayer.logicalCurrentPositionMs()
         val serverId = request.serverId
         val currentSongId = request.songId
         val snapshot = LocalPlayQueueSnapshot(
@@ -1128,7 +1550,9 @@ class SakiPlaybackService : MediaSessionService() {
             }
 
             // Build placeholder URI — real stream URL resolved at play time by ResolvingDataSource
-            val placeholderUri = request.toStreamPlaceholderUri()
+            val placeholderUri = request.toStreamPlaceholderUri(
+                streamInstanceId = UUID.randomUUID().toString(),
+            )
 
             // Resolve artwork URL using canonical endpoint (first by order) so
             // CoverArtEndpointInterceptor can rewrite it to the current best endpoint at load time

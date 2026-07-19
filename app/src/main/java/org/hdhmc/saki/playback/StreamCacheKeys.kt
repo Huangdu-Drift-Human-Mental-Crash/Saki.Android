@@ -6,6 +6,7 @@ private const val STREAM_CACHE_KEY_PREFIX = "saki.stream.v1"
 private const val ENCODED_STREAM_CACHE_KEY_PREFIX = "saki.stream.v2"
 private const val FIELD_DELIMITER = '|'
 private const val ENCODED_ESCAPE = '%'
+internal const val STREAM_CACHE_EOF_LENGTH_METADATA_KEY = "custom_saki_stream_eof_length"
 
 data class StreamCacheResourceKey(
     val serverId: Long,

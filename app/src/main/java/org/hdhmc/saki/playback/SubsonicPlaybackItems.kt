@@ -386,6 +386,7 @@ internal fun PlaybackRequest.toMediaMetadata(): MediaMetadata {
         .setTitle(title)
         .setArtist(artist)
         .setAlbumTitle(album)
+        .setDurationMs(durationMs)
         .setTrackNumber(track)
         .setDiscNumber(discNumber)
         .setArtworkUri(artworkUri?.let(Uri::parse))
