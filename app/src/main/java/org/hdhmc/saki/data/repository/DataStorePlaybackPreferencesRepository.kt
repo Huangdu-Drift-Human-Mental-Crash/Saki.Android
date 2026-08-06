@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import org.hdhmc.saki.domain.model.BufferStrategy
+import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.DEFAULT_BLUETOOTH_LYRICS_OFFSET_MS
 import org.hdhmc.saki.domain.model.DEFAULT_CUSTOM_BUFFER_SECONDS
 import org.hdhmc.saki.domain.model.DEFAULT_IMAGE_CACHE_SIZE_MB
@@ -103,6 +104,10 @@ class DataStorePlaybackPreferencesRepository @Inject constructor(
         }
     }
 
+    override suspend fun updateAlacDecoderMode(mode: AlacDecoderMode) {
+        dataStore.edit { it[KEY_ALAC_DECODER_MODE] = mode.storageKey }
+    }
+
     override suspend fun updateShuffleState(seed: Long, anchorIndex: Int) {
         dataStore.edit {
             it[KEY_SHUFFLE_SEED] = seed
@@ -139,6 +144,7 @@ class DataStorePlaybackPreferencesRepository @Inject constructor(
         val KEY_BUFFER_STRATEGY = stringPreferencesKey("buffer_strategy")
         val KEY_CUSTOM_BUFFER_SECONDS = intPreferencesKey("custom_buffer_seconds")
         val KEY_IMAGE_CACHE_SIZE_MB = intPreferencesKey("image_cache_size_mb")
+        val KEY_ALAC_DECODER_MODE = stringPreferencesKey("alac_decoder_mode")
         val KEY_SHUFFLE_SEED = longPreferencesKey("shuffle_seed")
         val KEY_SHUFFLE_ANCHOR = intPreferencesKey("shuffle_anchor_index")
     }
@@ -178,6 +184,9 @@ private fun Preferences.toPlaybackPreferences() = PlaybackPreferences(
     imageCacheSizeMb = normalizeImageCacheSizeMb(
         this[DataStorePlaybackPreferencesRepository.KEY_IMAGE_CACHE_SIZE_MB]
             ?: DEFAULT_IMAGE_CACHE_SIZE_MB,
+    ),
+    alacDecoderMode = AlacDecoderMode.fromStorageKey(
+        this[DataStorePlaybackPreferencesRepository.KEY_ALAC_DECODER_MODE],
     ),
 )
 

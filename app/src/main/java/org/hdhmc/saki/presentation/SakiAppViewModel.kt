@@ -9,6 +9,7 @@ import org.hdhmc.saki.data.repository.ConfigBackupManager
 import org.hdhmc.saki.data.repository.ImportResult
 import org.hdhmc.saki.presentation.library.BrowseNavRoute
 import org.hdhmc.saki.domain.model.Album
+import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.AppLanguage
@@ -51,6 +52,7 @@ import org.hdhmc.saki.domain.repository.LibraryCacheRepository
 import org.hdhmc.saki.domain.repository.LocalPlayQueueRepository
 import org.hdhmc.saki.domain.repository.PlaybackManager
 import org.hdhmc.saki.playback.LyricsHolder
+import org.hdhmc.saki.playback.AlacSystemDecoderSupport
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import org.hdhmc.saki.domain.repository.ServerConfigRepository
 import org.hdhmc.saki.domain.repository.SubsonicRepository
@@ -1436,6 +1438,12 @@ class SakiAppViewModel @Inject constructor(
     fun updateMobileStreamQuality(quality: StreamQuality) {
         viewModelScope.launch {
             playbackPreferencesRepository.updateMobileStreamQuality(quality)
+        }
+    }
+
+    fun updateAlacDecoderMode(mode: AlacDecoderMode) {
+        viewModelScope.launch {
+            playbackPreferencesRepository.updateAlacDecoderMode(mode)
         }
     }
 
@@ -2946,6 +2954,7 @@ data class SakiSettingsUiState(
     val cachedSongs: List<CachedSong> = emptyList(),
     val cacheStorageSummary: CacheStorageSummary = CacheStorageSummary(),
     val playbackPreferences: PlaybackPreferences = PlaybackPreferences(),
+    val isSystemAlacDecoderSupported: Boolean = false,
     val isSongMetadataSyncing: Boolean = false,
     val songMetadataSyncCount: Int = 0,
 )
@@ -3045,6 +3054,7 @@ private fun SakiAppUiState.toSettingsUiState(): SakiSettingsUiState = SakiSettin
     cachedSongs = cachedSongs,
     cacheStorageSummary = cacheStorageSummary,
     playbackPreferences = playbackState.preferences,
+    isSystemAlacDecoderSupported = AlacSystemDecoderSupport.isSupported,
     isSongMetadataSyncing = isSongMetadataSyncing,
     songMetadataSyncCount = songMetadataSyncCount,
 )

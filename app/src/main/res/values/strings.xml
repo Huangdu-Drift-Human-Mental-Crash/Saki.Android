@@ -10,6 +10,12 @@
     <string name="settings_open_server_manager">Open server manager</string>
     <string name="settings_stream_quality_title">Stream quality</string>
     <string name="settings_stream_quality_body">Limit streaming bitrate or keep the original source file when possible.</string>
+    <string name="settings_alac_decoder_title">ALAC decoding</string>
+    <string name="settings_alac_decoder_body">Choose which decoder handles Apple Lossless audio.</string>
+    <string name="settings_alac_decoder_auto">Auto</string>
+    <string name="settings_alac_decoder_system_supported">Use system (currently supported)</string>
+    <string name="settings_alac_decoder_system_unsupported">Use system (currently unsupported)</string>
+    <string name="settings_alac_decoder_bundled">Force bundled decoder</string>
     <string name="settings_adaptive_quality">Adaptive quality</string>
     <string name="settings_wifi">WiFi</string>
     <string name="settings_mobile">Mobile</string>

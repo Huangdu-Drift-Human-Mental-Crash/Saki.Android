@@ -349,6 +349,7 @@ private fun SettingsRoute(
         onUpdateAdaptiveQuality = viewModel::updateAdaptiveQuality,
         onUpdateWifiStreamQuality = viewModel::updateWifiStreamQuality,
         onUpdateMobileStreamQuality = viewModel::updateMobileStreamQuality,
+        onUpdateAlacDecoderMode = viewModel::updateAlacDecoderMode,
         onUpdateSoundBalancing = viewModel::updateSoundBalancing,
         onUpdateStreamCacheSizeMb = viewModel::updateStreamCacheSizeMb,
         onClearStreamCache = viewModel::clearStreamCache,
