@@ -29,6 +29,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ForwardingTimeline
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.ConnectionResult
@@ -105,6 +106,36 @@ private fun String.forStreamOffset(timeOffsetSeconds: Int?): String =
 
 private fun Int.forStreamOffset(timeOffsetSeconds: Int?): Int =
     if (timeOffsetSeconds == null) this else this or DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
+
+@UnstableApi
+internal class NavigationPreservingTimeline(
+    contentTimeline: Timeline,
+    private val navigationTimeline: Timeline,
+) : ForwardingTimeline(contentTimeline) {
+    init {
+        require(contentTimeline.windowCount == navigationTimeline.windowCount) {
+            "Content and navigation timelines must have the same window count"
+        }
+    }
+
+    override fun getNextWindowIndex(
+        windowIndex: Int,
+        repeatMode: Int,
+        shuffleModeEnabled: Boolean,
+    ): Int = navigationTimeline.getNextWindowIndex(windowIndex, repeatMode, shuffleModeEnabled)
+
+    override fun getPreviousWindowIndex(
+        windowIndex: Int,
+        repeatMode: Int,
+        shuffleModeEnabled: Boolean,
+    ): Int = navigationTimeline.getPreviousWindowIndex(windowIndex, repeatMode, shuffleModeEnabled)
+
+    override fun getFirstWindowIndex(shuffleModeEnabled: Boolean): Int =
+        navigationTimeline.getFirstWindowIndex(shuffleModeEnabled)
+
+    override fun getLastWindowIndex(shuffleModeEnabled: Boolean): Int =
+        navigationTimeline.getLastWindowIndex(shuffleModeEnabled)
+}
 
 internal fun isResourceEof(requestLength: Long, bytesRead: Long): Boolean =
     requestLength == C.LENGTH_UNSET.toLong() || bytesRead < requestLength
@@ -1157,7 +1188,11 @@ class SakiPlaybackService : MediaSessionService() {
             val openedQuality = currentItem?.openedStreamQuality()
             val exposesServerSideSeek = currentRequest?.supportsServerSideSeek(openedQuality) == true &&
                 currentItem.metadataDurationMs() != null
-            val stateBuilder = state.buildUpon()
+            if (!exposesServerSideSeek) {
+                return state
+            }
+
+            val logicalState = state.buildUpon()
                 .setPlaylist(
                     state.playlist.mapIndexed { index, itemData ->
                         val item = itemData.mediaItem
@@ -1183,10 +1218,16 @@ class SakiPlaybackService : MediaSessionService() {
                         }
                     },
                 )
-
-            if (!exposesServerSideSeek) {
-                return stateBuilder.build()
-            }
+                .build()
+            val stateBuilder = logicalState.buildUpon()
+                .setPlaylist(
+                    NavigationPreservingTimeline(
+                        contentTimeline = logicalState.timeline,
+                        navigationTimeline = state.timeline,
+                    ),
+                    logicalState.currentTracks,
+                    logicalState.currentMetadata,
+                )
 
             val logicalDurationMs = currentItem.metadataDurationMs()!!
             val logicalPosition = SimpleBasePlayer.PositionSupplier {
