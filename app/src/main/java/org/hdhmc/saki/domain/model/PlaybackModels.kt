@@ -215,6 +215,49 @@ data class StreamCacheProgress(
     val contentLengthBytes: Long,
 )
 
+data class CollectionStreamCacheEstimate(
+    val quality: StreamQuality,
+    val songCount: Int,
+    val alreadyCachedSongCount: Int,
+    val unknownSizeSongCount: Int,
+    val estimatedCollectionBytes: Long,
+    val estimatedAdditionalBytes: Long,
+    val currentCacheBytes: Long,
+    val cacheLimitBytes: Long,
+) {
+    val estimatedEvictionBytes: Long
+        get() = (currentCacheBytes + estimatedAdditionalBytes - cacheLimitBytes).coerceAtLeast(0L)
+
+    val exceedsCacheLimit: Boolean
+        get() = estimatedCollectionBytes > cacheLimitBytes
+}
+
+enum class CollectionStreamCacheTaskStatus {
+    RUNNING,
+    COMPLETED,
+    CANCELLED,
+    FAILED,
+}
+
+data class CollectionStreamCacheTask(
+    val sourceKey: String,
+    val title: String,
+    val quality: StreamQuality,
+    val totalSongCount: Int,
+    val processedSongCount: Int = 0,
+    val cachedSongCount: Int = 0,
+    val failedSongCount: Int = 0,
+    val currentSongTitle: String? = null,
+    val cachedBytes: Long = 0L,
+    val estimatedAdditionalBytes: Long = 0L,
+    val status: CollectionStreamCacheTaskStatus = CollectionStreamCacheTaskStatus.RUNNING,
+) {
+    val progress: Float
+        get() = if (totalSongCount <= 0) 1f else {
+            processedSongCount.toFloat().div(totalSongCount).coerceIn(0f, 1f)
+        }
+}
+
 data class PlaybackQueueItem(
     val mediaId: String,
     val songId: String,

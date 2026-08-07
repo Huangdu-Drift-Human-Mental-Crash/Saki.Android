@@ -1,12 +1,18 @@
 package org.hdhmc.saki.domain.repository
 
+import org.hdhmc.saki.domain.model.CollectionStreamCacheEstimate
+import org.hdhmc.saki.domain.model.CollectionStreamCacheTask
+import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.StreamCacheProgress
 import org.hdhmc.saki.domain.model.StreamCacheSummary
 import org.hdhmc.saki.domain.model.StreamQuality
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 interface StreamCacheRepository {
     fun observeCacheVersion(): Flow<Long>
+
+    fun observeCollectionCacheTask(): StateFlow<CollectionStreamCacheTask?>
 
     /**
      * Request a debounced cache snapshot refresh after an external cache write completes.
@@ -35,6 +41,21 @@ interface StreamCacheRepository {
     fun findCachedQualityKey(serverId: Long, songId: String, preferredQuality: StreamQuality): String?
 
     fun getStreamCacheProgress(serverId: Long, songId: String, quality: StreamQuality): StreamCacheProgress?
+
+    suspend fun estimateCollectionCache(
+        serverId: Long,
+        songs: List<Song>,
+    ): CollectionStreamCacheEstimate
+
+    fun startCollectionCache(
+        sourceKey: String,
+        title: String,
+        serverId: Long,
+        songs: List<Song>,
+        estimate: CollectionStreamCacheEstimate,
+    )
+
+    fun cancelCollectionCache()
 
     suspend fun clearStreamCache(serverId: Long? = null): Int
 }

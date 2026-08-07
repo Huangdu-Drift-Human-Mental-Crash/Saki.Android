@@ -131,6 +131,7 @@ import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.Artist
 import org.hdhmc.saki.domain.model.CachedSong
+import org.hdhmc.saki.domain.model.CollectionStreamCacheEstimate
 import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
@@ -212,6 +213,9 @@ fun BrowseScreen(
     onPlaySongNext: (Song) -> Unit,
     onOfflineSongUnavailable: () -> Unit,
     onToggleSongDownload: (Song) -> Unit,
+    onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate?,
+    onStartCollectionStreamCache: (String, String, List<Song>, CollectionStreamCacheEstimate) -> Unit,
+    onCancelCollectionStreamCache: () -> Unit,
     onOpenSettings: () -> Unit,
     onImportConfig: (android.net.Uri) -> Unit,
 ) {
@@ -317,6 +321,9 @@ fun BrowseScreen(
                                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                                         onPlaySongs = offlineAwarePlaySongs,
                                         onShowActions = { actionSong = it },
+                                        onEstimateCollectionStreamCache = onEstimateCollectionStreamCache,
+                                        onStartCollectionStreamCache = onStartCollectionStreamCache,
+                                        onCancelCollectionStreamCache = onCancelCollectionStreamCache,
                                         onBack = onBack,
                                     )
                                 } else {
@@ -371,6 +378,9 @@ fun BrowseScreen(
                                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                                         onPlaySongs = offlineAwarePlaySongs,
                                         onShowActions = { actionSong = it },
+                                        onEstimateCollectionStreamCache = onEstimateCollectionStreamCache,
+                                        onStartCollectionStreamCache = onStartCollectionStreamCache,
+                                        onCancelCollectionStreamCache = onCancelCollectionStreamCache,
                                         onBack = onBack,
                                     )
                                 } else {
@@ -488,6 +498,9 @@ private fun AlbumDetailRoute(
     onOfflineSongUnavailable: () -> Unit,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate?,
+    onStartCollectionStreamCache: (String, String, List<Song>, CollectionStreamCacheEstimate) -> Unit,
+    onCancelCollectionStreamCache: () -> Unit,
     onBack: () -> Unit,
 ) {
     val playbackUiState by playbackUiStateFlow.collectAsStateWithLifecycle()
@@ -508,6 +521,17 @@ private fun AlbumDetailRoute(
         isPlaying = playbackUiState.isPlaying,
         onPlaySongs = onPlaySongs,
         onShowActions = onShowActions,
+        collectionStreamCacheTask = availabilityUiState.collectionStreamCacheTask,
+        onEstimateCollectionStreamCache = onEstimateCollectionStreamCache,
+        onStartCollectionStreamCache = { estimate ->
+            onStartCollectionStreamCache(
+                "server:${server.id}:album:${album.id}",
+                album.name,
+                album.songs,
+                estimate,
+            )
+        },
+        onCancelCollectionStreamCache = onCancelCollectionStreamCache,
         onBack = onBack,
     )
 }
@@ -566,6 +590,9 @@ private fun PlaylistDetailRoute(
     onOfflineSongUnavailable: () -> Unit,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate?,
+    onStartCollectionStreamCache: (String, String, List<Song>, CollectionStreamCacheEstimate) -> Unit,
+    onCancelCollectionStreamCache: () -> Unit,
     onBack: () -> Unit,
 ) {
     val playbackUiState by playbackUiStateFlow.collectAsStateWithLifecycle()
@@ -584,6 +611,17 @@ private fun PlaylistDetailRoute(
         onOfflineSongUnavailable = onOfflineSongUnavailable,
         onPlaySongs = onPlaySongs,
         onShowActions = onShowActions,
+        collectionStreamCacheTask = availabilityUiState.collectionStreamCacheTask,
+        onEstimateCollectionStreamCache = onEstimateCollectionStreamCache,
+        onStartCollectionStreamCache = { estimate ->
+            onStartCollectionStreamCache(
+                "server:${server.id}:playlist:${playlist.id}",
+                playlist.name,
+                playlist.songs,
+                estimate,
+            )
+        },
+        onCancelCollectionStreamCache = onCancelCollectionStreamCache,
         currentPlaybackSongId = playbackUiState.currentPlaybackSongId,
         isPlaying = playbackUiState.isPlaying,
         onBack = onBack,

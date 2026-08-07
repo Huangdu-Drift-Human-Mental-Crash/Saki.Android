@@ -323,6 +323,9 @@ private fun BrowseRoute(
         onPlaySongNext = viewModel::playSongNext,
         onOfflineSongUnavailable = viewModel::showOfflineSongUnavailable,
         onToggleSongDownload = viewModel::toggleSongDownload,
+        onEstimateCollectionStreamCache = viewModel::estimateCollectionStreamCache,
+        onStartCollectionStreamCache = viewModel::startCollectionStreamCache,
+        onCancelCollectionStreamCache = viewModel::cancelCollectionStreamCache,
         onOpenSettings = onOpenSettings,
         onImportConfig = { uri -> viewModel.importConfig(uri) },
     )
