@@ -127,6 +127,20 @@ enum class BufferStrategy(
     }
 }
 
+enum class AlacDecoderMode(
+    val storageKey: String,
+) {
+    AUTO("auto"),
+    SYSTEM("system"),
+    BUNDLED("bundled"),
+    ;
+
+    companion object {
+        fun fromStorageKey(storageKey: String?): AlacDecoderMode =
+            entries.firstOrNull { it.storageKey == storageKey } ?: AUTO
+    }
+}
+
 const val DEFAULT_CUSTOM_BUFFER_SECONDS = 60
 const val MIN_CUSTOM_BUFFER_SECONDS = 30
 const val MAX_CUSTOM_BUFFER_SECONDS = 1800
@@ -172,6 +186,7 @@ data class PlaybackPreferences(
     val bufferStrategy: BufferStrategy = BufferStrategy.NORMAL,
     val customBufferSeconds: Int = DEFAULT_CUSTOM_BUFFER_SECONDS,
     val imageCacheSizeMb: Int = DEFAULT_IMAGE_CACHE_SIZE_MB,
+    val alacDecoderMode: AlacDecoderMode = AlacDecoderMode.AUTO,
 ) {
     val streamCacheSizeBytes: Long
         get() = streamCacheSizeMb.toLong() * 1024L * 1024L

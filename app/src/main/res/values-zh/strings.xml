@@ -8,6 +8,13 @@
     <string name="settings_open_server_manager">打开服务器管理</string>
     <string name="settings_stream_quality_title">串流质量</string>
     <string name="settings_stream_quality_body">限制串流码率，或尽可能保持原始音质。</string>
+    <string name="settings_alac_decoder_title">ALAC 解码</string>
+    <string name="settings_alac_decoder_body">选择 Apple Lossless 音频使用的解码器。</string>
+    <string name="settings_alac_decoder_auto">自动</string>
+    <string name="settings_alac_decoder_system_supported">使用系统（当前支持）</string>
+    <string name="settings_alac_decoder_system_unsupported">使用系统（当前不支持）</string>
+    <string name="settings_alac_decoder_system_checking">使用系统（检测中）</string>
+    <string name="settings_alac_decoder_bundled">强制使用捆绑解码器</string>
     <string name="settings_adaptive_quality">自适应质量</string>
     <string name="settings_wifi">WiFi</string>
     <string name="settings_mobile">移动数据</string>

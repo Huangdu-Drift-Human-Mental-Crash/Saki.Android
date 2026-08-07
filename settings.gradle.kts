@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Saki.Android"
 include(":app")
+include(":decoder-alac-java")

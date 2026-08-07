@@ -9,6 +9,7 @@ import org.hdhmc.saki.data.repository.ConfigBackupManager
 import org.hdhmc.saki.data.repository.ImportResult
 import org.hdhmc.saki.presentation.library.BrowseNavRoute
 import org.hdhmc.saki.domain.model.Album
+import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.AlbumListType
 import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.AppLanguage
@@ -53,6 +54,7 @@ import org.hdhmc.saki.domain.repository.LibraryCacheRepository
 import org.hdhmc.saki.domain.repository.LocalPlayQueueRepository
 import org.hdhmc.saki.domain.repository.PlaybackManager
 import org.hdhmc.saki.playback.LyricsHolder
+import org.hdhmc.saki.playback.AlacSystemDecoderSupport
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import org.hdhmc.saki.domain.repository.ServerConfigRepository
 import org.hdhmc.saki.domain.repository.SubsonicRepository
@@ -74,6 +76,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -113,6 +116,7 @@ class SakiAppViewModel @Inject constructor(
     private val snackbarMessages = MutableSharedFlow<SnackbarMessage>(extraBufferCapacity = 1)
     private val openNowPlayingRequestsFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     private val searchQueryFlow = MutableStateFlow("")
+    private val systemAlacDecoderSupported = MutableStateFlow<Boolean?>(null)
     private var lastLoadedServerId: Long? = null
     private var appliedDefaultBrowsePreference = false
     private var deferredStreamCacheSummaryJob: Job? = null
@@ -138,10 +142,18 @@ class SakiAppViewModel @Inject constructor(
         .map(SakiAppUiState::toBrowseAvailabilityUiState)
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toBrowseAvailabilityUiState())
-    val settingsUiState: StateFlow<SakiSettingsUiState> = mutableUiState
-        .map(SakiAppUiState::toSettingsUiState)
+    val settingsUiState: StateFlow<SakiSettingsUiState> = combine(
+        mutableUiState,
+        systemAlacDecoderSupported,
+    ) { state, isSystemAlacDecoderSupported ->
+        state.toSettingsUiState(isSystemAlacDecoderSupported)
+    }
         .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, mutableUiState.value.toSettingsUiState())
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            mutableUiState.value.toSettingsUiState(isSystemAlacDecoderSupported = null),
+        )
     val capsuleUiState: StateFlow<SakiCapsuleUiState> = mutableUiState
         .map(SakiAppUiState::toCapsuleUiState)
         .distinctUntilChanged()
@@ -155,6 +167,9 @@ class SakiAppViewModel @Inject constructor(
     val openNowPlayingRequests = openNowPlayingRequestsFlow.asSharedFlow()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            systemAlacDecoderSupported.value = AlacSystemDecoderSupport.isSupported
+        }
         viewModelScope.launch {
             endpointSelector.probeVersion.collectLatest { refreshEndpointStatus() }
         }
@@ -1473,6 +1488,12 @@ class SakiAppViewModel @Inject constructor(
     fun updateMobileStreamQuality(quality: StreamQuality) {
         viewModelScope.launch {
             playbackPreferencesRepository.updateMobileStreamQuality(quality)
+        }
+    }
+
+    fun updateAlacDecoderMode(mode: AlacDecoderMode) {
+        viewModelScope.launch {
+            playbackPreferencesRepository.updateAlacDecoderMode(mode)
         }
     }
 
@@ -2985,6 +3006,7 @@ data class SakiSettingsUiState(
     val cachedSongs: List<CachedSong> = emptyList(),
     val cacheStorageSummary: CacheStorageSummary = CacheStorageSummary(),
     val playbackPreferences: PlaybackPreferences = PlaybackPreferences(),
+    val isSystemAlacDecoderSupported: Boolean? = null,
     val isSongMetadataSyncing: Boolean = false,
     val songMetadataSyncCount: Int = 0,
 )
@@ -3077,7 +3099,9 @@ private fun SakiAppUiState.toBrowseUiState(): SakiBrowseUiState {
     )
 }
 
-private fun SakiAppUiState.toSettingsUiState(): SakiSettingsUiState = SakiSettingsUiState(
+private fun SakiAppUiState.toSettingsUiState(
+    isSystemAlacDecoderSupported: Boolean?,
+): SakiSettingsUiState = SakiSettingsUiState(
     appPreferences = appPreferences,
     textScale = textScale,
     servers = servers,
@@ -3085,6 +3109,7 @@ private fun SakiAppUiState.toSettingsUiState(): SakiSettingsUiState = SakiSettin
     cachedSongs = cachedSongs,
     cacheStorageSummary = cacheStorageSummary,
     playbackPreferences = playbackState.preferences,
+    isSystemAlacDecoderSupported = isSystemAlacDecoderSupported,
     isSongMetadataSyncing = isSongMetadataSyncing,
     songMetadataSyncCount = songMetadataSyncCount,
 )

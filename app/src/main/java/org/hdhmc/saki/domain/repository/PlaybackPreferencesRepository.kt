@@ -1,6 +1,7 @@
 package org.hdhmc.saki.domain.repository
 
 import org.hdhmc.saki.domain.model.BufferStrategy
+import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.PlaybackPreferences
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
@@ -34,6 +35,8 @@ interface PlaybackPreferencesRepository {
     suspend fun updateCustomBufferSeconds(seconds: Int)
 
     suspend fun updateImageCacheSizeMb(sizeMb: Int)
+
+    suspend fun updateAlacDecoderMode(mode: AlacDecoderMode)
 
     suspend fun updateShuffleState(seed: Long, anchorIndex: Int)
 
