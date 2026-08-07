@@ -13,6 +13,7 @@
     <string name="settings_alac_decoder_auto">自动</string>
     <string name="settings_alac_decoder_system_supported">使用系统（当前支持）</string>
     <string name="settings_alac_decoder_system_unsupported">使用系统（当前不支持）</string>
+    <string name="settings_alac_decoder_system_checking">使用系统（检测中）</string>
     <string name="settings_alac_decoder_bundled">强制使用捆绑解码器</string>
     <string name="settings_adaptive_quality">自适应质量</string>
     <string name="settings_wifi">WiFi</string>

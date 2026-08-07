@@ -366,10 +366,10 @@ fun SettingsScreen(
                             AlacDecoderMode.AUTO ->
                                 stringResource(R.string.settings_alac_decoder_auto)
                             AlacDecoderMode.SYSTEM -> stringResource(
-                                if (uiState.isSystemAlacDecoderSupported) {
-                                    R.string.settings_alac_decoder_system_supported
-                                } else {
-                                    R.string.settings_alac_decoder_system_unsupported
+                                when (uiState.isSystemAlacDecoderSupported) {
+                                    true -> R.string.settings_alac_decoder_system_supported
+                                    false -> R.string.settings_alac_decoder_system_unsupported
+                                    null -> R.string.settings_alac_decoder_system_checking
                                 },
                             )
                             AlacDecoderMode.BUNDLED ->

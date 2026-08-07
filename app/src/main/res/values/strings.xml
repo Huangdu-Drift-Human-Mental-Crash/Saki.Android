@@ -15,6 +15,7 @@
     <string name="settings_alac_decoder_auto">Auto</string>
     <string name="settings_alac_decoder_system_supported">Use system (currently supported)</string>
     <string name="settings_alac_decoder_system_unsupported">Use system (currently unsupported)</string>
+    <string name="settings_alac_decoder_system_checking">Use system (checking)</string>
     <string name="settings_alac_decoder_bundled">Force bundled decoder</string>
     <string name="settings_adaptive_quality">Adaptive quality</string>
     <string name="settings_wifi">WiFi</string>
