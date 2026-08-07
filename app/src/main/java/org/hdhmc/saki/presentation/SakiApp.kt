@@ -323,6 +323,9 @@ private fun BrowseRoute(
         onPlaySongNext = viewModel::playSongNext,
         onOfflineSongUnavailable = viewModel::showOfflineSongUnavailable,
         onToggleSongDownload = viewModel::toggleSongDownload,
+        onEstimateCollectionStreamCache = viewModel::estimateCollectionStreamCache,
+        onStartCollectionStreamCache = viewModel::startCollectionStreamCache,
+        onCancelCollectionStreamCache = viewModel::cancelCollectionStreamCache,
         onOpenSettings = onOpenSettings,
         onImportConfig = { uri -> viewModel.importConfig(uri) },
     )
@@ -349,6 +352,7 @@ private fun SettingsRoute(
         onUpdateAdaptiveQuality = viewModel::updateAdaptiveQuality,
         onUpdateWifiStreamQuality = viewModel::updateWifiStreamQuality,
         onUpdateMobileStreamQuality = viewModel::updateMobileStreamQuality,
+        onUpdateAlacDecoderMode = viewModel::updateAlacDecoderMode,
         onUpdateSoundBalancing = viewModel::updateSoundBalancing,
         onUpdateStreamCacheSizeMb = viewModel::updateStreamCacheSizeMb,
         onClearStreamCache = viewModel::clearStreamCache,

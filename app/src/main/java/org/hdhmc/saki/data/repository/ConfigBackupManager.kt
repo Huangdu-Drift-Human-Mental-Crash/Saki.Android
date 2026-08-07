@@ -181,6 +181,9 @@ class ConfigBackupManager @Inject constructor(
                         DataStorePlaybackPreferencesRepository.KEY_DOWNLOAD_QUALITY.name -> {
                             ds[DataStorePlaybackPreferencesRepository.KEY_DOWNLOAD_QUALITY] = value; settingsApplied = true
                         }
+                        DataStorePlaybackPreferencesRepository.KEY_ALAC_DECODER_MODE.name -> {
+                            ds[DataStorePlaybackPreferencesRepository.KEY_ALAC_DECODER_MODE] = value; settingsApplied = true
+                        }
                     }
                 }
             }

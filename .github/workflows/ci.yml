@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'codex/**']
   pull_request:
     branches: [master]
 
@@ -22,6 +22,7 @@ jobs:
           filters: |
             code:
               - 'app/**'
+              - 'decoder-alac-java/**'
               - 'gradle/**'
               - '*.gradle.kts'
               - 'gradle.properties'

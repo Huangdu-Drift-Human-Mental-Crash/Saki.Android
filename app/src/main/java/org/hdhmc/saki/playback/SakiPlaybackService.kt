@@ -11,6 +11,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
@@ -27,6 +28,7 @@ import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ForwardingTimeline
@@ -86,6 +88,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import okhttp3.OkHttpClient
+import org.hdhmc.saki.decoder.alac.BundledAlacAudioRenderer
 
 private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
 private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
@@ -136,56 +139,6 @@ internal class NavigationPreservingTimeline(
     override fun getLastWindowIndex(shuffleModeEnabled: Boolean): Int =
         navigationTimeline.getLastWindowIndex(shuffleModeEnabled)
 }
-
-internal fun isResourceEof(requestLength: Long, bytesRead: Long): Boolean =
-    requestLength == C.LENGTH_UNSET.toLong() || bytesRead < requestLength
-
-private class EofTrackingDataSource(
-    private val upstream: DataSource,
-    private val onEof: (DataSpec, Long) -> Unit,
-) : DataSource {
-    private var openedDataSpec: DataSpec? = null
-    private var bytesRead = 0L
-    private var reportedEof = false
-
-    override fun addTransferListener(transferListener: TransferListener) {
-        upstream.addTransferListener(transferListener)
-    }
-
-    override fun open(dataSpec: DataSpec): Long {
-        openedDataSpec = dataSpec
-        bytesRead = 0L
-        reportedEof = false
-        return upstream.open(dataSpec)
-    }
-
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        val read = upstream.read(buffer, offset, length)
-        if (read == C.RESULT_END_OF_INPUT) {
-            val dataSpec = openedDataSpec
-            if (!reportedEof && dataSpec != null && isResourceEof(dataSpec.length, bytesRead)) {
-                reportedEof = true
-                onEof(dataSpec, dataSpec.position + bytesRead)
-            }
-        } else if (read > 0) {
-            bytesRead += read
-        }
-        return read
-    }
-
-    override fun getUri(): Uri? = upstream.uri
-
-    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
-
-    override fun close() {
-        try {
-            upstream.close()
-        } finally {
-            openedDataSpec = null
-        }
-    }
-}
-
 private data class ActiveServerSeek(
     val mediaItemIndex: Int,
     val serverId: Long,
@@ -287,6 +240,9 @@ class SakiPlaybackService : MediaSessionService() {
     lateinit var streamCache: SimpleCache
 
     @Inject
+    lateinit var streamCacheWriteCoordinator: StreamCacheWriteCoordinator
+
+    @Inject
     lateinit var lyricsHolder: LyricsHolder
 
     @Inject
@@ -302,6 +258,8 @@ class SakiPlaybackService : MediaSessionService() {
     private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var player: ExoPlayer? = null
+    private lateinit var alacDecoderPolicy: AlacDecoderPolicy
+    private lateinit var renderersFactory: SakiRenderersFactory
     private var mediaSession: MediaSession? = null
     private var originalMediaTitle: CharSequence? = null
     private var originalMediaId: String? = null
@@ -366,7 +324,10 @@ class SakiPlaybackService : MediaSessionService() {
         val upstreamDataSourceFactory = DefaultDataSource.Factory(
             this,
             DataSource.Factory {
-                EofTrackingDataSource(httpDataSourceFactory.createDataSource(), ::recordStreamCacheEof)
+                StreamCacheEofTrackingDataSource(
+                    httpDataSourceFactory.createDataSource(),
+                    ::recordStreamCacheEof,
+                )
             },
         )
         val cacheFactory = CacheDataSource.Factory()
@@ -382,6 +343,8 @@ class SakiPlaybackService : MediaSessionService() {
             playbackPreferencesRepository.getPreferences()
         }
         cachedPlaybackPrefs = initialPrefs
+        alacDecoderPolicy = AlacDecoderPolicy(initialPrefs.alacDecoderMode)
+        renderersFactory = SakiRenderersFactory(this, alacDecoderPolicy)
 
         val maxBufferMs = when (initialPrefs.bufferStrategy) {
             BufferStrategy.CUSTOM ->
@@ -409,7 +372,7 @@ class SakiPlaybackService : MediaSessionService() {
             )
         }
 
-        val exoPlayer = ExoPlayer.Builder(this)
+        val exoPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
@@ -460,6 +423,17 @@ class SakiPlaybackService : MediaSessionService() {
                     soundBalancingMode = mode
                     val audioSessionId = player?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET
                     syncSoundBalancingEffect(audioSessionId)
+                }
+        }
+
+        playerScope.launch {
+            playbackPreferencesRepository.observePreferences()
+                .map { preferences -> preferences.alacDecoderMode }
+                .distinctUntilChanged()
+                .collect { mode ->
+                    if (alacDecoderPolicy.updateMode(mode)) {
+                        player?.let(renderersFactory::refreshAlacDecoderPolicy)
+                    }
                 }
         }
 
@@ -1003,8 +977,10 @@ class SakiPlaybackService : MediaSessionService() {
         )
         activeStreamCacheWriter = writer
         try {
-            runInterruptible(Dispatchers.IO) {
-                writer.cache()
+            streamCacheWriteCoordinator.withWriter {
+                runInterruptible(Dispatchers.IO) {
+                    writer.cache()
+                }
             }
         } finally {
             if (activeStreamCacheWriter === writer) {
@@ -1740,6 +1716,21 @@ class SakiPlaybackService : MediaSessionService() {
 
         override fun onPlayerError(error: PlaybackException) {
             val activePlayer = player ?: return
+            if (
+                error.isSystemAlacDecoderFailure() &&
+                alacDecoderPolicy.markAutoSystemDecoderFailed()
+            ) {
+                val currentIndex = activePlayer.currentMediaItemIndex
+                val resumePositionMs = activePlayer.currentPosition.coerceAtLeast(0L)
+                val wasPlaying = activePlayer.playWhenReady
+                renderersFactory.refreshAlacDecoderPolicy(activePlayer)
+                activePlayer.prepare()
+                if (currentIndex != C.INDEX_UNSET) {
+                    activePlayer.seekTo(currentIndex, resumePositionMs)
+                }
+                activePlayer.playWhenReady = wasPlaying
+                return
+            }
             if (!error.shouldRetryNextEndpoint()) {
                 return
             }
@@ -1847,6 +1838,18 @@ class SakiPlaybackService : MediaSessionService() {
             }
         }.getOrNull()
     }
+}
+
+@UnstableApi
+private fun PlaybackException.isSystemAlacDecoderFailure(): Boolean {
+    val exoError = this as? ExoPlaybackException ?: return false
+    if (exoError.type != ExoPlaybackException.TYPE_RENDERER) return false
+    if (exoError.rendererName == BundledAlacAudioRenderer.RENDERER_NAME) return false
+    if (!MimeTypes.AUDIO_ALAC.equals(exoError.rendererFormat?.sampleMimeType, ignoreCase = true)) {
+        return false
+    }
+    return errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
 }
 
 private fun PlaybackRequest.toSong(): Song {

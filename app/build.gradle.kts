@@ -130,6 +130,7 @@ room {
 }
 
 dependencies {
+    implementation(project(":decoder-alac-java"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

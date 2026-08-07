@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.hdhmc.saki.R
 import org.hdhmc.saki.domain.model.AlbumListType
+import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.AppLanguage
 import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.BLUETOOTH_LYRICS_OFFSET_STEP_MS
@@ -130,6 +131,7 @@ fun SettingsScreen(
     onUpdateAdaptiveQuality: (Boolean) -> Unit,
     onUpdateWifiStreamQuality: (StreamQuality) -> Unit,
     onUpdateMobileStreamQuality: (StreamQuality) -> Unit,
+    onUpdateAlacDecoderMode: (AlacDecoderMode) -> Unit,
     onUpdateSoundBalancing: (SoundBalancingMode) -> Unit,
     onUpdateStreamCacheSizeMb: (Int) -> Unit,
     onClearStreamCache: () -> Unit,
@@ -343,6 +345,41 @@ fun SettingsScreen(
                                 label = { Text(quality.localizedLabel()) },
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            val prefs = uiState.playbackPreferences
+            SettingsSectionCard(
+                title = stringResource(R.string.settings_alac_decoder_title),
+                body = stringResource(R.string.settings_alac_decoder_body),
+                action = null,
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AlacDecoderMode.entries.forEach { mode ->
+                        val label = when (mode) {
+                            AlacDecoderMode.AUTO ->
+                                stringResource(R.string.settings_alac_decoder_auto)
+                            AlacDecoderMode.SYSTEM -> stringResource(
+                                when (uiState.isSystemAlacDecoderSupported) {
+                                    true -> R.string.settings_alac_decoder_system_supported
+                                    false -> R.string.settings_alac_decoder_system_unsupported
+                                    null -> R.string.settings_alac_decoder_system_checking
+                                },
+                            )
+                            AlacDecoderMode.BUNDLED ->
+                                stringResource(R.string.settings_alac_decoder_bundled)
+                        }
+                        FilterChip(
+                            selected = prefs.alacDecoderMode == mode,
+                            onClick = { onUpdateAlacDecoderMode(mode) },
+                            label = { Text(label) },
+                        )
                     }
                 }
             }

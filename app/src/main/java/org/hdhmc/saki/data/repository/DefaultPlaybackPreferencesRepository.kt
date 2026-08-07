@@ -4,6 +4,7 @@ import org.hdhmc.saki.data.local.dao.PlaybackPreferencesDao
 import org.hdhmc.saki.data.local.entity.PlaybackPreferencesEntity
 import org.hdhmc.saki.di.IoDispatcher
 import org.hdhmc.saki.domain.model.DEFAULT_STREAM_CACHE_SIZE_MB
+import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
@@ -79,6 +80,8 @@ class DefaultPlaybackPreferencesRepository @Inject constructor(
         error("Room-backed repository does not support buffer settings. Use DataStore implementation.")
     override suspend fun updateImageCacheSizeMb(sizeMb: Int) =
         error("Room-backed repository does not support image cache settings. Use DataStore implementation.")
+    override suspend fun updateAlacDecoderMode(mode: AlacDecoderMode) =
+        error("Room-backed repository does not support ALAC decoder settings. Use DataStore implementation.")
 
     override suspend fun updateShuffleState(seed: Long, anchorIndex: Int) = Unit
     override suspend fun clearShuffleState() = Unit
