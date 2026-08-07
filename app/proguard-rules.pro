@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Collection stream-cache endpoint fallback identifies this internal OkHttp
+# transport failure by name because Kotlin visibility prevents a direct type check.
+-keepnames class okhttp3.internal.http2.StreamResetException

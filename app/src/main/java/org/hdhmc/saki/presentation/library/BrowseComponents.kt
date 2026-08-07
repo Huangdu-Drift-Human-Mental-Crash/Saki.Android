@@ -9,6 +9,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.StopCircle
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ErrorOutline
@@ -57,6 +59,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
@@ -74,6 +77,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -82,6 +87,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -90,12 +96,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.hdhmc.saki.R
 import org.hdhmc.saki.presentation.bottomContentPadding
+import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlbumSummary
 import org.hdhmc.saki.domain.model.Artist
 import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.ArtistSummary
 import org.hdhmc.saki.domain.model.CachedSong
+import org.hdhmc.saki.domain.model.CollectionStreamCacheEstimate
+import org.hdhmc.saki.domain.model.CollectionStreamCacheTask
+import org.hdhmc.saki.domain.model.CollectionStreamCacheTaskStatus
 import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.ServerConfig
@@ -105,6 +115,7 @@ import org.hdhmc.saki.ui.theme.sakiCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiSubtleCardContainerColor
 import org.hdhmc.saki.ui.theme.sakiTonalContainerColor
 import org.hdhmc.saki.ui.theme.SakiTheme
+import kotlinx.coroutines.launch
 
 private val LibraryDetailWideHeroMinWidth = 720.dp
 private val LibraryDetailWideHeroArtworkWidth = 320.dp
@@ -667,8 +678,33 @@ fun AlbumDetailScreen(
     isPlaying: Boolean = false,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    collectionStreamCacheTask: CollectionStreamCacheTask? = null,
+    onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate? = { null },
+    onStartCollectionStreamCache: (CollectionStreamCacheEstimate) -> Unit = {},
+    onCancelCollectionStreamCache: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
+    val cacheSourceKey = "server:${server.id}:album:${album.id}"
+    val cacheScope = rememberCoroutineScope()
+    var pendingCacheEstimate by remember { mutableStateOf<CollectionStreamCacheEstimate?>(null) }
+    var isEstimatingCache by remember { mutableStateOf(false) }
+    val matchingCacheTask = collectionStreamCacheTask?.takeIf { task -> task.sourceKey == cacheSourceKey }
+    val isMatchingCacheRunning = matchingCacheTask?.status == CollectionStreamCacheTaskStatus.RUNNING
+    val isOtherCacheRunning = collectionStreamCacheTask?.status == CollectionStreamCacheTaskStatus.RUNNING &&
+        matchingCacheTask == null
+    val cacheActionEnabled = album.songs.isNotEmpty() &&
+        (isMatchingCacheRunning || (!isOfflineDegraded && !isOtherCacheRunning))
+    val requestCollectionCache: () -> Unit = {
+        if (isMatchingCacheRunning) {
+            onCancelCollectionStreamCache()
+        } else if (!isOfflineDegraded && !isEstimatingCache && !isOtherCacheRunning) {
+            isEstimatingCache = true
+            cacheScope.launch {
+                pendingCacheEstimate = onEstimateCollectionStreamCache(album.songs)
+                isEstimatingCache = false
+            }
+        }
+    }
     val songCount = album.songCount
     val artistYearSongCount = listOfNotNull(
         album.artistDisplayLabel(),
@@ -727,6 +763,10 @@ fun AlbumDetailScreen(
                         metaItems = artistYearSongCount,
                         canPlay = album.songs.isNotEmpty(),
                         onPlay = playAlbum,
+                        cacheTask = matchingCacheTask,
+                        isEstimatingCache = isEstimatingCache,
+                        cacheActionEnabled = cacheActionEnabled,
+                        onCache = requestCollectionCache,
                         onBack = onBack,
                         playContentDescription = stringResource(R.string.library_play_album),
                     )
@@ -769,6 +809,10 @@ fun AlbumDetailScreen(
                     metaItems = artistYearSongCount,
                     canPlay = album.songs.isNotEmpty(),
                     onPlay = playAlbum,
+                    cacheTask = matchingCacheTask,
+                    isEstimatingCache = isEstimatingCache,
+                    cacheActionEnabled = cacheActionEnabled,
+                    onCache = requestCollectionCache,
                     onBack = onBack,
                     playContentDescription = stringResource(R.string.library_play_album),
                 )
@@ -798,6 +842,18 @@ fun AlbumDetailScreen(
             )
         },
     )
+
+    pendingCacheEstimate?.let { estimate ->
+        CollectionStreamCacheConfirmationDialog(
+            title = album.name,
+            estimate = estimate,
+            onDismiss = { pendingCacheEstimate = null },
+            onConfirm = {
+                pendingCacheEstimate = null
+                onStartCollectionStreamCache(estimate)
+            },
+        )
+    }
 }
 
 @Composable
@@ -807,6 +863,10 @@ private fun AlbumDetailHeroCard(
     metaItems: List<String>,
     canPlay: Boolean,
     onPlay: () -> Unit,
+    cacheTask: CollectionStreamCacheTask?,
+    isEstimatingCache: Boolean,
+    cacheActionEnabled: Boolean,
+    onCache: () -> Unit,
     onBack: () -> Unit,
     accentColor: Color,
     playContentDescription: String,
@@ -828,6 +888,10 @@ private fun AlbumDetailHeroCard(
                 metaItems = metaItems,
                 canPlay = canPlay,
                 onPlay = onPlay,
+                cacheTask = cacheTask,
+                isEstimatingCache = isEstimatingCache,
+                cacheActionEnabled = cacheActionEnabled,
+                onCache = onCache,
                 onBack = onBack,
                 accentColor = accentColor,
             )
@@ -838,6 +902,10 @@ private fun AlbumDetailHeroCard(
                 metaItems = metaItems,
                 canPlay = canPlay,
                 onPlay = onPlay,
+                cacheTask = cacheTask,
+                isEstimatingCache = isEstimatingCache,
+                cacheActionEnabled = cacheActionEnabled,
+                onCache = onCache,
                 onBack = onBack,
                 accentColor = accentColor,
                 playContentDescription = playContentDescription,
@@ -854,6 +922,10 @@ private fun WideAlbumDetailHeroCard(
     metaItems: List<String>,
     canPlay: Boolean,
     onPlay: () -> Unit,
+    cacheTask: CollectionStreamCacheTask?,
+    isEstimatingCache: Boolean,
+    cacheActionEnabled: Boolean,
+    onCache: () -> Unit,
     onBack: () -> Unit,
     accentColor: Color,
 ) {
@@ -935,23 +1007,33 @@ private fun WideAlbumDetailHeroCard(
                         softWrap = false,
                     )
                 }
-                FilledTonalButton(
-                    onClick = onPlay,
-                    enabled = canPlay,
+                Row(
                     modifier = Modifier.padding(top = 22.dp),
-                    shape = MaterialTheme.shapes.small,
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = playContainer,
-                        contentColor = onPlayAccent,
-                    ),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                    FilledTonalButton(
+                        onClick = onPlay,
+                        enabled = canPlay,
+                        shape = MaterialTheme.shapes.small,
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = playContainer,
+                            contentColor = onPlayAccent,
+                        ),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(stringResource(R.string.library_play))
+                    }
+                    CollectionStreamCacheButton(
+                        task = cacheTask,
+                        isEstimating = isEstimatingCache,
+                        enabled = cacheActionEnabled,
+                        onClick = onCache,
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.library_play))
                 }
             }
         }
@@ -965,6 +1047,10 @@ private fun CompactAlbumDetailHeroCard(
     metaItems: List<String>,
     canPlay: Boolean,
     onPlay: () -> Unit,
+    cacheTask: CollectionStreamCacheTask?,
+    isEstimatingCache: Boolean,
+    cacheActionEnabled: Boolean,
+    onCache: () -> Unit,
     onBack: () -> Unit,
     accentColor: Color,
     playContentDescription: String,
@@ -1030,19 +1116,30 @@ private fun CompactAlbumDetailHeroCard(
                     )
                 }
             }
-            FilledIconButton(
-                onClick = onPlay,
-                enabled = canPlay,
-                modifier = Modifier.size(52.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = playContainer,
-                    contentColor = onPlayAccent,
-                ),
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.PlayArrow,
-                    contentDescription = playContentDescription,
+                CollectionStreamCacheIconButton(
+                    task = cacheTask,
+                    isEstimating = isEstimatingCache,
+                    enabled = cacheActionEnabled,
+                    onClick = onCache,
                 )
+                FilledIconButton(
+                    onClick = onPlay,
+                    enabled = canPlay,
+                    modifier = Modifier.size(52.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = playContainer,
+                        contentColor = onPlayAccent,
+                    ),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = playContentDescription,
+                    )
+                }
             }
         }
         Surface(
@@ -1060,6 +1157,249 @@ private fun CompactAlbumDetailHeroCard(
                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                 contentDescription = stringResource(R.string.library_back),
                 modifier = Modifier.padding(9.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun CollectionStreamCacheButton(
+    task: CollectionStreamCacheTask?,
+    isEstimating: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val running = task?.status == CollectionStreamCacheTaskStatus.RUNNING
+    val animatedProgress by animateFloatAsState(
+        targetValue = task?.progress ?: 0f,
+        animationSpec = tween(durationMillis = 320),
+        label = "collectionStreamCacheProgress",
+    )
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled && !isEstimating,
+        shape = MaterialTheme.shapes.small,
+    ) {
+        when {
+            isEstimating -> CircularWavyProgressIndicator(
+                modifier = Modifier.size(18.dp),
+            )
+            running -> CircularWavyProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.size(20.dp),
+            )
+            else -> Icon(
+                imageVector = Icons.Rounded.CloudDownload,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = when {
+                isEstimating -> stringResource(R.string.library_stream_cache_estimating)
+                running -> "${task.processedSongCount}/${task.totalSongCount}"
+                else -> stringResource(R.string.library_stream_cache_action)
+            },
+        )
+        if (running) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Rounded.StopCircle,
+                contentDescription = stringResource(R.string.library_stream_cache_cancel),
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun CollectionStreamCacheIconButton(
+    task: CollectionStreamCacheTask?,
+    isEstimating: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val running = task?.status == CollectionStreamCacheTaskStatus.RUNNING
+    val animatedProgress by animateFloatAsState(
+        targetValue = task?.progress ?: 0f,
+        animationSpec = tween(durationMillis = 320),
+        label = "compactCollectionStreamCacheProgress",
+    )
+    FilledIconButton(
+        onClick = onClick,
+        enabled = enabled && !isEstimating,
+        modifier = Modifier.size(46.dp),
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = Color.Black.copy(alpha = 0.42f),
+            contentColor = Color.White,
+        ),
+    ) {
+        when {
+            isEstimating -> CircularWavyProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = Color.White,
+                trackColor = Color.White.copy(alpha = 0.24f),
+            )
+            running -> Box(contentAlignment = Alignment.Center) {
+                CircularWavyProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier.size(30.dp),
+                    color = Color.White,
+                    trackColor = Color.White.copy(alpha = 0.24f),
+                )
+                Icon(
+                    imageVector = Icons.Rounded.StopCircle,
+                    contentDescription = stringResource(R.string.library_stream_cache_cancel),
+                    modifier = Modifier.size(12.dp),
+                    tint = Color.White,
+                )
+            }
+            else -> Icon(
+                imageVector = Icons.Rounded.CloudDownload,
+                contentDescription = stringResource(R.string.library_stream_cache_action),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CollectionStreamCacheConfirmationDialog(
+    title: String,
+    estimate: CollectionStreamCacheEstimate,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val context = LocalContext.current
+    val allCached = estimate.songCount > 0 &&
+        estimate.alreadyCachedSongCount == estimate.songCount
+    val formatBytes: (Long) -> String = { bytes ->
+        android.text.format.Formatter.formatShortFileSize(context, bytes.coerceAtLeast(0L))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(stringResource(R.string.library_stream_cache_dialog_title, title))
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    stringResource(
+                        R.string.library_stream_cache_estimate_summary,
+                        estimate.songCount,
+                        formatBytes(estimate.estimatedAdditionalBytes),
+                    ),
+                )
+                Text(
+                    stringResource(
+                        R.string.library_stream_cache_quality,
+                        stringResource(estimate.quality.labelRes()),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(
+                        R.string.library_stream_cache_capacity,
+                        formatBytes(estimate.currentCacheBytes),
+                        formatBytes(estimate.cacheLimitBytes),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (estimate.alreadyCachedSongCount > 0) {
+                    Text(
+                        stringResource(
+                            R.string.library_stream_cache_already_cached,
+                            estimate.alreadyCachedSongCount,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (estimate.unknownSizeSongCount > 0) {
+                    CollectionStreamCacheWarning(
+                        stringResource(
+                            R.string.library_stream_cache_unknown_sizes,
+                            estimate.unknownSizeSongCount,
+                        ),
+                    )
+                }
+                if (estimate.exceedsCacheLimit) {
+                    CollectionStreamCacheWarning(
+                        stringResource(
+                            R.string.library_stream_cache_exceeds_limit,
+                            formatBytes(estimate.estimatedCollectionBytes),
+                            formatBytes(estimate.cacheLimitBytes),
+                        ),
+                    )
+                } else if (estimate.estimatedEvictionBytes > 0L) {
+                    CollectionStreamCacheWarning(
+                        stringResource(
+                            R.string.library_stream_cache_will_evict,
+                            formatBytes(estimate.estimatedEvictionBytes),
+                        ),
+                    )
+                }
+                Text(
+                    if (allCached) {
+                        stringResource(R.string.library_stream_cache_all_cached)
+                    } else {
+                        stringResource(R.string.library_stream_cache_disclaimer)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = if (allCached) onDismiss else onConfirm,
+            ) {
+                Text(
+                    if (allCached) {
+                        stringResource(R.string.common_close)
+                    } else {
+                        stringResource(R.string.library_stream_cache_confirm)
+                    },
+                )
+            }
+        },
+        dismissButton = if (allCached) {
+            null
+        } else {
+            {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun CollectionStreamCacheWarning(text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Info,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }
@@ -1450,8 +1790,33 @@ fun PlaylistDetailScreen(
     isPlaying: Boolean = false,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShowActions: (Song) -> Unit,
+    collectionStreamCacheTask: CollectionStreamCacheTask? = null,
+    onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate? = { null },
+    onStartCollectionStreamCache: (CollectionStreamCacheEstimate) -> Unit = {},
+    onCancelCollectionStreamCache: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
+    val cacheSourceKey = "server:${server.id}:playlist:${playlist.id}"
+    val cacheScope = rememberCoroutineScope()
+    var pendingCacheEstimate by remember { mutableStateOf<CollectionStreamCacheEstimate?>(null) }
+    var isEstimatingCache by remember { mutableStateOf(false) }
+    val matchingCacheTask = collectionStreamCacheTask?.takeIf { task -> task.sourceKey == cacheSourceKey }
+    val isMatchingCacheRunning = matchingCacheTask?.status == CollectionStreamCacheTaskStatus.RUNNING
+    val isOtherCacheRunning = collectionStreamCacheTask?.status == CollectionStreamCacheTaskStatus.RUNNING &&
+        matchingCacheTask == null
+    val cacheActionEnabled = playlist.songs.isNotEmpty() &&
+        (isMatchingCacheRunning || (!isOfflineDegraded && !isOtherCacheRunning))
+    val requestCollectionCache: () -> Unit = {
+        if (isMatchingCacheRunning) {
+            onCancelCollectionStreamCache()
+        } else if (!isOfflineDegraded && !isEstimatingCache && !isOtherCacheRunning) {
+            isEstimatingCache = true
+            cacheScope.launch {
+                pendingCacheEstimate = onEstimateCollectionStreamCache(playlist.songs)
+                isEstimatingCache = false
+            }
+        }
+    }
     val songCount = playlist.songCount
     val playPlaylist: () -> Unit = {
         if (playlist.songs.isNotEmpty()) {
@@ -1509,6 +1874,10 @@ fun PlaylistDetailScreen(
                         metaItems = playlistMetaItems,
                         canPlay = playlist.songs.isNotEmpty(),
                         onPlay = playPlaylist,
+                        cacheTask = matchingCacheTask,
+                        isEstimatingCache = isEstimatingCache,
+                        cacheActionEnabled = cacheActionEnabled,
+                        onCache = requestCollectionCache,
                         onBack = onBack,
                         playContentDescription = stringResource(R.string.library_play_playlist),
                     )
@@ -1565,6 +1934,10 @@ fun PlaylistDetailScreen(
                     metaItems = playlistMetaItems,
                     canPlay = playlist.songs.isNotEmpty(),
                     onPlay = playPlaylist,
+                    cacheTask = matchingCacheTask,
+                    isEstimatingCache = isEstimatingCache,
+                    cacheActionEnabled = cacheActionEnabled,
+                    onCache = requestCollectionCache,
                     onBack = onBack,
                     playContentDescription = stringResource(R.string.library_play_playlist),
                 )
@@ -1595,6 +1968,18 @@ fun PlaylistDetailScreen(
             )
         },
     )
+
+    pendingCacheEstimate?.let { estimate ->
+        CollectionStreamCacheConfirmationDialog(
+            title = playlist.name,
+            estimate = estimate,
+            onDismiss = { pendingCacheEstimate = null },
+            onConfirm = {
+                pendingCacheEstimate = null
+                onStartCollectionStreamCache(estimate)
+            },
+        )
+    }
 }
 
 @Composable

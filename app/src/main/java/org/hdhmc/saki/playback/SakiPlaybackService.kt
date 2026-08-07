@@ -106,55 +106,6 @@ private fun String.forStreamOffset(timeOffsetSeconds: Int?): String =
 private fun Int.forStreamOffset(timeOffsetSeconds: Int?): Int =
     if (timeOffsetSeconds == null) this else this or DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
 
-internal fun isResourceEof(requestLength: Long, bytesRead: Long): Boolean =
-    requestLength == C.LENGTH_UNSET.toLong() || bytesRead < requestLength
-
-private class EofTrackingDataSource(
-    private val upstream: DataSource,
-    private val onEof: (DataSpec, Long) -> Unit,
-) : DataSource {
-    private var openedDataSpec: DataSpec? = null
-    private var bytesRead = 0L
-    private var reportedEof = false
-
-    override fun addTransferListener(transferListener: TransferListener) {
-        upstream.addTransferListener(transferListener)
-    }
-
-    override fun open(dataSpec: DataSpec): Long {
-        openedDataSpec = dataSpec
-        bytesRead = 0L
-        reportedEof = false
-        return upstream.open(dataSpec)
-    }
-
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        val read = upstream.read(buffer, offset, length)
-        if (read == C.RESULT_END_OF_INPUT) {
-            val dataSpec = openedDataSpec
-            if (!reportedEof && dataSpec != null && isResourceEof(dataSpec.length, bytesRead)) {
-                reportedEof = true
-                onEof(dataSpec, dataSpec.position + bytesRead)
-            }
-        } else if (read > 0) {
-            bytesRead += read
-        }
-        return read
-    }
-
-    override fun getUri(): Uri? = upstream.uri
-
-    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
-
-    override fun close() {
-        try {
-            upstream.close()
-        } finally {
-            openedDataSpec = null
-        }
-    }
-}
-
 private data class ActiveServerSeek(
     val mediaItemIndex: Int,
     val serverId: Long,
@@ -256,6 +207,9 @@ class SakiPlaybackService : MediaSessionService() {
     lateinit var streamCache: SimpleCache
 
     @Inject
+    lateinit var streamCacheWriteCoordinator: StreamCacheWriteCoordinator
+
+    @Inject
     lateinit var lyricsHolder: LyricsHolder
 
     @Inject
@@ -335,7 +289,10 @@ class SakiPlaybackService : MediaSessionService() {
         val upstreamDataSourceFactory = DefaultDataSource.Factory(
             this,
             DataSource.Factory {
-                EofTrackingDataSource(httpDataSourceFactory.createDataSource(), ::recordStreamCacheEof)
+                StreamCacheEofTrackingDataSource(
+                    httpDataSourceFactory.createDataSource(),
+                    ::recordStreamCacheEof,
+                )
             },
         )
         val cacheFactory = CacheDataSource.Factory()
@@ -972,8 +929,10 @@ class SakiPlaybackService : MediaSessionService() {
         )
         activeStreamCacheWriter = writer
         try {
-            runInterruptible(Dispatchers.IO) {
-                writer.cache()
+            streamCacheWriteCoordinator.withWriter {
+                runInterruptible(Dispatchers.IO) {
+                    writer.cache()
+                }
             }
         } finally {
             if (activeStreamCacheWriter === writer) {
