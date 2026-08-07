@@ -9,10 +9,12 @@ import java.nio.ByteBuffer;
 final class AlacDecoderCore {
     private static final int BIT_READER_PADDING_BYTES = 3;
     private static final int LEGACY_CONFIG_PREFIX_SIZE = 24;
+    static final int MAX_INPUT_FRAME_BYTES = 1024 * 1024;
 
     private final AlacStreamInfo streamInfo;
     private final AlacFile alacFile;
     private final int[] decodedSamples;
+    private final int maxInputFrameBytes;
     private byte[] inputBytes = new byte[0];
 
     AlacDecoderCore(AlacStreamInfo streamInfo) {
@@ -26,10 +28,19 @@ final class AlacDecoderCore {
         }
         AlacDecodeUtils.alac_set_info(alacFile, legacyConfig);
         decodedSamples = new int[streamInfo.getMaxDecodedFrameBytes()];
+        int declaredMaxFrameBytes = streamInfo.getMaxFrameBytes();
+        maxInputFrameBytes = declaredMaxFrameBytes > 0
+                ? Math.min(declaredMaxFrameBytes, MAX_INPUT_FRAME_BYTES)
+                : MAX_INPUT_FRAME_BYTES;
     }
 
     int decode(ByteBuffer input, ByteBuffer output) throws BundledAlacDecoderException {
         int inputSize = input.remaining();
+        if (inputSize > maxInputFrameBytes) {
+            throw new BundledAlacDecoderException(
+                    "ALAC frame exceeds bundled decoder input limit: "
+                            + inputSize + " > " + maxInputFrameBytes);
+        }
         ensureInputCapacity(inputSize + BIT_READER_PADDING_BYTES);
         input.get(inputBytes, 0, inputSize);
         for (int i = inputSize; i < inputSize + BIT_READER_PADDING_BYTES; i++) {

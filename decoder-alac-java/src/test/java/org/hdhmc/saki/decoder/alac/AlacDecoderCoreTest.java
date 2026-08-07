@@ -68,6 +68,34 @@ public final class AlacDecoderCoreTest {
     }
 
     @Test
+    public void rejectsPacketLargerThanDeclaredMaxFrameBytesBeforeReadingIt() {
+        byte[] config = CONFIG_16_BIT.clone();
+        writeInt(config, 12, 8);
+        AlacDecoderCore core = new AlacDecoderCore(AlacStreamInfo.parse(config));
+        ByteBuffer input = ByteBuffer.allocate(9);
+
+        assertThrows(
+                BundledAlacDecoderException.class,
+                () -> core.decode(input, ByteBuffer.allocate(16_384)));
+
+        assertEquals(0, input.position());
+    }
+
+    @Test
+    public void rejectsPacketLargerThanHardLimitWhenDeclaredMaximumIsUnknown() {
+        byte[] config = CONFIG_16_BIT.clone();
+        writeInt(config, 12, 0);
+        AlacDecoderCore core = new AlacDecoderCore(AlacStreamInfo.parse(config));
+        ByteBuffer input = ByteBuffer.allocate(AlacDecoderCore.MAX_INPUT_FRAME_BYTES + 1);
+
+        assertThrows(
+                BundledAlacDecoderException.class,
+                () -> core.decode(input, ByteBuffer.allocate(16_384)));
+
+        assertEquals(0, input.position());
+    }
+
+    @Test
     public void validatesBundledDecoderLimits() {
         byte[] unsupportedVersion = CONFIG_16_BIT.clone();
         unsupportedVersion[4] = 1;
@@ -134,5 +162,12 @@ public final class AlacDecoderCoreTest {
             result[i] = (byte) values[i];
         }
         return result;
+    }
+
+    private static void writeInt(byte[] data, int offset, int value) {
+        data[offset] = (byte) (value >>> 24);
+        data[offset + 1] = (byte) (value >>> 16);
+        data[offset + 2] = (byte) (value >>> 8);
+        data[offset + 3] = (byte) value;
     }
 }
