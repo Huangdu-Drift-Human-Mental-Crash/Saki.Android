@@ -164,6 +164,8 @@
     <string name="library_stream_cache_action">Pre-cache</string>
     <string name="library_stream_cache_cancel">Cancel pre-cache</string>
     <string name="library_stream_cache_estimating">Estimating…</string>
+    <string name="library_stream_cache_active_title">Pre-caching “%1$s”</string>
+    <string name="library_stream_cache_progress">%1$d of %2$d tracks</string>
     <string name="library_stream_cache_dialog_title">Pre-cache “%1$s”</string>
     <string name="library_stream_cache_estimate_summary">%1$d tracks · about %2$s additional cache</string>
     <string name="library_stream_cache_quality">Streaming quality: %1$s</string>

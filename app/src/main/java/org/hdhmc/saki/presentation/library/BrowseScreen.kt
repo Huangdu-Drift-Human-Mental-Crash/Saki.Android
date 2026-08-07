@@ -3,6 +3,8 @@ package org.hdhmc.saki.presentation.library
 import android.icu.text.AlphabeticIndex
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -63,7 +65,9 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.StopCircle
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -132,6 +136,8 @@ import org.hdhmc.saki.domain.model.AlbumViewMode
 import org.hdhmc.saki.domain.model.Artist
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.CollectionStreamCacheEstimate
+import org.hdhmc.saki.domain.model.CollectionStreamCacheTask
+import org.hdhmc.saki.domain.model.CollectionStreamCacheTaskStatus
 import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
@@ -221,6 +227,14 @@ fun BrowseScreen(
 ) {
     val background = rememberBrowseBackgroundBrush()
     val currentServer = uiState.servers.firstOrNull { it.id == uiState.selectedServerId }
+    val availabilityUiState by availabilityUiStateFlow.collectAsStateWithLifecycle()
+    val activeCollectionStreamCacheTask = availabilityUiState.collectionStreamCacheTask
+        ?.takeIf { task -> task.status == CollectionStreamCacheTaskStatus.RUNNING }
+    val pageBottomOverlayPadding = if (activeCollectionStreamCacheTask == null) {
+        bottomOverlayPadding
+    } else {
+        0.dp
+    }
     var actionSong by remember { mutableStateOf<Song?>(null) }
     var detailSong by remember { mutableStateOf<Song?>(null) }
     val offlineAwarePlaySongs: (List<Song>, Int) -> Unit = { songs, startIndex ->
@@ -282,7 +296,7 @@ fun BrowseScreen(
                                 playbackUiStateFlow = playbackUiStateFlow,
                                 availabilityUiStateFlow = availabilityUiStateFlow,
                                 isOfflineDegraded = isOfflineDegraded,
-                                bottomOverlayPadding = bottomOverlayPadding,
+                                bottomOverlayPadding = pageBottomOverlayPadding,
                                 backHandlersEnabled = backHandlersEnabled,
                                 onSelectBrowseSection = onSelectBrowseSection,
                                 onSetSearchActive = onSetSearchActive,
@@ -316,7 +330,7 @@ fun BrowseScreen(
                                         availabilityUiStateFlow = availabilityUiStateFlow,
                                         isLoading = uiState.isAlbumLoading,
                                         error = uiState.albumError?.asString(),
-                                        bottomOverlayPadding = bottomOverlayPadding,
+                                        bottomOverlayPadding = pageBottomOverlayPadding,
                                         isOfflineDegraded = isOfflineDegraded,
                                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                                         onPlaySongs = offlineAwarePlaySongs,
@@ -330,7 +344,7 @@ fun BrowseScreen(
                                     BrowseDetailPlaceholder(
                                         loadingLabel = stringResource(R.string.library_loading_album),
                                         error = uiState.albumError?.asString(),
-                                        bottomOverlayPadding = bottomOverlayPadding,
+                                        bottomOverlayPadding = pageBottomOverlayPadding,
                                     )
                                 }
                             }
@@ -347,7 +361,7 @@ fun BrowseScreen(
                                         availabilityUiStateFlow = availabilityUiStateFlow,
                                         isLoading = uiState.isArtistLoading,
                                         error = uiState.artistError?.asString(),
-                                        bottomOverlayPadding = bottomOverlayPadding,
+                                        bottomOverlayPadding = pageBottomOverlayPadding,
                                         isOfflineDegraded = isOfflineDegraded,
                                         onOpenAlbum = onOpenAlbum,
                                         onPlaySongs = offlineAwarePlaySongs,
@@ -358,7 +372,7 @@ fun BrowseScreen(
                                     BrowseDetailPlaceholder(
                                         loadingLabel = stringResource(R.string.library_loading_artist),
                                         error = uiState.artistError?.asString(),
-                                        bottomOverlayPadding = bottomOverlayPadding,
+                                        bottomOverlayPadding = pageBottomOverlayPadding,
                                     )
                                 }
                             }
@@ -373,7 +387,7 @@ fun BrowseScreen(
                                         availabilityUiStateFlow = availabilityUiStateFlow,
                                         isLoading = uiState.isPlaylistLoading,
                                         error = uiState.playlistError?.asString(),
-                                        bottomOverlayPadding = bottomOverlayPadding,
+                                        bottomOverlayPadding = pageBottomOverlayPadding,
                                         isOfflineDegraded = isOfflineDegraded,
                                         onOfflineSongUnavailable = onOfflineSongUnavailable,
                                         onPlaySongs = offlineAwarePlaySongs,
@@ -387,7 +401,7 @@ fun BrowseScreen(
                                     BrowseDetailPlaceholder(
                                         loadingLabel = stringResource(R.string.library_loading_playlist),
                                         error = uiState.playlistError?.asString(),
-                                        bottomOverlayPadding = bottomOverlayPadding,
+                                        bottomOverlayPadding = pageBottomOverlayPadding,
                                     )
                                 }
                             }
@@ -430,6 +444,14 @@ fun BrowseScreen(
                 }
             }
         }
+
+        activeCollectionStreamCacheTask?.let { task ->
+            ActiveCollectionStreamCacheCard(
+                task = task,
+                bottomOverlayPadding = bottomOverlayPadding,
+                onCancel = onCancelCollectionStreamCache,
+            )
+        }
     }
 
     actionSong?.let { song ->
@@ -460,6 +482,69 @@ fun BrowseScreen(
 
     detailSong?.let { song ->
         SongDetailsDialog(song = song, onDismiss = { detailSong = null })
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ActiveCollectionStreamCacheCard(
+    task: CollectionStreamCacheTask,
+    bottomOverlayPadding: Dp,
+    onCancel: () -> Unit,
+) {
+    val animatedProgress by animateFloatAsState(
+        targetValue = task.progress,
+        animationSpec = tween(durationMillis = 320),
+        label = "activeCollectionStreamCacheProgress",
+    )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 8.dp + bottomOverlayPadding),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CircularWavyProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.size(32.dp),
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                trackColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.2f),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.library_stream_cache_active_title, task.title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.library_stream_cache_progress,
+                        task.processedSongCount,
+                        task.totalSongCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                )
+            }
+            IconButton(onClick = onCancel) {
+                Icon(
+                    imageVector = Icons.Rounded.StopCircle,
+                    contentDescription = stringResource(R.string.library_stream_cache_cancel),
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
     }
 }
 

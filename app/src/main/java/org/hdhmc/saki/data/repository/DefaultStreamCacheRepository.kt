@@ -34,9 +34,11 @@ import org.hdhmc.saki.playback.buildStreamCacheKey
 import org.hdhmc.saki.playback.estimateSongStreamBytes
 import org.hdhmc.saki.playback.parseStreamCacheKey
 import dagger.Lazy
-import java.net.ConnectException
+import java.io.EOFException
 import java.io.IOException
+import java.net.ConnectException
 import java.net.NoRouteToHostException
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.inject.Inject
@@ -683,8 +685,14 @@ internal fun Throwable.hasRetryableTransportCause(): Boolean =
         throwable is UnknownHostException ||
             throwable is ConnectException ||
             throwable is SocketTimeoutException ||
-            throwable is NoRouteToHostException
+            throwable is NoRouteToHostException ||
+            throwable is SocketException ||
+            throwable is EOFException ||
+            throwable.javaClass.name == OKHTTP_STREAM_RESET_EXCEPTION_CLASS
     }
+
+private const val OKHTTP_STREAM_RESET_EXCEPTION_CLASS =
+    "okhttp3.internal.http2.StreamResetException"
 
 private fun Collection<Set<String>>.flattenToSet(): Set<String> {
     return mutableSetOf<String>().apply {

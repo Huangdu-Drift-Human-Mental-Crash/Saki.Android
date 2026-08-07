@@ -156,6 +156,8 @@
     <string name="library_stream_cache_action">预缓存</string>
     <string name="library_stream_cache_cancel">取消预缓存</string>
     <string name="library_stream_cache_estimating">正在估算…</string>
+    <string name="library_stream_cache_active_title">正在预缓存“%1$s”</string>
+    <string name="library_stream_cache_progress">已处理 %1$d / %2$d 首歌曲</string>
     <string name="library_stream_cache_dialog_title">预缓存“%1$s”</string>
     <string name="library_stream_cache_estimate_summary">%1$d 首歌曲 · 预计新增约 %2$s 缓存</string>
     <string name="library_stream_cache_quality">串流音质：%1$s</string>
