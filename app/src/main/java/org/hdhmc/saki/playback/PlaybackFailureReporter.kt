@@ -50,18 +50,21 @@ class PlaybackFailureReporter @Inject constructor() {
     private val originalPlaybackSkipRecovery = OriginalPlaybackSkipRecovery()
     private var nextEventId = 0L
     @Volatile
-    private var pendingQueueSkipHandler: ((String, Int) -> Boolean)? = null
+    private var originalPlaybackSkipHandler:
+        (suspend (PlaybackRecoveryItemKey, Int) -> Boolean)? = null
 
     val failure: StateFlow<PlaybackFailure?> = mutableFailure.asStateFlow()
 
-    fun setPendingQueueSkipHandler(handler: (String, Int) -> Boolean) {
-        pendingQueueSkipHandler = handler
+    internal fun setOriginalPlaybackSkipHandler(
+        handler: suspend (PlaybackRecoveryItemKey, Int) -> Boolean,
+    ) {
+        originalPlaybackSkipHandler = handler
     }
 
-    internal fun requestPendingQueueSkip(
-        failedSongId: String,
+    internal suspend fun requestOriginalPlaybackSkip(
+        failedItem: PlaybackRecoveryItemKey,
         failureCount: Int,
-    ): Boolean = pendingQueueSkipHandler?.invoke(failedSongId, failureCount) == true
+    ): Boolean = originalPlaybackSkipHandler?.invoke(failedItem, failureCount) == true
 
     @Synchronized
     internal fun recordOriginalPlaybackSkipFailure(): Int = originalPlaybackSkipRecovery.recordFailure()

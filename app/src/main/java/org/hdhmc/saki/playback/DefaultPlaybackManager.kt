@@ -46,6 +46,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -199,7 +200,7 @@ class DefaultPlaybackManager @Inject constructor(
     }
 
     init {
-        playbackFailureReporter.setPendingQueueSkipHandler(::requestPendingQueueSkip)
+        playbackFailureReporter.setOriginalPlaybackSkipHandler(::requestOriginalPlaybackSkip)
         scope.launch {
             playbackFailureReporter.failure.collect {
                 controller?.let(::syncState)
@@ -420,6 +421,7 @@ class DefaultPlaybackManager @Inject constructor(
                 itemCount = mediaItems.size,
                 hasMoreBefore = window.start > 0,
                 hasMoreAfter = window.hasMoreAfter,
+                logicalItemCount = null,
             )
             shuffleDisplayOrder = null
             activeController.shuffleModeEnabled = false
@@ -589,6 +591,7 @@ class DefaultPlaybackManager @Inject constructor(
         val itemCount: Int,
         val hasMoreBefore: Boolean,
         val hasMoreAfter: Boolean,
+        val logicalItemCount: Int?,
     )
 
     private data class PendingDeferredQueue(
@@ -658,19 +661,64 @@ class DefaultPlaybackManager @Inject constructor(
         return pendingDisplayOrder(pending)?.getOrNull(displayIndex) ?: displayIndex
     }
 
-    private fun requestPendingQueueSkip(
-        failedSongId: String,
+    private suspend fun requestOriginalPlaybackSkip(
+        failedItem: PlaybackRecoveryItemKey,
+        failureCount: Int,
+    ): Boolean = withController { activeController ->
+        val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+            ?: return@withController false
+        if (
+            currentRequest.serverId != failedItem.serverId ||
+            currentRequest.songId != failedItem.songId
+        ) {
+            return@withController false
+        }
+
+        val pending = pendingDeferredQueue
+            ?.takeIf { queue ->
+                queue.serverId == failedItem.serverId &&
+                    queue.currentSongId == failedItem.songId &&
+                    activeController.mediaItemCount == 1
+            }
+        if (pending != null) {
+            return@withController skipPendingQueueFailure(
+                activeController = activeController,
+                pending = pending,
+                failedItem = failedItem,
+                failureCount = failureCount,
+            )
+        }
+
+        val activeVirtualQueue = virtualQueue
+            ?.takeIf { queue ->
+                queue.serverId == failedItem.serverId &&
+                    !activeController.shuffleModeEnabled &&
+                    activeController.mediaItemCount == queue.itemCount &&
+                    currentRequest.queueSource == PLAYBACK_QUEUE_SOURCE_LIBRARY_SONGS
+            }
+        if (activeVirtualQueue != null) {
+            return@withController skipVirtualQueueFailure(
+                activeController = activeController,
+                failedItem = failedItem,
+                failureCount = failureCount,
+                activeVirtualQueue = activeVirtualQueue,
+            )
+        }
+
+        skipConcreteQueueFailure(
+            activeController = activeController,
+            failureCount = failureCount,
+            logicalQueueSize = activeController.mediaItemCount,
+        )
+    }
+
+    private suspend fun skipPendingQueueFailure(
+        activeController: MediaController,
+        pending: PendingDeferredQueue,
+        failedItem: PlaybackRecoveryItemKey,
         failureCount: Int,
     ): Boolean {
-        val pending = pendingDeferredQueue
-            ?.takeIf { queue -> queue.currentSongId == failedSongId }
-            ?: return false
         if (!canContinueOriginalPlaybackSkip(failureCount, pending.songs.size)) return false
-        val activeController = controller ?: return false
-        if (activeController.mediaItemCount != 1) return false
-        if (activeController.currentMediaItem?.toPlaybackRequestOrNull()?.songId != failedSongId) {
-            return false
-        }
         val displayOrder = pendingDisplayOrder(pending)
         val currentDisplayIndex = displayOrder
             ?.indexOf(pending.startIndex)
@@ -683,42 +731,191 @@ class DefaultPlaybackManager @Inject constructor(
         ) ?: return false
         val wasPlaying = activeController.playWhenReady
 
-        scope.launch {
-            if (
-                skipToPendingDeferredQueueItem(
-                    index = targetDisplayIndex,
-                    resumePlayback = wasPlaying,
-                    isFailureRecovery = true,
+        if (
+            skipToPendingDeferredQueueItem(
+                index = targetDisplayIndex,
+                resumePlayback = wasPlaying,
+                isFailureRecovery = true,
+            )
+        ) {
+            return true
+        }
+
+        val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+            ?: return false
+        if (
+            currentRequest.serverId != failedItem.serverId ||
+            currentRequest.songId != failedItem.songId
+        ) {
+            return false
+        }
+        return skipConcreteQueueFailure(
+            activeController = activeController,
+            failureCount = failureCount,
+            logicalQueueSize = pending.songs.size,
+        )
+    }
+
+    private fun skipConcreteQueueFailure(
+        activeController: MediaController,
+        failureCount: Int,
+        logicalQueueSize: Int,
+    ): Boolean {
+        val currentIndex = activeController.currentMediaItemIndex
+        if (
+            currentIndex == C.INDEX_UNSET ||
+            !canContinueOriginalPlaybackSkip(failureCount, logicalQueueSize)
+        ) {
+            return false
+        }
+        val navigationRepeatMode = if (activeController.repeatMode == Player.REPEAT_MODE_ONE) {
+            Player.REPEAT_MODE_ALL
+        } else {
+            activeController.repeatMode
+        }
+        val nextIndex = activeController.currentTimeline.getNextWindowIndex(
+            currentIndex,
+            navigationRepeatMode,
+            activeController.shuffleModeEnabled,
+        )
+        if (nextIndex == C.INDEX_UNSET || nextIndex == currentIndex) return false
+        return moveToRecoveryTarget(activeController, nextIndex)
+    }
+
+    private suspend fun skipVirtualQueueFailure(
+        activeController: MediaController,
+        failedItem: PlaybackRecoveryItemKey,
+        failureCount: Int,
+        activeVirtualQueue: ActiveVirtualQueue,
+    ): Boolean {
+        while (true) {
+            val latestVirtualQueue = virtualQueue
+                ?.takeIf { queue -> queue.generation == activeVirtualQueue.generation }
+                ?: return false
+            val currentIndex = activeController.currentMediaItemIndex
+            if (currentIndex == C.INDEX_UNSET) return false
+            val logicalItemCount = latestVirtualQueue.logicalItemCount
+                ?: (latestVirtualQueue.windowStart + latestVirtualQueue.itemCount)
+                    .takeIf { !latestVirtualQueue.hasMoreAfter }
+            when (
+                planVirtualQueueRecovery(
+                    failureCount = failureCount,
+                    logicalItemCount = logicalItemCount,
+                    hasNextInWindow = currentIndex < activeController.mediaItemCount - 1,
+                    hasMoreAfter = latestVirtualQueue.hasMoreAfter,
+                    repeatEnabled = activeController.repeatMode != Player.REPEAT_MODE_OFF,
                 )
             ) {
-                return@launch
+                VirtualQueueRecoveryAction.ADVANCE_IN_WINDOW -> {
+                    return moveToRecoveryTarget(activeController, currentIndex + 1)
+                }
+                VirtualQueueRecoveryAction.EXTEND_FORWARD -> {
+                    virtualQueueUpdateJob?.cancelAndJoin()
+                    virtualQueueUpdateJob = null
+                    val previousWindowEnd = latestVirtualQueue.windowStart + latestVirtualQueue.itemCount
+                    extendVirtualQueueAfter(latestVirtualQueue.generation)
+                    val extendedQueue = virtualQueue
+                        ?.takeIf { queue -> queue.generation == latestVirtualQueue.generation }
+                        ?: return false
+                    val currentWindowEnd = extendedQueue.windowStart + extendedQueue.itemCount
+                    if (
+                        currentWindowEnd == previousWindowEnd &&
+                        extendedQueue.hasMoreAfter == latestVirtualQueue.hasMoreAfter
+                    ) {
+                        return false
+                    }
+                }
+                VirtualQueueRecoveryAction.WRAP_TO_START -> {
+                    return restartVirtualQueueForRecovery(
+                        activeController = activeController,
+                        failedItem = failedItem,
+                        activeVirtualQueue = latestVirtualQueue,
+                        logicalItemCount = logicalItemCount ?: return false,
+                    )
+                }
+                VirtualQueueRecoveryAction.STOP -> return false
             }
-            withController { expandedController ->
-                if (expandedController.currentMediaItem?.toPlaybackRequestOrNull()?.songId != failedSongId) {
-                    return@withController
-                }
-                val navigationRepeatMode = if (expandedController.repeatMode == Player.REPEAT_MODE_ONE) {
-                    Player.REPEAT_MODE_ALL
-                } else {
-                    expandedController.repeatMode
-                }
-                val nextIndex = expandedController.currentTimeline.getNextWindowIndex(
-                    expandedController.currentMediaItemIndex,
-                    navigationRepeatMode,
-                    expandedController.shuffleModeEnabled,
-                )
-                if (nextIndex == C.INDEX_UNSET) return@withController
-                val targetRequest = expandedController.getMediaItemAt(nextIndex).toPlaybackRequestOrNull()
-                    ?: return@withController
-                playbackFailureReporter.expectAutomaticSkipTransition(
-                    PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
-                )
-                expandedController.seekToDefaultPosition(nextIndex)
-                expandedController.prepare()
-                expandedController.playWhenReady = wasPlaying
-                syncState(expandedController)
+
+            val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+                ?: return false
+            if (
+                currentRequest.serverId != failedItem.serverId ||
+                currentRequest.songId != failedItem.songId
+            ) {
+                return false
             }
         }
+    }
+
+    private suspend fun restartVirtualQueueForRecovery(
+        activeController: MediaController,
+        failedItem: PlaybackRecoveryItemKey,
+        activeVirtualQueue: ActiveVirtualQueue,
+        logicalItemCount: Int,
+    ): Boolean {
+        val loadSize = minOf(VIRTUAL_QUEUE_INITIAL_LOAD_SIZE, logicalItemCount)
+        if (loadSize <= 0) return false
+        val songs = getLibrarySongsPage(
+            serverId = activeVirtualQueue.serverId,
+            limit = loadSize,
+            offset = 0,
+        )
+        if (songs.isEmpty()) return false
+        val mediaItems = buildMediaItems(
+            serverId = activeVirtualQueue.serverId,
+            songs = songs,
+            preferredQuality = playbackQuality(activeVirtualQueue.serverId),
+            libraryStartIndex = 0,
+        )
+        if (mediaItems.isEmpty()) return false
+
+        val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+            ?: return false
+        val latestVirtualQueue = virtualQueue
+            ?.takeIf { queue -> queue.generation == activeVirtualQueue.generation }
+            ?: return false
+        if (
+            currentRequest.serverId != failedItem.serverId ||
+            currentRequest.songId != failedItem.songId ||
+            latestVirtualQueue.hasMoreAfter
+        ) {
+            return false
+        }
+
+        val targetRequest = mediaItems.first().toPlaybackRequestOrNull() ?: return false
+        val wasPlaying = activeController.playWhenReady
+        playbackFailureReporter.expectAutomaticSkipTransition(
+            PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+        )
+        virtualQueue = latestVirtualQueue.copy(
+            windowStart = 0,
+            itemCount = mediaItems.size,
+            hasMoreBefore = false,
+            hasMoreAfter = mediaItems.size < logicalItemCount,
+            logicalItemCount = logicalItemCount,
+        )
+        activeController.setMediaItems(mediaItems, 0, 0L)
+        activeController.prepare()
+        activeController.playWhenReady = wasPlaying
+        syncState(activeController)
+        maybeScheduleVirtualQueueWindowUpdate(activeController)
+        return true
+    }
+
+    private fun moveToRecoveryTarget(
+        activeController: MediaController,
+        targetIndex: Int,
+    ): Boolean {
+        val targetRequest = activeController.getMediaItemAt(targetIndex).toPlaybackRequestOrNull()
+            ?: return false
+        val wasPlaying = activeController.playWhenReady
+        playbackFailureReporter.expectAutomaticSkipTransition(
+            PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+        )
+        activeController.seekToDefaultPosition(targetIndex)
+        activeController.prepare()
+        activeController.playWhenReady = wasPlaying
+        syncState(activeController)
         return true
     }
 
@@ -857,7 +1054,12 @@ class DefaultPlaybackManager @Inject constructor(
             offset = offset,
         )
         if (songs.isEmpty()) {
-            updateVirtualQueue(generation) { queue -> queue.copy(hasMoreAfter = false) }
+            updateVirtualQueue(generation) { queue ->
+                queue.copy(
+                    hasMoreAfter = false,
+                    logicalItemCount = offset,
+                )
+            }
             return
         }
 
@@ -880,6 +1082,8 @@ class DefaultPlaybackManager @Inject constructor(
             virtualQueue = latest.copy(
                 itemCount = latest.itemCount + mediaItems.size,
                 hasMoreAfter = mediaItems.size >= VIRTUAL_QUEUE_PAGE_SIZE,
+                logicalItemCount = (offset + mediaItems.size)
+                    .takeIf { mediaItems.size < VIRTUAL_QUEUE_PAGE_SIZE },
             )
             trimVirtualQueueBeforeIfNeeded(activeController)
             syncState(activeController)
@@ -1688,6 +1892,32 @@ internal fun nextPendingQueueDisplayIndex(
     if (queueSize <= 1 || currentDisplayIndex !in 0 until queueSize) return null
     if (currentDisplayIndex < queueSize - 1) return currentDisplayIndex + 1
     return 0.takeIf { repeatMode != Player.REPEAT_MODE_OFF }
+}
+
+internal enum class VirtualQueueRecoveryAction {
+    ADVANCE_IN_WINDOW,
+    EXTEND_FORWARD,
+    WRAP_TO_START,
+    STOP,
+}
+
+internal fun planVirtualQueueRecovery(
+    failureCount: Int,
+    logicalItemCount: Int?,
+    hasNextInWindow: Boolean,
+    hasMoreAfter: Boolean,
+    repeatEnabled: Boolean,
+): VirtualQueueRecoveryAction {
+    if (
+        logicalItemCount != null &&
+        !canContinueOriginalPlaybackSkip(failureCount, logicalItemCount)
+    ) {
+        return VirtualQueueRecoveryAction.STOP
+    }
+    if (hasNextInWindow) return VirtualQueueRecoveryAction.ADVANCE_IN_WINDOW
+    if (hasMoreAfter) return VirtualQueueRecoveryAction.EXTEND_FORWARD
+    if (repeatEnabled && logicalItemCount != null) return VirtualQueueRecoveryAction.WRAP_TO_START
+    return VirtualQueueRecoveryAction.STOP
 }
 
 internal fun PlaybackQueueItem.playbackFormatLabel(): String? =

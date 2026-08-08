@@ -95,6 +95,7 @@ import org.hdhmc.saki.decoder.alac.BundledAlacAudioRenderer
 
 private const val CUSTOM_PLAYER_MAX_BUFFER_MS = 5 * 60 * 1_000
 private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
+private const val PLAYBACK_RECOVERY_LOG_TAG = "SakiPlaybackRecovery"
 private const val STREAM_PREFETCH_REEVALUATION_MS = 30_000L
 private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
 private const val BLUETOOTH_LYRICS_MIN_POLL_DELAY_MS = 50L
@@ -1979,21 +1980,43 @@ class SakiPlaybackService : MediaSessionService() {
                         return
                     }
                     OriginalPlaybackFailureAction.SKIP -> {
-                        val failureCount = playbackFailureReporter.recordOriginalPlaybackSkipFailure()
-                        if (
-                            skipFailedMediaItem(activePlayer, failureCount) ||
-                            failedItem?.songId?.let { failedSongId ->
-                                playbackFailureReporter.requestPendingQueueSkip(
-                                    failedSongId = failedSongId,
-                                    failureCount = failureCount,
-                                )
-                            } == true
-                        ) {
-                            clearPlaybackFailureReport()
+                        val failedRequest = currentRequest
+                        if (failedRequest == null) {
+                            activePlayer.playWhenReady = false
+                            schedulePlaybackFailureReport(activePlayer, error)
                             return
                         }
-                        activePlayer.playWhenReady = false
-                        schedulePlaybackFailureReport(activePlayer, error)
+                        val failureCount = playbackFailureReporter.recordOriginalPlaybackSkipFailure()
+                        val failedKey = PlaybackRecoveryItemKey(
+                            serverId = failedRequest.serverId,
+                            songId = failedRequest.songId,
+                        )
+                        playerScope.launch {
+                            val skipped = try {
+                                playbackFailureReporter.requestOriginalPlaybackSkip(
+                                    failedItem = failedKey,
+                                    failureCount = failureCount,
+                                )
+                            } catch (exception: CancellationException) {
+                                throw exception
+                            } catch (exception: Exception) {
+                                Log.w(
+                                    PLAYBACK_RECOVERY_LOG_TAG,
+                                    "Failed to navigate playback recovery queue",
+                                    exception,
+                                )
+                                false
+                            }
+                            val activeRequest = activePlayer.currentMediaItem?.toPlaybackRequestOrNull()
+                            val remainsOnFailedItem = activeRequest?.serverId == failedKey.serverId &&
+                                activeRequest.songId == failedKey.songId
+                            if (skipped || !remainsOnFailedItem) {
+                                clearPlaybackFailureReport()
+                                return@launch
+                            }
+                            activePlayer.playWhenReady = false
+                            schedulePlaybackFailureReport(activePlayer, error)
+                        }
                         return
                     }
                     OriginalPlaybackFailureAction.AUTO_TRANSCODE -> {
@@ -2032,41 +2055,6 @@ class SakiPlaybackService : MediaSessionService() {
             activePlayer.seekTo(currentIndex, resumePositionMs)
             activePlayer.playWhenReady = wasPlaying
         }
-    }
-
-    private fun skipFailedMediaItem(
-        activePlayer: ExoPlayer,
-        failureCount: Int,
-    ): Boolean {
-        val currentIndex = activePlayer.currentMediaItemIndex
-        if (
-            currentIndex == C.INDEX_UNSET ||
-            !canContinueOriginalPlaybackSkip(failureCount, activePlayer.mediaItemCount)
-        ) {
-            return false
-        }
-        val navigationRepeatMode = if (activePlayer.repeatMode == Player.REPEAT_MODE_ONE) {
-            Player.REPEAT_MODE_ALL
-        } else {
-            activePlayer.repeatMode
-        }
-        val nextIndex = activePlayer.currentTimeline.getNextWindowIndex(
-            currentIndex,
-            navigationRepeatMode,
-            activePlayer.shuffleModeEnabled,
-        )
-        if (nextIndex == C.INDEX_UNSET || nextIndex == currentIndex) return false
-        val targetRequest = activePlayer.getMediaItemAt(nextIndex).toPlaybackRequestOrNull()
-            ?: return false
-
-        val wasPlaying = activePlayer.playWhenReady
-        playbackFailureReporter.expectAutomaticSkipTransition(
-            PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
-        )
-        activePlayer.seekTo(nextIndex, 0L)
-        activePlayer.prepare()
-        activePlayer.playWhenReady = wasPlaying
-        return true
     }
 
     private fun retryCurrentItemWithForcedTranscode(activePlayer: ExoPlayer): Boolean {

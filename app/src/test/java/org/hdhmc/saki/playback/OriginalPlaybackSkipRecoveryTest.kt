@@ -64,4 +64,52 @@ class OriginalPlaybackSkipRecoveryTest {
         recovery.onMediaItemTransition(null)
         assertEquals(1, recovery.recordFailure())
     }
+
+    @Test
+    fun `virtual recovery extends beyond the active media window`() {
+        assertEquals(
+            VirtualQueueRecoveryAction.EXTEND_FORWARD,
+            planVirtualQueueRecovery(
+                failureCount = 121,
+                logicalItemCount = null,
+                hasNextInWindow = false,
+                hasMoreAfter = true,
+                repeatEnabled = false,
+            ),
+        )
+        assertEquals(
+            VirtualQueueRecoveryAction.ADVANCE_IN_WINDOW,
+            planVirtualQueueRecovery(
+                failureCount = 122,
+                logicalItemCount = null,
+                hasNextInWindow = true,
+                hasMoreAfter = true,
+                repeatEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `virtual recovery uses the discovered logical queue boundary`() {
+        assertEquals(
+            VirtualQueueRecoveryAction.WRAP_TO_START,
+            planVirtualQueueRecovery(
+                failureCount = 2_000,
+                logicalItemCount = 5_000,
+                hasNextInWindow = false,
+                hasMoreAfter = false,
+                repeatEnabled = true,
+            ),
+        )
+        assertEquals(
+            VirtualQueueRecoveryAction.STOP,
+            planVirtualQueueRecovery(
+                failureCount = 5_000,
+                logicalItemCount = 5_000,
+                hasNextInWindow = true,
+                hasMoreAfter = true,
+                repeatEnabled = true,
+            ),
+        )
+    }
 }
