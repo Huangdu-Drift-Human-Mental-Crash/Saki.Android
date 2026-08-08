@@ -66,6 +66,39 @@ class OriginalPlaybackSkipRecoveryTest {
     }
 
     @Test
+    fun `deferred shuffled recovery preserves the existing permutation`() {
+        val queueSize = 8
+        val seed = 73L
+        val originalAnchor = 2
+        val originalOrder = SakiShuffleOrder(queueSize, seed, originalAnchor).toDisplayOrder()
+        val recoveryTarget = originalOrder[1]
+
+        val recoveryAnchor = deferredShuffleAnchorAfterSelection(
+            currentAnchorIndex = originalAnchor,
+            selectedSongIndex = recoveryTarget,
+            isFailureRecovery = true,
+        )
+
+        assertEquals(originalAnchor, recoveryAnchor)
+        assertEquals(
+            originalOrder,
+            SakiShuffleOrder(queueSize, seed, recoveryAnchor).toDisplayOrder(),
+        )
+    }
+
+    @Test
+    fun `manual deferred selection may establish a new shuffle anchor`() {
+        assertEquals(
+            5,
+            deferredShuffleAnchorAfterSelection(
+                currentAnchorIndex = 2,
+                selectedSongIndex = 5,
+                isFailureRecovery = false,
+            ),
+        )
+    }
+
+    @Test
     fun `virtual recovery extends beyond the active media window`() {
         assertEquals(
             VirtualQueueRecoveryAction.EXTEND_FORWARD,

@@ -501,6 +501,7 @@ class DefaultPlaybackManager @Inject constructor(
                     val currentIndex = activeController.currentMediaItemIndex
                     val enableShuffle = pendingDeferredShuffleEnabled ?: restoreShuffle
                     val pendingShuffleSeed = pendingDeferredShuffleSeed
+                    val pendingShuffleAnchor = pendingDeferredShuffleAnchorIndex
                     pendingDeferredShuffleEnabled = null
                     pendingDeferredShuffleSeed = 0L
                     pendingDeferredShuffleAnchorIndex = 0
@@ -508,7 +509,10 @@ class DefaultPlaybackManager @Inject constructor(
                         shuffleSeed = pendingShuffleSeed.takeUnless { it == 0L }
                             ?: shuffleSeedForQueue.takeUnless { it == 0L }
                             ?: System.nanoTime()
-                        shuffleAnchorIndex = currentIndex
+                        // The seed and anchor together identify the pending shuffle permutation.
+                        // Automatic recovery may start playback from a later item, but must not
+                        // regenerate the queue around that item or revisit already-failed tracks.
+                        shuffleAnchorIndex = pendingShuffleAnchor.coerceIn(0, fullQueueSize - 1)
                         sendShuffleOrderToService(activeController, fullQueueSize, shuffleSeed, shuffleAnchorIndex)
                         activeController.shuffleModeEnabled = true
                         shuffleDisplayOrder = SakiShuffleOrder(fullQueueSize, shuffleSeed, shuffleAnchorIndex).toDisplayOrder()
@@ -1498,10 +1502,15 @@ class DefaultPlaybackManager @Inject constructor(
             val enableShuffle = pendingDeferredShuffleEnabled ?: currentPending.restoreShuffle
             val shuffleSeedForQueue = pendingDeferredShuffleSeed.takeUnless { it == 0L }
                 ?: currentPending.shuffleSeedForQueue
+            val shuffleAnchorForQueue = deferredShuffleAnchorAfterSelection(
+                currentAnchorIndex = pendingDeferredShuffleAnchorIndex,
+                selectedSongIndex = targetSongIndex,
+                isFailureRecovery = isFailureRecovery,
+            )
             val generation = beginDeferredQueueLoad()
             pendingDeferredShuffleEnabled = if (currentPending.songs.size > 1) enableShuffle else null
             pendingDeferredShuffleSeed = shuffleSeedForQueue
-            pendingDeferredShuffleAnchorIndex = targetSongIndex
+            pendingDeferredShuffleAnchorIndex = shuffleAnchorForQueue
             pendingDeferredQueue = currentPending.copy(
                 generation = generation,
                 startIndex = targetSongIndex,
@@ -1893,6 +1902,12 @@ internal fun nextPendingQueueDisplayIndex(
     if (currentDisplayIndex < queueSize - 1) return currentDisplayIndex + 1
     return 0.takeIf { repeatMode != Player.REPEAT_MODE_OFF }
 }
+
+internal fun deferredShuffleAnchorAfterSelection(
+    currentAnchorIndex: Int,
+    selectedSongIndex: Int,
+    isFailureRecovery: Boolean,
+): Int = if (isFailureRecovery) currentAnchorIndex else selectedSongIndex
 
 internal enum class VirtualQueueRecoveryAction {
     ADVANCE_IN_WINDOW,
