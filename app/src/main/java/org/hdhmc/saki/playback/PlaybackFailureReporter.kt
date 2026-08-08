@@ -12,8 +12,17 @@ import org.hdhmc.saki.domain.model.PlaybackFailureKind
 class PlaybackFailureReporter @Inject constructor() {
     private val mutableFailure = MutableStateFlow<PlaybackFailure?>(null)
     private var nextEventId = 0L
+    @Volatile
+    private var pendingQueueSkipHandler: ((String) -> Boolean)? = null
 
     val failure: StateFlow<PlaybackFailure?> = mutableFailure.asStateFlow()
+
+    fun setPendingQueueSkipHandler(handler: (String) -> Boolean) {
+        pendingQueueSkipHandler = handler
+    }
+
+    fun requestPendingQueueSkip(failedSongId: String): Boolean =
+        pendingQueueSkipHandler?.invoke(failedSongId) == true
 
     @Synchronized
     fun report(

@@ -222,12 +222,18 @@ internal fun shouldApplyOriginalPlaybackFailureAction(
     openedStreamQuality: StreamQuality?,
     requestedStreamQuality: StreamQuality?,
     sourceBitRate: Int?,
+    sourceSuffix: String?,
+    sourceContentType: String?,
     forcedTranscode: Boolean,
 ): Boolean {
     if (!isOriginalPlaybackFailure(kind) || forcedTranscode) return false
     val streamQuality = openedStreamQuality ?: requestedStreamQuality ?: return false
     if (streamQuality == StreamQuality.ORIGINAL) return true
-    val source = sourceBitRate?.takeIf { it > 0 } ?: return false
+    val source = sourceBitRate?.takeIf { it > 0 }
+    if (source == null) {
+        return kind == PlaybackFailureKind.UNSUPPORTED_FORMAT &&
+            isKnownUnsupportedOriginalContainer(sourceSuffix, sourceContentType)
+    }
     val requestedLimit = streamQuality.maxBitRate?.takeIf { it > 0 } ?: return false
     return source <= requestedLimit
 }
@@ -1889,6 +1895,8 @@ class SakiPlaybackService : MediaSessionService() {
                     forcedTranscode = openedStream?.forcedTranscode == true ||
                         (placeholderUri != null && forcedTranscodes.containsKey(placeholderUri)),
                     sourceBitRate = currentRequest?.sourceBitRate,
+                    sourceSuffix = currentRequest?.suffix,
+                    sourceContentType = currentRequest?.mimeType,
                 )
             ) {
                 when (
@@ -1901,7 +1909,10 @@ class SakiPlaybackService : MediaSessionService() {
                         return
                     }
                     OriginalPlaybackFailureAction.SKIP -> {
-                        if (skipFailedMediaItem(activePlayer)) {
+                        if (
+                            skipFailedMediaItem(activePlayer) ||
+                            failedItem?.songId?.let(playbackFailureReporter::requestPendingQueueSkip) == true
+                        ) {
                             clearPlaybackFailureReport()
                             return
                         }

@@ -199,6 +199,7 @@ class DefaultPlaybackManager @Inject constructor(
     }
 
     init {
+        playbackFailureReporter.setPendingQueueSkipHandler(::requestPendingQueueSkip)
         scope.launch {
             playbackFailureReporter.failure.collect {
                 controller?.let(::syncState)
@@ -655,6 +656,52 @@ class DefaultPlaybackManager @Inject constructor(
     ): Int? {
         if (displayIndex !in pending.visualQueue.indices) return null
         return pendingDisplayOrder(pending)?.getOrNull(displayIndex) ?: displayIndex
+    }
+
+    private fun requestPendingQueueSkip(failedSongId: String): Boolean {
+        val pending = pendingDeferredQueue
+            ?.takeIf { queue -> queue.currentSongId == failedSongId }
+            ?: return false
+        val activeController = controller ?: return false
+        if (activeController.mediaItemCount != 1) return false
+        if (activeController.currentMediaItem?.toPlaybackRequestOrNull()?.songId != failedSongId) {
+            return false
+        }
+        val displayOrder = pendingDisplayOrder(pending)
+        val currentDisplayIndex = displayOrder
+            ?.indexOf(pending.startIndex)
+            ?.takeIf { index -> index >= 0 }
+            ?: pending.startIndex
+        val targetDisplayIndex = nextPendingQueueDisplayIndex(
+            currentDisplayIndex = currentDisplayIndex,
+            queueSize = pending.songs.size,
+            repeatMode = activeController.repeatMode,
+        ) ?: return false
+
+        scope.launch {
+            if (skipToPendingDeferredQueueItem(targetDisplayIndex)) return@launch
+            withController { expandedController ->
+                if (expandedController.currentMediaItem?.toPlaybackRequestOrNull()?.songId != failedSongId) {
+                    return@withController
+                }
+                val navigationRepeatMode = if (expandedController.repeatMode == Player.REPEAT_MODE_ONE) {
+                    Player.REPEAT_MODE_ALL
+                } else {
+                    expandedController.repeatMode
+                }
+                val nextIndex = expandedController.currentTimeline.getNextWindowIndex(
+                    expandedController.currentMediaItemIndex,
+                    navigationRepeatMode,
+                    expandedController.shuffleModeEnabled,
+                )
+                if (nextIndex == C.INDEX_UNSET) return@withController
+                expandedController.seekToDefaultPosition(nextIndex)
+                expandedController.prepare()
+                expandedController.play()
+                syncState(expandedController)
+            }
+        }
+        return true
     }
 
     private suspend fun buildVirtualQueueWindow(
@@ -1575,17 +1622,10 @@ internal fun classifyPlaybackFailure(
     suffix: String?,
     contentType: String?,
 ): PlaybackFailureKind {
-    val normalizedSuffix = suffix?.trim()?.lowercase(Locale.ROOT)
-    val normalizedContentType = contentType?.trim()?.lowercase(Locale.ROOT)
-    val isKnownUnsupportedContainer = normalizedSuffix == "wma" ||
-        normalizedSuffix == "asf" ||
-        normalizedContentType == "audio/x-ms-wma" ||
-        normalizedContentType == "video/x-ms-asf" ||
-        normalizedContentType == "application/vnd.ms-asf"
     if (
         errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
         errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
-        (isKnownUnsupportedContainer && errorCode in 3_000..3_999)
+        (isKnownUnsupportedOriginalContainer(suffix, contentType) && errorCode in 3_000..3_999)
     ) {
         return PlaybackFailureKind.UNSUPPORTED_FORMAT
     }
@@ -1596,6 +1636,29 @@ internal fun classifyPlaybackFailure(
         -> PlaybackFailureKind.DECODING_FAILED
         else -> PlaybackFailureKind.UNKNOWN
     }
+}
+
+internal fun isKnownUnsupportedOriginalContainer(
+    suffix: String?,
+    contentType: String?,
+): Boolean {
+    val normalizedSuffix = suffix?.trim()?.lowercase(Locale.ROOT)
+    val normalizedContentType = contentType?.trim()?.lowercase(Locale.ROOT)
+    return normalizedSuffix == "wma" ||
+        normalizedSuffix == "asf" ||
+        normalizedContentType == "audio/x-ms-wma" ||
+        normalizedContentType == "video/x-ms-asf" ||
+        normalizedContentType == "application/vnd.ms-asf"
+}
+
+internal fun nextPendingQueueDisplayIndex(
+    currentDisplayIndex: Int,
+    queueSize: Int,
+    repeatMode: Int,
+): Int? {
+    if (queueSize <= 1 || currentDisplayIndex !in 0 until queueSize) return null
+    if (currentDisplayIndex < queueSize - 1) return currentDisplayIndex + 1
+    return 0.takeIf { repeatMode != Player.REPEAT_MODE_OFF }
 }
 
 internal fun PlaybackQueueItem.playbackFormatLabel(): String? =
