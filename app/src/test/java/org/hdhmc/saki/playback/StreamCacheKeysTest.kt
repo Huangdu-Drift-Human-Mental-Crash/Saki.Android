@@ -97,4 +97,30 @@ class StreamCacheKeysTest {
 
         assertNull(parseStreamCacheKey(key))
     }
+
+    @Test
+    fun forcedTranscodeUsesDistinctParseableCacheKey() {
+        val normalKey = buildStreamCacheKey(
+            serverId = 42L,
+            songId = "folder|track",
+            quality = StreamQuality.KBPS_320,
+        )
+        val forcedKey = buildForcedTranscodeStreamCacheKey(
+            serverId = 42L,
+            songId = "folder|track",
+            quality = StreamQuality.KBPS_320,
+            format = "MP3",
+        )
+
+        assertFalse(normalKey == forcedKey)
+        assertEquals(
+            StreamCacheResourceKey(
+                serverId = 42L,
+                songId = "folder|track",
+                qualityKey = StreamQuality.KBPS_320.storageKey,
+                variantKey = "forced-mp3",
+            ),
+            parseStreamCacheKey(forcedKey),
+        )
+    }
 }

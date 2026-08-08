@@ -215,6 +215,16 @@ internal fun isOriginalPlaybackFailure(kind: PlaybackFailureKind): Boolean =
     kind == PlaybackFailureKind.UNSUPPORTED_FORMAT ||
         kind == PlaybackFailureKind.DECODING_FAILED
 
+internal fun shouldApplyOriginalPlaybackFailureAction(
+    kind: PlaybackFailureKind,
+    openedStreamQuality: StreamQuality?,
+    requestedStreamQuality: StreamQuality?,
+    forcedTranscode: Boolean,
+): Boolean =
+    isOriginalPlaybackFailure(kind) &&
+        !forcedTranscode &&
+        (openedStreamQuality ?: requestedStreamQuality) == StreamQuality.ORIGINAL
+
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
     networkType: NetworkType,
@@ -1108,31 +1118,7 @@ class SakiPlaybackService : MediaSessionService() {
                 prefs = prefs,
                 fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
             )
-        val preferLocalCache = shouldPreferLocalStreamCache(serverId)
-        val cacheLookupQuality = forcedTranscode?.quality
-            ?: if (preferLocalCache) StreamQuality.entries.last() else requestedQuality
-        val cachedQualityKey = if (timeOffsetSeconds == null) {
-            streamCacheRepository.findCachedQualityKey(serverId, songId, cacheLookupQuality)
-                ?.takeIf { qualityKey ->
-                    forcedTranscode == null || qualityKey == forcedTranscode.quality.storageKey
-                }
-        } else {
-            null
-        }
-        val cachedQuality = cachedQualityKey?.let { key -> StreamQuality.fromStorageKey(key) }
-        val cachedResourceKey = cachedQuality?.let { quality ->
-            streamCacheRepository.buildCacheKey(serverId, songId, quality)
-        }
-        if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
-            openedStreams.remove(uri.toString())
-            return dataSpec.buildUpon()
-                .setUri(cachedStreamUri(cachedResourceKey))
-                .setKey(cachedResourceKey)
-                .build()
-        }
-
-        val quality = cachedQuality ?: requestedQuality
-        if (forcedTranscode != null && cachedResourceKey == null) {
+        if (forcedTranscode != null) {
             val streamRequest = runBlocking {
                 subsonicRepository.buildStreamRequest(
                     serverId = serverId,
@@ -1146,10 +1132,11 @@ class SakiPlaybackService : MediaSessionService() {
                 throw IOException("No stream candidates for song $songId on server $serverId")
             }
             val candidate = streamRequest.candidates.first()
-            val cacheKey = streamCacheRepository.buildCacheKey(
-                serverId,
-                songId,
-                forcedTranscode.quality,
+            val cacheKey = buildForcedTranscodeStreamCacheKey(
+                serverId = serverId,
+                songId = songId,
+                quality = forcedTranscode.quality,
+                format = forcedTranscode.format,
             )
             return dataSpec.buildUpon()
                 .setUri(candidate.url)
@@ -1166,6 +1153,26 @@ class SakiPlaybackService : MediaSessionService() {
                 )
                 .build()
         }
+        val preferLocalCache = shouldPreferLocalStreamCache(serverId)
+        val cacheLookupQuality = if (preferLocalCache) StreamQuality.entries.last() else requestedQuality
+        val cachedQualityKey = if (timeOffsetSeconds == null) {
+            streamCacheRepository.findCachedQualityKey(serverId, songId, cacheLookupQuality)
+        } else {
+            null
+        }
+        val cachedQuality = cachedQualityKey?.let { key -> StreamQuality.fromStorageKey(key) }
+        val cachedResourceKey = cachedQuality?.let { quality ->
+            streamCacheRepository.buildCacheKey(serverId, songId, quality)
+        }
+        if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
+            openedStreams.remove(uri.toString())
+            return dataSpec.buildUpon()
+                .setUri(cachedStreamUri(cachedResourceKey))
+                .setKey(cachedResourceKey)
+                .build()
+        }
+
+        val quality = cachedQuality ?: requestedQuality
         val format = uri.getQueryParameter("format")
         if (!prefs.adaptiveQualityEnabled && cachedResourceKey == null && format != null && format != requestedQuality.format) {
             val streamRequest = runBlocking {
@@ -1844,7 +1851,29 @@ class SakiPlaybackService : MediaSessionService() {
                 suffix = failedItem?.suffix,
                 contentType = failedItem?.contentType,
             )
-            if (isOriginalPlaybackFailure(failureKind)) {
+            val currentItem = activePlayer.currentMediaItem
+            val currentRequest = currentItem?.toPlaybackRequestOrNull()
+            val placeholderUri = currentItem?.localConfiguration?.uri?.toString()
+            val openedStream = currentItem?.openedStream()
+            val requestedQuality = currentRequest?.let { request ->
+                if (request.isCached || request.localPath != null) {
+                    StreamQuality.entries.find { quality -> quality.maxBitRate == request.maxBitRate }
+                        ?: StreamQuality.ORIGINAL
+                } else {
+                    cachedPlaybackPrefs?.let { prefs -> request.requestedStreamQuality(prefs) }
+                        ?: StreamQuality.entries.find { quality -> quality.maxBitRate == request.maxBitRate }
+                        ?: StreamQuality.ORIGINAL
+                }
+            }
+            if (
+                shouldApplyOriginalPlaybackFailureAction(
+                    kind = failureKind,
+                    openedStreamQuality = openedStream?.quality,
+                    requestedStreamQuality = requestedQuality,
+                    forcedTranscode = openedStream?.forcedTranscode == true ||
+                        (placeholderUri != null && forcedTranscodes.containsKey(placeholderUri)),
+                )
+            ) {
                 when (
                     cachedPlaybackPrefs?.originalPlaybackFailureAction
                         ?: OriginalPlaybackFailureAction.STOP

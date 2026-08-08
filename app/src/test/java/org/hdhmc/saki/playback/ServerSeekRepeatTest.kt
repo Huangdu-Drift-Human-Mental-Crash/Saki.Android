@@ -67,6 +67,34 @@ class ServerSeekRepeatTest {
     }
 
     @Test
+    fun `original playback action requires an original non-forced stream`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = StreamQuality.ORIGINAL,
+                requestedStreamQuality = StreamQuality.KBPS_128,
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.KBPS_128,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.ORIGINAL,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                forcedTranscode = true,
+            ),
+        )
+    }
+
+    @Test
     fun `only whole-resource EOF marks a stream complete`() {
         assertTrue(isResourceEof(requestLength = C.LENGTH_UNSET.toLong(), bytesRead = 8_192L))
         assertTrue(isResourceEof(requestLength = 8_192L, bytesRead = 4_096L))

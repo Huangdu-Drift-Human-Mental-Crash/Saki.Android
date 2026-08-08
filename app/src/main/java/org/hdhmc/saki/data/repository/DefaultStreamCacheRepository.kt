@@ -646,7 +646,7 @@ class DefaultStreamCacheRepository @Inject constructor(
 
             val completeLength = completeStreamLength(streamCache.getContentMetadata(key))
             val isFullyCached = completeLength != null && streamCache.isCached(key, 0L, completeLength)
-            if (isFullyCached) {
+            if (isFullyCached && parsed.variantKey == null) {
                 cachedSongIdsByServerAndQuality
                     .getOrPut(parsed.serverId) { mutableMapOf() }
                     .getOrPut(parsed.qualityKey) { mutableSetOf() }
