@@ -328,19 +328,26 @@ class DefaultStreamCacheRepository @Inject constructor(
         val snapshot = snapshotForQueries()
         if (serverId == null) {
             StreamCacheSummary(
-                cachedSongIds = snapshot.cachedSongIdsByServerAndQuality.values
-                    .flatMap { byQuality -> byQuality.values }
-                    .flattenToSet(),
+                cachedSongIds = (
+                    snapshot.cachedSongIdsByServerAndQuality.keys +
+                        snapshot.playbackVariantKeysByServerAndQuality.keys
+                    )
+                    .flatMapTo(mutableSetOf()) { cachedServerId ->
+                        combinedStreamCachedSongIds(
+                            normalByQuality = snapshot.cachedSongIdsByServerAndQuality[cachedServerId].orEmpty(),
+                            variantsByQuality = snapshot.playbackVariantKeysByServerAndQuality[cachedServerId].orEmpty(),
+                            quality = null,
+                        )
+                    },
                 bytes = snapshot.bytesByServer.values.sum(),
             )
         } else {
             StreamCacheSummary(
-                cachedSongIds = snapshot.cachedSongIdsByServerAndQuality[serverId]
-                    ?.let { byQuality ->
-                        quality?.let { byQuality[it.storageKey].orEmpty() }
-                            ?: byQuality.values.flattenToSet()
-                    }
-                    .orEmpty(),
+                cachedSongIds = combinedStreamCachedSongIds(
+                    normalByQuality = snapshot.cachedSongIdsByServerAndQuality[serverId].orEmpty(),
+                    variantsByQuality = snapshot.playbackVariantKeysByServerAndQuality[serverId].orEmpty(),
+                    quality = quality,
+                ),
                 bytes = snapshot.bytesByServer[serverId] ?: 0L,
             )
         }
@@ -707,6 +714,20 @@ private data class StreamCacheSnapshot(
     val playbackVariantKeysByServerAndQuality: Map<Long, Map<String, Map<String, String>>> = emptyMap(),
     val bytesByServer: Map<Long, Long> = emptyMap(),
 )
+
+internal fun combinedStreamCachedSongIds(
+    normalByQuality: Map<String, Set<String>>,
+    variantsByQuality: Map<String, Map<String, String>>,
+    quality: StreamQuality?,
+): Set<String> = buildSet {
+    if (quality != null) {
+        addAll(normalByQuality[quality.storageKey].orEmpty())
+        addAll(variantsByQuality[quality.storageKey].orEmpty().keys)
+    } else {
+        normalByQuality.values.forEach(::addAll)
+        variantsByQuality.values.forEach { keysBySong -> addAll(keysBySong.keys) }
+    }
+}
 
 private const val STREAM_CACHE_SNAPSHOT_INITIAL_DELAY_MS = 5_000L
 private const val STREAM_CACHE_SNAPSHOT_REQUEST_DEBOUNCE_MS = 250L
