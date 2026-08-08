@@ -243,8 +243,9 @@ internal fun shouldApplyOriginalPlaybackFailureAction(
 
 internal fun canRetryOriginalWithForcedTranscode(
     usesLocalSource: Boolean,
+    hasCompleteStreamCache: Boolean = false,
     isOfflineDegraded: Boolean,
-): Boolean = !usesLocalSource || !isOfflineDegraded
+): Boolean = !(usesLocalSource || hasCompleteStreamCache) || !isOfflineDegraded
 
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
@@ -1998,9 +1999,13 @@ class SakiPlaybackService : MediaSessionService() {
         val request = mediaItem.toPlaybackRequestOrNull() ?: return false
         val sourceUri = mediaItem.localConfiguration?.uri?.toString() ?: return false
         val usesLocalSource = request.isCached || request.localPath != null
+        val hasCompleteStreamCache = mediaItem.openedStream()?.let { openedStream ->
+            streamCacheRepository.isCacheKeyFullyCached(openedStream.cacheKey)
+        } == true
         if (
             !canRetryOriginalWithForcedTranscode(
                 usesLocalSource = usesLocalSource,
+                hasCompleteStreamCache = hasCompleteStreamCache,
                 isOfflineDegraded = endpointSelector.isOfflineDegraded(request.serverId),
             )
         ) {

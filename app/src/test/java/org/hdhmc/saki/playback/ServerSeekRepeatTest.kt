@@ -211,6 +211,20 @@ class ServerSeekRepeatTest {
                 isOfflineDegraded = true,
             ),
         )
+        assertFalse(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = false,
+                hasCompleteStreamCache = true,
+                isOfflineDegraded = true,
+            ),
+        )
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = false,
+                hasCompleteStreamCache = true,
+                isOfflineDegraded = false,
+            ),
+        )
     }
 
     @Test
