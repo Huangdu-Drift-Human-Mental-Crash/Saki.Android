@@ -156,6 +156,34 @@ class ServerSeekRepeatTest {
     }
 
     @Test
+    fun `downloaded stream uses its persisted quality for original fallback`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.KBPS_320,
+                sourceBitRate = 1_411,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.ORIGINAL,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 320,
+                sourceSuffix = "mp3",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+    }
+
+    @Test
     fun `pending queue skip advances and respects end repeat mode`() {
         assertEquals(3, nextPendingQueueDisplayIndex(2, 5, Player.REPEAT_MODE_OFF))
         assertEquals(null, nextPendingQueueDisplayIndex(4, 5, Player.REPEAT_MODE_OFF))

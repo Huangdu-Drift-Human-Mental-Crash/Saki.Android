@@ -226,8 +226,10 @@ internal fun shouldApplyOriginalPlaybackFailureAction(
     sourceSuffix: String?,
     sourceContentType: String?,
     forcedTranscode: Boolean,
+    localStreamQuality: StreamQuality? = null,
 ): Boolean {
     if (!isOriginalPlaybackFailure(kind) || forcedTranscode) return false
+    if (localStreamQuality != null) return localStreamQuality == StreamQuality.ORIGINAL
     val streamQuality = openedStreamQuality ?: requestedStreamQuality ?: return false
     if (streamQuality == StreamQuality.ORIGINAL) return true
     val source = sourceBitRate?.takeIf { it > 0 }
@@ -1906,6 +1908,7 @@ class SakiPlaybackService : MediaSessionService() {
                     sourceBitRate = currentRequest?.sourceBitRate,
                     sourceSuffix = currentRequest?.suffix,
                     sourceContentType = currentRequest?.mimeType,
+                    localStreamQuality = currentRequest?.localStreamQuality,
                 )
             ) {
                 when (
