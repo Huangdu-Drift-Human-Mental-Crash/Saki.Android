@@ -152,6 +152,8 @@ private data class ActiveServerSeek(
 )
 
 private data class ForcedTranscode(
+    val serverId: Long,
+    val songId: String,
     val quality: StreamQuality = StreamQuality.KBPS_320,
     val format: String = AUTO_TRANSCODE_FORMAT,
 )
@@ -207,8 +209,8 @@ internal fun supportsTranscodedServerSeek(
     openedStreamQuality: StreamQuality?,
     forcedTranscode: Boolean = false,
 ): Boolean =
-    !isCached &&
-        openedStreamQuality != null &&
+    openedStreamQuality != null &&
+        (!isCached || forcedTranscode) &&
         (forcedTranscode || isConfirmedTranscode(sourceBitRate, openedStreamQuality.maxBitRate))
 
 internal fun isOriginalPlaybackFailure(kind: PlaybackFailureKind): Boolean =
@@ -219,11 +221,21 @@ internal fun shouldApplyOriginalPlaybackFailureAction(
     kind: PlaybackFailureKind,
     openedStreamQuality: StreamQuality?,
     requestedStreamQuality: StreamQuality?,
+    sourceBitRate: Int?,
     forcedTranscode: Boolean,
-): Boolean =
-    isOriginalPlaybackFailure(kind) &&
-        !forcedTranscode &&
-        (openedStreamQuality ?: requestedStreamQuality) == StreamQuality.ORIGINAL
+): Boolean {
+    if (!isOriginalPlaybackFailure(kind) || forcedTranscode) return false
+    val streamQuality = openedStreamQuality ?: requestedStreamQuality ?: return false
+    if (streamQuality == StreamQuality.ORIGINAL) return true
+    val source = sourceBitRate?.takeIf { it > 0 } ?: return false
+    val requestedLimit = streamQuality.maxBitRate?.takeIf { it > 0 } ?: return false
+    return source <= requestedLimit
+}
+
+internal fun canRetryOriginalWithForcedTranscode(
+    usesLocalSource: Boolean,
+    isOfflineDegraded: Boolean,
+): Boolean = !usesLocalSource || !isOfflineDegraded
 
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
@@ -1095,15 +1107,19 @@ class SakiPlaybackService : MediaSessionService() {
         allowCachedResource: Boolean = true,
     ): DataSpec {
         val uri = dataSpec.uri
-        if (uri.scheme != "saki" || uri.host != "stream") return dataSpec
+        val sourceKey = uri.toString()
+        val forcedTranscode = forcedTranscodes[sourceKey]
+        val isStreamPlaceholder = uri.scheme == "saki" && uri.host == "stream"
+        if (!isStreamPlaceholder && forcedTranscode == null) return dataSpec
 
-        val serverId = uri.getQueryParameter("serverId")?.toLongOrNull()
+        val serverId = forcedTranscode?.serverId
+            ?: uri.getQueryParameter("serverId")?.toLongOrNull()
             ?: throw IOException("Missing serverId in stream placeholder URI")
-        val songId = uri.getQueryParameter("songId")
+        val songId = forcedTranscode?.songId
+            ?: uri.getQueryParameter("songId")
             ?: throw IOException("Missing songId in stream placeholder URI")
         val activeSeek = activeServerSeek
             ?.takeIf { seek -> seek.serverId == serverId && seek.songId == songId }
-        val forcedTranscode = forcedTranscodes[uri.toString()]
         val timeOffsetSeconds = activeSeek
             ?.offsetMs
             ?.div(1_000L)
@@ -1146,7 +1162,7 @@ class SakiPlaybackService : MediaSessionService() {
                     StreamEndpointSelection(
                         serverId = serverId,
                         endpoint = candidate.endpoint,
-                        placeholderUri = uri.toString(),
+                        placeholderUri = sourceKey,
                         streamQuality = forcedTranscode.quality,
                         forcedTranscode = true,
                     ),
@@ -1872,6 +1888,7 @@ class SakiPlaybackService : MediaSessionService() {
                     requestedStreamQuality = requestedQuality,
                     forcedTranscode = openedStream?.forcedTranscode == true ||
                         (placeholderUri != null && forcedTranscodes.containsKey(placeholderUri)),
+                    sourceBitRate = currentRequest?.sourceBitRate,
                 )
             ) {
                 when (
@@ -1956,17 +1973,26 @@ class SakiPlaybackService : MediaSessionService() {
         val currentIndex = activePlayer.currentMediaItemIndex
         val mediaItem = activePlayer.currentMediaItem ?: return false
         val request = mediaItem.toPlaybackRequestOrNull() ?: return false
-        val placeholderUri = mediaItem.localConfiguration?.uri
-            ?.takeIf { uri -> uri.scheme == "saki" && uri.host == "stream" }
-            ?.toString()
-            ?: return false
-        if (request.isCached || request.localPath != null) return false
-        if (forcedTranscodes.putIfAbsent(placeholderUri, ForcedTranscode()) != null) return false
+        val sourceUri = mediaItem.localConfiguration?.uri?.toString() ?: return false
+        val usesLocalSource = request.isCached || request.localPath != null
+        if (
+            !canRetryOriginalWithForcedTranscode(
+                usesLocalSource = usesLocalSource,
+                isOfflineDegraded = endpointSelector.isOfflineDegraded(request.serverId),
+            )
+        ) {
+            return false
+        }
+        val forcedTranscode = ForcedTranscode(
+            serverId = request.serverId,
+            songId = request.songId,
+        )
+        if (forcedTranscodes.putIfAbsent(sourceUri, forcedTranscode) != null) return false
         syncAutomaticTranscodeSessionExtras()
 
         val resumePositionMs = activePlayer.logicalCurrentPositionMs().toWholeSecondOffsetMs()
         val wasPlaying = activePlayer.playWhenReady
-        openedStreams.remove(placeholderUri)
+        openedStreams.remove(sourceUri)
         activePlayer.stop()
         updateActiveServerSeek(
             if (resumePositionMs > 0L) {

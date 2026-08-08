@@ -50,7 +50,7 @@ class ServerSeekRepeatTest {
         )
         assertTrue(
             supportsTranscodedServerSeek(
-                isCached = false,
+                isCached = true,
                 sourceBitRate = 96,
                 openedStreamQuality = StreamQuality.KBPS_320,
                 forcedTranscode = true,
@@ -73,6 +73,7 @@ class ServerSeekRepeatTest {
                 kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
                 openedStreamQuality = StreamQuality.ORIGINAL,
                 requestedStreamQuality = StreamQuality.KBPS_128,
+                sourceBitRate = null,
                 forcedTranscode = false,
             ),
         )
@@ -81,6 +82,7 @@ class ServerSeekRepeatTest {
                 kind = PlaybackFailureKind.DECODING_FAILED,
                 openedStreamQuality = StreamQuality.KBPS_128,
                 requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 320,
                 forcedTranscode = false,
             ),
         )
@@ -89,7 +91,52 @@ class ServerSeekRepeatTest {
                 kind = PlaybackFailureKind.DECODING_FAILED,
                 openedStreamQuality = StreamQuality.ORIGINAL,
                 requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = null,
                 forcedTranscode = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `capped pass-through stream is treated as original`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = StreamQuality.KBPS_320,
+                requestedStreamQuality = StreamQuality.KBPS_320,
+                sourceBitRate = 192,
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.KBPS_128,
+                requestedStreamQuality = StreamQuality.KBPS_128,
+                sourceBitRate = 320,
+                forcedTranscode = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `downloaded original can retry remotely only while server is reachable`() {
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = true,
+                isOfflineDegraded = false,
+            ),
+        )
+        assertFalse(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = true,
+                isOfflineDegraded = true,
+            ),
+        )
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = false,
+                isOfflineDegraded = true,
             ),
         )
     }
