@@ -279,6 +279,44 @@ class ServerSeekRepeatTest {
     }
 
     @Test
+    fun `complete forced transcode cache resumes with local seek`() {
+        assertEquals(
+            ForcedTranscodeResumePlan(
+                serverOffsetMs = null,
+                playerPositionMs = 83_000L,
+            ),
+            planForcedTranscodeResume(
+                resumePositionMs = 83_000L,
+                hasCompleteForcedTranscodeCache = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `uncached forced transcode resumes with server offset`() {
+        assertEquals(
+            ForcedTranscodeResumePlan(
+                serverOffsetMs = 83_000L,
+                playerPositionMs = 0L,
+            ),
+            planForcedTranscodeResume(
+                resumePositionMs = 83_000L,
+                hasCompleteForcedTranscodeCache = false,
+            ),
+        )
+        assertEquals(
+            ForcedTranscodeResumePlan(
+                serverOffsetMs = null,
+                playerPositionMs = 0L,
+            ),
+            planForcedTranscodeResume(
+                resumePositionMs = 0L,
+                hasCompleteForcedTranscodeCache = false,
+            ),
+        )
+    }
+
+    @Test
     fun `only whole-resource EOF marks a stream complete`() {
         assertTrue(isResourceEof(requestLength = C.LENGTH_UNSET.toLong(), bytesRead = 8_192L))
         assertTrue(isResourceEof(requestLength = 8_192L, bytesRead = 4_096L))

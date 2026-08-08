@@ -275,6 +275,29 @@ internal fun canRetryOriginalWithForcedTranscode(
     !(usesLocalSource || hasCompleteStreamCache) ||
     !isOfflineDegraded
 
+internal data class ForcedTranscodeResumePlan(
+    val serverOffsetMs: Long?,
+    val playerPositionMs: Long,
+)
+
+internal fun planForcedTranscodeResume(
+    resumePositionMs: Long,
+    hasCompleteForcedTranscodeCache: Boolean,
+): ForcedTranscodeResumePlan {
+    val positionMs = resumePositionMs.coerceAtLeast(0L)
+    return if (hasCompleteForcedTranscodeCache) {
+        ForcedTranscodeResumePlan(
+            serverOffsetMs = null,
+            playerPositionMs = positionMs,
+        )
+    } else {
+        ForcedTranscodeResumePlan(
+            serverOffsetMs = positionMs.takeIf { it > 0L },
+            playerPositionMs = 0L,
+        )
+    }
+}
+
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
     networkType: NetworkType,
@@ -2057,23 +2080,25 @@ class SakiPlaybackService : MediaSessionService() {
         syncAutomaticTranscodeSessionExtras()
 
         val resumePositionMs = activePlayer.logicalCurrentPositionMs().toWholeSecondOffsetMs()
+        val resumePlan = planForcedTranscodeResume(
+            resumePositionMs = resumePositionMs,
+            hasCompleteForcedTranscodeCache = hasCompleteForcedTranscodeCache,
+        )
         val wasPlaying = activePlayer.playWhenReady
         openedStreams.remove(sourceUri)
         activePlayer.stop()
         updateActiveServerSeek(
-            if (resumePositionMs > 0L) {
+            resumePlan.serverOffsetMs?.let { serverOffsetMs ->
                 ActiveServerSeek(
                     mediaItemIndex = currentIndex,
                     serverId = request.serverId,
                     songId = request.songId,
-                    offsetMs = resumePositionMs,
+                    offsetMs = serverOffsetMs,
                     streamQuality = StreamQuality.KBPS_320,
                 )
-            } else {
-                null
             },
         )
-        activePlayer.seekTo(currentIndex, 0L)
+        activePlayer.seekTo(currentIndex, resumePlan.playerPositionMs)
         activePlayer.prepare()
         activePlayer.playWhenReady = wasPlaying
         return true
