@@ -7,6 +7,7 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -19,7 +20,9 @@ import org.hdhmc.saki.data.remote.NetworkTypeProvider
 import org.hdhmc.saki.di.DefaultDispatcher
 import org.hdhmc.saki.di.MainDispatcher
 import org.hdhmc.saki.domain.model.CachedSong
+import org.hdhmc.saki.domain.model.AutomaticPlaybackTranscode
 import org.hdhmc.saki.domain.model.PlaybackProgressState
+import org.hdhmc.saki.domain.model.PlaybackFailureKind
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.PlaybackRuntimeInfo
 import org.hdhmc.saki.domain.model.PlaybackSessionState
@@ -35,6 +38,7 @@ import org.hdhmc.saki.domain.repository.SubsonicRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -70,6 +74,7 @@ class DefaultPlaybackManager @Inject constructor(
     private val subsonicRepository: SubsonicRepository,
     private val networkTypeProvider: NetworkTypeProvider,
     private val endpointSelector: EndpointSelector,
+    private val playbackFailureReporter: PlaybackFailureReporter,
 ) : PlaybackManager {
     private val scope = CoroutineScope(SupervisorJob() + mainDispatcher)
     private val controllerMutex = Mutex()
@@ -93,6 +98,12 @@ class DefaultPlaybackManager @Inject constructor(
             syncExternalShuffleState(player)
             syncState(player)
             maybeScheduleVirtualQueueWindowUpdate(player)
+        }
+    }
+
+    private val controllerSessionListener = object : MediaController.Listener {
+        override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
+            syncState(controller)
         }
     }
 
@@ -188,6 +199,11 @@ class DefaultPlaybackManager @Inject constructor(
     }
 
     init {
+        scope.launch {
+            playbackFailureReporter.failure.collect {
+                controller?.let(::syncState)
+            }
+        }
         scope.launch {
             streamCacheRepository.observeCacheVersion().collect {
                 if (it > 0L) cacheReady = true
@@ -1025,6 +1041,13 @@ class DefaultPlaybackManager @Inject constructor(
 
     override suspend fun resume() {
         withController { activeController ->
+            activeController.playerError?.let {
+                // Media3 does not retry a failed item, or emit onPlayerError again, from play()
+                // alone. Re-prepare so a transient source failure can recover, while retaining a
+                // service-originated report for persistent failures such as unsupported cached
+                // containers.
+                activeController.prepare()
+            }
             activeController.play()
             syncState(activeController)
         }
@@ -1280,6 +1303,7 @@ class DefaultPlaybackManager @Inject constructor(
                 )
                 val controllerFuture = MediaController.Builder(appContext, sessionToken)
                     .setApplicationLooper(Looper.getMainLooper())
+                    .setListener(controllerSessionListener)
                     .buildAsync()
                 val connectedController = controllerFuture.await(appContext)
                 connectedController.addListener(controllerListener)
@@ -1298,6 +1322,9 @@ class DefaultPlaybackManager @Inject constructor(
             .takeUnless { it == C.INDEX_UNSET }
             ?: -1
         val currentRequest = player.currentMediaItem?.toPlaybackRequestOrNull()
+        val automaticTranscode = (player as? MediaController)
+            ?.sessionExtras
+            ?.toAutomaticPlaybackTranscode(player.currentMediaItem?.mediaId)
         val pendingQueue = pendingDeferredQueue
             ?.takeIf { pending ->
                 player.mediaItemCount == 1 &&
@@ -1374,6 +1401,8 @@ class DefaultPlaybackManager @Inject constructor(
                 repeatMode = player.repeatMode.toRepeatModeSetting(),
                 shuffleEnabled = pendingDeferredShuffleEnabled ?: (shuffleDisplayOrder != null || player.shuffleModeEnabled),
                 runtimeInfo = player.currentAudioRuntimeInfoOrNull(),
+                automaticTranscode = automaticTranscode,
+                failure = playbackFailureReporter.failure.value,
             )
         }
     }
@@ -1527,6 +1556,51 @@ class DefaultPlaybackManager @Inject constructor(
         const val VIRTUAL_QUEUE_PRELOAD_THRESHOLD = 12
     }
 }
+
+private fun Bundle.toAutomaticPlaybackTranscode(currentMediaId: String?): AutomaticPlaybackTranscode? {
+    if (getString(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_MEDIA_ID) != currentMediaId) return null
+    val formatLabel = getString(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_FORMAT)
+        ?.takeIf(String::isNotBlank)
+        ?: return null
+    val maxBitRateKbps = getInt(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE)
+        .takeIf { containsKey(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE) }
+    return AutomaticPlaybackTranscode(
+        formatLabel = formatLabel,
+        maxBitRateKbps = maxBitRateKbps,
+    )
+}
+
+internal fun classifyPlaybackFailure(
+    errorCode: Int,
+    suffix: String?,
+    contentType: String?,
+): PlaybackFailureKind {
+    val normalizedSuffix = suffix?.trim()?.lowercase(Locale.ROOT)
+    val normalizedContentType = contentType?.trim()?.lowercase(Locale.ROOT)
+    val isKnownUnsupportedContainer = normalizedSuffix == "wma" ||
+        normalizedSuffix == "asf" ||
+        normalizedContentType == "audio/x-ms-wma" ||
+        normalizedContentType == "video/x-ms-asf" ||
+        normalizedContentType == "application/vnd.ms-asf"
+    if (
+        errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+        (isKnownUnsupportedContainer && errorCode in 3_000..3_999)
+    ) {
+        return PlaybackFailureKind.UNSUPPORTED_FORMAT
+    }
+    return when (errorCode) {
+        in 2_000..2_999 -> PlaybackFailureKind.SOURCE_UNAVAILABLE
+        in 3_000..3_999,
+        in 4_000..4_999,
+        -> PlaybackFailureKind.DECODING_FAILED
+        else -> PlaybackFailureKind.UNKNOWN
+    }
+}
+
+internal fun PlaybackQueueItem.playbackFormatLabel(): String? =
+    suffix?.trim()?.takeIf(String::isNotEmpty)?.uppercase(Locale.ROOT)
+        ?: contentType?.trim()?.takeIf(String::isNotEmpty)
 
 private suspend fun ListenableFuture<MediaController>.await(
     appContext: Context,

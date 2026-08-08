@@ -141,6 +141,20 @@ enum class AlacDecoderMode(
     }
 }
 
+enum class OriginalPlaybackFailureAction(
+    val storageKey: String,
+) {
+    STOP("stop"),
+    SKIP("skip"),
+    AUTO_TRANSCODE("auto_transcode"),
+    ;
+
+    companion object {
+        fun fromStorageKey(storageKey: String?): OriginalPlaybackFailureAction =
+            entries.firstOrNull { it.storageKey == storageKey } ?: STOP
+    }
+}
+
 const val DEFAULT_CUSTOM_BUFFER_SECONDS = 60
 const val MIN_CUSTOM_BUFFER_SECONDS = 30
 const val MAX_CUSTOM_BUFFER_SECONDS = 1800
@@ -187,6 +201,8 @@ data class PlaybackPreferences(
     val customBufferSeconds: Int = DEFAULT_CUSTOM_BUFFER_SECONDS,
     val imageCacheSizeMb: Int = DEFAULT_IMAGE_CACHE_SIZE_MB,
     val alacDecoderMode: AlacDecoderMode = AlacDecoderMode.AUTO,
+    val originalPlaybackFailureAction: OriginalPlaybackFailureAction =
+        OriginalPlaybackFailureAction.STOP,
 ) {
     val streamCacheSizeBytes: Long
         get() = streamCacheSizeMb.toLong() * 1024L * 1024L
@@ -328,6 +344,11 @@ data class PlaybackRuntimeInfo(
     val language: String? = null,
 )
 
+data class AutomaticPlaybackTranscode(
+    val formatLabel: String,
+    val maxBitRateKbps: Int?,
+)
+
 data class PlaybackProgressState(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
@@ -348,4 +369,6 @@ data class PlaybackSessionState(
     val shuffleEnabled: Boolean = false,
     val preferences: PlaybackPreferences = PlaybackPreferences(),
     val runtimeInfo: PlaybackRuntimeInfo? = null,
+    val automaticTranscode: AutomaticPlaybackTranscode? = null,
+    val failure: PlaybackFailure? = null,
 )

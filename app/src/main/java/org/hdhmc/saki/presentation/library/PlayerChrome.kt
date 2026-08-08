@@ -163,6 +163,7 @@ import com.materialkolor.score.Score
 import org.hdhmc.saki.R
 import org.hdhmc.saki.presentation.EndpointProbeInfo
 import org.hdhmc.saki.presentation.predictiveBackMotion
+import org.hdhmc.saki.presentation.toUiText
 import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.PlaybackProgressState
@@ -790,16 +791,23 @@ fun NowPlayingOverlay(
             val playerSnackbarHostState = remember { SnackbarHostState() }
             val scope = rememberCoroutineScope()
             var snackbarJob by remember { mutableStateOf<Job?>(null) }
-            fun showPlayerSnackbar(message: String) {
+            fun showPlayerSnackbar(message: String, visibleForMs: Long = 1_500L) {
                 snackbarJob?.cancel()
                 playerSnackbarHostState.currentSnackbarData?.dismiss()
                 snackbarJob = scope.launch {
                     val showJob = launch {
                         playerSnackbarHostState.showSnackbar(message, duration = SnackbarDuration.Indefinite)
                     }
-                    delay(1500)
+                    delay(visibleForMs)
                     showJob.cancel()
                     playerSnackbarHostState.currentSnackbarData?.dismiss()
+                }
+            }
+            val playbackFailure = playbackState.failure
+            val playbackFailureMessage = playbackFailure?.toUiText()?.asString(context)
+            LaunchedEffect(visible, playbackFailure?.eventId) {
+                if (visible && playbackFailureMessage != null) {
+                    showPlayerSnackbar(playbackFailureMessage, visibleForMs = 4_500L)
                 }
             }
             val overlayMaxWidth = maxWidth
@@ -1106,17 +1114,36 @@ fun NowPlayingOverlay(
             ) {
                 @Composable
                 fun StatusPill(modifier: Modifier) {
+                    val automaticTranscode = playbackState.automaticTranscode
+                    val statusText = if (automaticTranscode != null) {
+                        automaticTranscode.maxBitRateKbps?.let { maxBitRate ->
+                            stringResource(
+                                R.string.player_auto_transcode_status,
+                                automaticTranscode.formatLabel,
+                                maxBitRate,
+                            )
+                        } ?: stringResource(
+                            R.string.player_auto_transcode_format_status,
+                            automaticTranscode.formatLabel,
+                        )
+                    } else {
+                        when {
+                            track.isCached -> stringResource(R.string.player_offline)
+                            playbackState.isStreamCached -> stringResource(R.string.player_cached)
+                            else -> stringResource(R.string.player_streaming)
+                        } + " • ${localizeQualityLabel(track.qualityLabel)}"
+                    }
                     Surface(
                         modifier = modifier,
                         shape = MaterialTheme.shapes.large,
-                        color = (if (isDark) Color.Black else Color.White).copy(alpha = 0.28f),
+                        color = if (automaticTranscode != null) {
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f)
+                        } else {
+                            (if (isDark) Color.Black else Color.White).copy(alpha = 0.28f)
+                        },
                     ) {
                         Text(
-                            text = when {
-                                track.isCached -> stringResource(R.string.player_offline)
-                                playbackState.isStreamCached -> stringResource(R.string.player_cached)
-                                else -> stringResource(R.string.player_streaming)
-                            } + " • ${localizeQualityLabel(track.qualityLabel)}",
+                            text = statusText,
                             modifier = Modifier.padding(
                                 horizontal = if (compact) 10.dp else 12.dp,
                                 vertical = if (compact) 6.dp else 8.dp,
@@ -1126,7 +1153,11 @@ fun NowPlayingOverlay(
                             } else {
                                 MaterialTheme.typography.labelLarge
                             },
-                            color = onArtwork,
+                            color = if (automaticTranscode != null) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                onArtwork
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -1152,7 +1183,15 @@ fun NowPlayingOverlay(
                     },
                     status = { statusModifier ->
                         StatusPill(
-                            statusModifier.widthIn(max = if (compact) 144.dp else 180.dp),
+                            statusModifier.widthIn(
+                                max = if (playbackState.automaticTranscode != null) {
+                                    if (compact) 176.dp else 208.dp
+                                } else if (compact) {
+                                    144.dp
+                                } else {
+                                    180.dp
+                                },
+                            ),
                         )
                     },
                     more = if (includeMore) {

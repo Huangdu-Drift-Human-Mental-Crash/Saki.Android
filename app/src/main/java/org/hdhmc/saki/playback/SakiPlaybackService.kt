@@ -49,6 +49,8 @@ import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshot
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSource
 import org.hdhmc.saki.domain.model.LocalPlayQueueSnapshotSourceType
 import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.PlaybackFailureKind
+import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.domain.model.Song
 import org.hdhmc.saki.domain.model.SongLyrics
@@ -96,6 +98,8 @@ private const val STREAM_PREFETCH_REEVALUATION_MS = 30_000L
 private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
 private const val BLUETOOTH_LYRICS_MIN_POLL_DELAY_MS = 50L
 private const val BLUETOOTH_LYRICS_MAX_POLL_DELAY_MS = 500L
+private const val PLAYBACK_FAILURE_REPORT_DELAY_MS = 750L
+private const val AUTO_TRANSCODE_FORMAT = "mp3"
 
 private fun Long.coerceKnownDuration(): Long? {
     return takeIf { it != C.TIME_UNSET && it > 0L }
@@ -147,6 +151,16 @@ private data class ActiveServerSeek(
     val streamQuality: StreamQuality,
 )
 
+private data class ForcedTranscode(
+    val quality: StreamQuality = StreamQuality.KBPS_320,
+    val format: String = AUTO_TRANSCODE_FORMAT,
+)
+
+private data class OpenedStream(
+    val quality: StreamQuality,
+    val forcedTranscode: Boolean,
+)
+
 private data class BluetoothLyricsDisplayConfig(
     val enabled: Boolean,
     val offsetMs: Int,
@@ -191,10 +205,15 @@ internal fun supportsTranscodedServerSeek(
     isCached: Boolean,
     sourceBitRate: Int?,
     openedStreamQuality: StreamQuality?,
+    forcedTranscode: Boolean = false,
 ): Boolean =
     !isCached &&
         openedStreamQuality != null &&
-        isConfirmedTranscode(sourceBitRate, openedStreamQuality.maxBitRate)
+        (forcedTranscode || isConfirmedTranscode(sourceBitRate, openedStreamQuality.maxBitRate))
+
+internal fun isOriginalPlaybackFailure(kind: PlaybackFailureKind): Boolean =
+    kind == PlaybackFailureKind.UNSUPPORTED_FORMAT ||
+        kind == PlaybackFailureKind.DECODING_FAILED
 
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
@@ -221,6 +240,9 @@ class SakiPlaybackService : MediaSessionService() {
         const val EXTRA_SHUFFLE_SEED = "saki.extra.SHUFFLE_SEED"
         const val EXTRA_SHUFFLE_ANCHOR = "saki.extra.SHUFFLE_ANCHOR"
         const val EXTRA_SHUFFLE_COUNT = "saki.extra.SHUFFLE_COUNT"
+        const val EXTRA_AUTO_TRANSCODE_MEDIA_ID = "saki.extra.AUTO_TRANSCODE_MEDIA_ID"
+        const val EXTRA_AUTO_TRANSCODE_FORMAT = "saki.extra.AUTO_TRANSCODE_FORMAT"
+        const val EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE = "saki.extra.AUTO_TRANSCODE_MAX_BIT_RATE"
     }
 
     private var pendingShuffleOrder: Triple<Long, Int, Int>? = null // seed, anchor, count
@@ -254,6 +276,9 @@ class SakiPlaybackService : MediaSessionService() {
     @Inject
     lateinit var endpointSelector: org.hdhmc.saki.data.remote.EndpointSelector
 
+    @Inject
+    lateinit var playbackFailureReporter: PlaybackFailureReporter
+
     private val serviceScope = CoroutineScope(SupervisorJob())
     private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -269,6 +294,9 @@ class SakiPlaybackService : MediaSessionService() {
     private lateinit var streamCacheDataSourceFactory: CacheDataSource.Factory
     private var streamPrefetchJob: Job? = null
     private var streamPrefetchReevaluationJob: Job? = null
+    private var playbackFailureReportJob: Job? = null
+    private var pendingPlaybackFailureMediaId: String? = null
+    private var pendingPlaybackFailureErrorCode: Int? = null
     private var activeStreamPrefetchKey: String? = null
     private val completedStreamPrefetchKeysByTarget = ConcurrentHashMap<StreamPrefetchTargetKey, String>()
     private val deferredStreamPrefetchTargets = ConcurrentHashMap<StreamPrefetchTargetKey, Long>()
@@ -276,7 +304,8 @@ class SakiPlaybackService : MediaSessionService() {
     private var activeStreamCacheWriter: CacheWriter? = null
     @Volatile
     private var activeServerSeek: ActiveServerSeek? = null
-    private val openedStreamQualities = ConcurrentHashMap<String, StreamQuality>()
+    private val openedStreams = ConcurrentHashMap<String, OpenedStream>()
+    private val forcedTranscodes = ConcurrentHashMap<String, ForcedTranscode>()
     private var pauseAtEndBeforeServerSeek: Boolean? = null
 
     override fun onCreate() {
@@ -305,7 +334,10 @@ class SakiPlaybackService : MediaSessionService() {
                     // Media3 invokes this only after the upstream data source opens successfully.
                     val selection = dataSpec.customData as? StreamEndpointSelection ?: return
                     endpointSelector.recordSuccess(selection.serverId, selection.endpoint)
-                    openedStreamQualities[selection.placeholderUri] = selection.streamQuality
+                    openedStreams[selection.placeholderUri] = OpenedStream(
+                        quality = selection.streamQuality,
+                        forcedTranscode = selection.forcedTranscode,
+                    )
                 }
 
                 override fun onBytesTransferred(
@@ -413,6 +445,7 @@ class SakiPlaybackService : MediaSessionService() {
             .setCallback(SakiMediaSessionCallback())
             .setBitmapLoader(CoilBitmapLoader(this))
             .build()
+        syncAutomaticTranscodeSessionExtras()
         syncMediaButtonPreferences()
 
         playerScope.launch {
@@ -864,8 +897,8 @@ class SakiPlaybackService : MediaSessionService() {
     private fun ExoPlayer.logicalCurrentPositionMs(): Long =
         currentPosition.coerceAtLeast(0L) + currentStreamOffsetMs()
 
-    private fun MediaItem.openedStreamQuality(): StreamQuality? =
-        localConfiguration?.uri?.toString()?.let(openedStreamQualities::get)
+    private fun MediaItem.openedStream(): OpenedStream? =
+        localConfiguration?.uri?.toString()?.let(openedStreams::get)
 
     private fun ExoPlayer.durationForPrefetchMs(
         index: Int,
@@ -999,6 +1032,7 @@ class SakiPlaybackService : MediaSessionService() {
         val endpoint: ServerEndpoint,
         val placeholderUri: String,
         val streamQuality: StreamQuality,
+        val forcedTranscode: Boolean = false,
     )
 
     private data class StreamPrefetchPlan(
@@ -1059,6 +1093,7 @@ class SakiPlaybackService : MediaSessionService() {
             ?: throw IOException("Missing songId in stream placeholder URI")
         val activeSeek = activeServerSeek
             ?.takeIf { seek -> seek.serverId == serverId && seek.songId == songId }
+        val forcedTranscode = forcedTranscodes[uri.toString()]
         val timeOffsetSeconds = activeSeek
             ?.offsetMs
             ?.div(1_000L)
@@ -1067,14 +1102,20 @@ class SakiPlaybackService : MediaSessionService() {
 
         // Use cached prefs to avoid blocking; fall back to blocking read if not yet available
         val prefs = cachedPlaybackPrefs ?: runBlocking { playbackPreferencesRepository.getPreferences() }
-        val requestedQuality = activeSeek?.streamQuality ?: requestedStreamQuality(
-            prefs = prefs,
-            fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
-        )
+        val requestedQuality = activeSeek?.streamQuality
+            ?: forcedTranscode?.quality
+            ?: requestedStreamQuality(
+                prefs = prefs,
+                fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
+            )
         val preferLocalCache = shouldPreferLocalStreamCache(serverId)
-        val cacheLookupQuality = if (preferLocalCache) StreamQuality.entries.last() else requestedQuality
+        val cacheLookupQuality = forcedTranscode?.quality
+            ?: if (preferLocalCache) StreamQuality.entries.last() else requestedQuality
         val cachedQualityKey = if (timeOffsetSeconds == null) {
             streamCacheRepository.findCachedQualityKey(serverId, songId, cacheLookupQuality)
+                ?.takeIf { qualityKey ->
+                    forcedTranscode == null || qualityKey == forcedTranscode.quality.storageKey
+                }
         } else {
             null
         }
@@ -1083,7 +1124,7 @@ class SakiPlaybackService : MediaSessionService() {
             streamCacheRepository.buildCacheKey(serverId, songId, quality)
         }
         if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
-            openedStreamQualities.remove(uri.toString())
+            openedStreams.remove(uri.toString())
             return dataSpec.buildUpon()
                 .setUri(cachedStreamUri(cachedResourceKey))
                 .setKey(cachedResourceKey)
@@ -1091,6 +1132,40 @@ class SakiPlaybackService : MediaSessionService() {
         }
 
         val quality = cachedQuality ?: requestedQuality
+        if (forcedTranscode != null && cachedResourceKey == null) {
+            val streamRequest = runBlocking {
+                subsonicRepository.buildStreamRequest(
+                    serverId = serverId,
+                    songId = songId,
+                    maxBitRate = forcedTranscode.quality.maxBitRate,
+                    format = forcedTranscode.format,
+                    timeOffsetSeconds = timeOffsetSeconds,
+                )
+            }
+            if (streamRequest.candidates.isEmpty()) {
+                throw IOException("No stream candidates for song $songId on server $serverId")
+            }
+            val candidate = streamRequest.candidates.first()
+            val cacheKey = streamCacheRepository.buildCacheKey(
+                serverId,
+                songId,
+                forcedTranscode.quality,
+            )
+            return dataSpec.buildUpon()
+                .setUri(candidate.url)
+                .setKey(cacheKey.forStreamOffset(timeOffsetSeconds))
+                .setFlags(dataSpec.flags.forStreamOffset(timeOffsetSeconds))
+                .setCustomData(
+                    StreamEndpointSelection(
+                        serverId = serverId,
+                        endpoint = candidate.endpoint,
+                        placeholderUri = uri.toString(),
+                        streamQuality = forcedTranscode.quality,
+                        forcedTranscode = true,
+                    ),
+                )
+                .build()
+        }
         val format = uri.getQueryParameter("format")
         if (!prefs.adaptiveQualityEnabled && cachedResourceKey == null && format != null && format != requestedQuality.format) {
             val streamRequest = runBlocking {
@@ -1161,8 +1236,8 @@ class SakiPlaybackService : MediaSessionService() {
             val state = super.getState()
             val currentItem = exoPlayer.currentMediaItem
             val currentRequest = currentItem?.toPlaybackRequestOrNull()
-            val openedQuality = currentItem?.openedStreamQuality()
-            val exposesServerSideSeek = currentRequest?.supportsServerSideSeek(openedQuality) == true &&
+            val openedStream = currentItem?.openedStream()
+            val exposesServerSideSeek = currentRequest?.supportsServerSideSeek(openedStream) == true &&
                 currentItem.metadataDurationMs() != null
             if (!exposesServerSideSeek) {
                 return state
@@ -1176,7 +1251,7 @@ class SakiPlaybackService : MediaSessionService() {
                         val durationMs = item.metadataDurationMs()
                         if (
                             index == exoPlayer.currentMediaItemIndex &&
-                            request?.supportsServerSideSeek(openedQuality) == true &&
+                            request?.supportsServerSideSeek(openedStream) == true &&
                             durationMs != null
                         ) {
                             itemData.buildUpon()
@@ -1264,8 +1339,9 @@ class SakiPlaybackService : MediaSessionService() {
             if (mediaItemIndex == C.INDEX_UNSET) return false
             val item = exoPlayer.currentMediaItem ?: return false
             val request = item.toPlaybackRequestOrNull() ?: return false
-            val openedQuality = item.openedStreamQuality() ?: return false
-            if (!request.supportsServerSideSeek(openedQuality)) return false
+            val openedStream = item.openedStream() ?: return false
+            if (!request.supportsServerSideSeek(openedStream)) return false
+            val openedQuality = openedStream.quality
 
             val durationMs = item.metadataDurationMs() ?: return false
             val targetPositionMs = requestedPositionMs
@@ -1388,8 +1464,13 @@ class SakiPlaybackService : MediaSessionService() {
         activePlayer.playWhenReady = shouldResume
     }
 
-    private fun PlaybackRequest.supportsServerSideSeek(quality: StreamQuality?): Boolean =
-        supportsTranscodedServerSeek(isCached, sourceBitRate, quality)
+    private fun PlaybackRequest.supportsServerSideSeek(openedStream: OpenedStream?): Boolean =
+        supportsTranscodedServerSeek(
+            isCached = isCached,
+            sourceBitRate = sourceBitRate,
+            openedStreamQuality = openedStream?.quality,
+            forcedTranscode = openedStream?.forcedTranscode == true,
+        )
 
     private fun shouldPreferLocalStreamCache(serverId: Long): Boolean {
         return endpointSelector.isOfflineDegraded(serverId)
@@ -1419,7 +1500,9 @@ class SakiPlaybackService : MediaSessionService() {
     override fun onDestroy() {
         savePlayQueue(immediate = true)
         cancelStreamPrefetch()
-        openedStreamQualities.clear()
+        clearPlaybackFailureReport()
+        openedStreams.clear()
+        forcedTranscodes.clear()
         releaseSoundBalancingEffect()
 
         mediaSession?.release()
@@ -1714,6 +1797,29 @@ class SakiPlaybackService : MediaSessionService() {
             syncSoundBalancingEffect(audioSessionId)
         }
 
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            syncAutomaticTranscodeSessionExtras()
+            clearPlaybackFailureReport()
+        }
+
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            val activePlaceholderUris = buildSet {
+                val activePlayer = player ?: return@buildSet
+                repeat(activePlayer.mediaItemCount) { index ->
+                    activePlayer.getMediaItemAt(index).localConfiguration?.uri?.toString()?.let(::add)
+                }
+            }
+            openedStreams.keys.removeIf { it !in activePlaceholderUris }
+            forcedTranscodes.keys.removeIf { it !in activePlaceholderUris }
+            syncAutomaticTranscodeSessionExtras()
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) {
+                clearPlaybackFailureReport()
+            }
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             val activePlayer = player ?: return
             if (
@@ -1731,6 +1837,44 @@ class SakiPlaybackService : MediaSessionService() {
                 activePlayer.playWhenReady = wasPlaying
                 return
             }
+
+            val failedItem = activePlayer.currentMediaItem?.toQueueItemOrNull()
+            val failureKind = classifyPlaybackFailure(
+                errorCode = error.errorCode,
+                suffix = failedItem?.suffix,
+                contentType = failedItem?.contentType,
+            )
+            if (isOriginalPlaybackFailure(failureKind)) {
+                when (
+                    cachedPlaybackPrefs?.originalPlaybackFailureAction
+                        ?: OriginalPlaybackFailureAction.STOP
+                ) {
+                    OriginalPlaybackFailureAction.STOP -> {
+                        activePlayer.playWhenReady = false
+                        schedulePlaybackFailureReport(activePlayer, error)
+                        return
+                    }
+                    OriginalPlaybackFailureAction.SKIP -> {
+                        if (skipFailedMediaItem(activePlayer)) {
+                            clearPlaybackFailureReport()
+                            return
+                        }
+                        activePlayer.playWhenReady = false
+                        schedulePlaybackFailureReport(activePlayer, error)
+                        return
+                    }
+                    OriginalPlaybackFailureAction.AUTO_TRANSCODE -> {
+                        if (retryCurrentItemWithForcedTranscode(activePlayer)) {
+                            clearPlaybackFailureReport()
+                            return
+                        }
+                        activePlayer.playWhenReady = false
+                        schedulePlaybackFailureReport(activePlayer, error)
+                        return
+                    }
+                }
+            }
+            schedulePlaybackFailureReport(activePlayer, error)
             if (!error.shouldRetryNextEndpoint()) {
                 return
             }
@@ -1755,6 +1899,122 @@ class SakiPlaybackService : MediaSessionService() {
             activePlayer.seekTo(currentIndex, resumePositionMs)
             activePlayer.playWhenReady = wasPlaying
         }
+    }
+
+    private fun skipFailedMediaItem(activePlayer: ExoPlayer): Boolean {
+        val currentIndex = activePlayer.currentMediaItemIndex
+        if (currentIndex == C.INDEX_UNSET || activePlayer.mediaItemCount <= 1) return false
+        val navigationRepeatMode = if (activePlayer.repeatMode == Player.REPEAT_MODE_ONE) {
+            Player.REPEAT_MODE_ALL
+        } else {
+            activePlayer.repeatMode
+        }
+        val nextIndex = activePlayer.currentTimeline.getNextWindowIndex(
+            currentIndex,
+            navigationRepeatMode,
+            activePlayer.shuffleModeEnabled,
+        )
+        if (nextIndex == C.INDEX_UNSET || nextIndex == currentIndex) return false
+
+        val wasPlaying = activePlayer.playWhenReady
+        activePlayer.seekTo(nextIndex, 0L)
+        activePlayer.prepare()
+        activePlayer.playWhenReady = wasPlaying
+        return true
+    }
+
+    private fun retryCurrentItemWithForcedTranscode(activePlayer: ExoPlayer): Boolean {
+        val currentIndex = activePlayer.currentMediaItemIndex
+        val mediaItem = activePlayer.currentMediaItem ?: return false
+        val request = mediaItem.toPlaybackRequestOrNull() ?: return false
+        val placeholderUri = mediaItem.localConfiguration?.uri
+            ?.takeIf { uri -> uri.scheme == "saki" && uri.host == "stream" }
+            ?.toString()
+            ?: return false
+        if (request.isCached || request.localPath != null) return false
+        if (forcedTranscodes.putIfAbsent(placeholderUri, ForcedTranscode()) != null) return false
+        syncAutomaticTranscodeSessionExtras()
+
+        val resumePositionMs = activePlayer.logicalCurrentPositionMs().toWholeSecondOffsetMs()
+        val wasPlaying = activePlayer.playWhenReady
+        openedStreams.remove(placeholderUri)
+        activePlayer.stop()
+        updateActiveServerSeek(
+            if (resumePositionMs > 0L) {
+                ActiveServerSeek(
+                    mediaItemIndex = currentIndex,
+                    serverId = request.serverId,
+                    songId = request.songId,
+                    offsetMs = resumePositionMs,
+                    streamQuality = StreamQuality.KBPS_320,
+                )
+            } else {
+                null
+            },
+        )
+        activePlayer.seekTo(currentIndex, 0L)
+        activePlayer.prepare()
+        activePlayer.playWhenReady = wasPlaying
+        return true
+    }
+
+    private fun syncAutomaticTranscodeSessionExtras() {
+        val activeItem = player?.currentMediaItem
+        val placeholderUri = activeItem?.localConfiguration?.uri?.toString()
+        val forcedTranscode = placeholderUri?.let(forcedTranscodes::get)
+        val extras = if (activeItem != null && forcedTranscode != null) {
+            Bundle().apply {
+                putString(EXTRA_AUTO_TRANSCODE_MEDIA_ID, activeItem.mediaId)
+                putString(EXTRA_AUTO_TRANSCODE_FORMAT, forcedTranscode.format.uppercase(java.util.Locale.ROOT))
+                forcedTranscode.quality.maxBitRate?.let { maxBitRate ->
+                    putInt(EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE, maxBitRate)
+                }
+            }
+        } else {
+            Bundle.EMPTY
+        }
+        mediaSession?.setSessionExtras(extras)
+    }
+
+    private fun schedulePlaybackFailureReport(
+        activePlayer: ExoPlayer,
+        error: PlaybackException,
+    ) {
+        val failedMediaId = activePlayer.currentMediaItem?.mediaId
+        if (
+            playbackFailureReportJob?.isActive == true &&
+            pendingPlaybackFailureMediaId == failedMediaId &&
+            pendingPlaybackFailureErrorCode == error.errorCode
+        ) {
+            return
+        }
+        playbackFailureReportJob?.cancel()
+        pendingPlaybackFailureMediaId = failedMediaId
+        pendingPlaybackFailureErrorCode = error.errorCode
+        val failedItem = activePlayer.currentMediaItem?.toQueueItemOrNull()
+        playbackFailureReportJob = playerScope.launch {
+            delay(PLAYBACK_FAILURE_REPORT_DELAY_MS)
+            if (player !== activePlayer) return@launch
+            if (activePlayer.currentMediaItem?.mediaId != failedMediaId) return@launch
+            if (activePlayer.playerError?.errorCode != error.errorCode) return@launch
+            playbackFailureReporter.report(
+                kind = classifyPlaybackFailure(
+                    errorCode = error.errorCode,
+                    suffix = failedItem?.suffix,
+                    contentType = failedItem?.contentType,
+                ),
+                trackTitle = failedItem?.title,
+                formatLabel = failedItem?.playbackFormatLabel(),
+            )
+        }
+    }
+
+    private fun clearPlaybackFailureReport() {
+        playbackFailureReportJob?.cancel()
+        playbackFailureReportJob = null
+        pendingPlaybackFailureMediaId = null
+        pendingPlaybackFailureErrorCode = null
+        playbackFailureReporter.clear()
     }
 
     private inner class PlayQueueSaveListener : Player.Listener {

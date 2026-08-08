@@ -92,6 +92,7 @@ import org.hdhmc.saki.domain.model.MIN_CUSTOM_BUFFER_SECONDS
 import org.hdhmc.saki.domain.model.MIN_IMAGE_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.MIN_SONGS_PAGE_SIZE
 import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
+import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SONGS_PAGE_SIZE_STEP
@@ -131,6 +132,7 @@ fun SettingsScreen(
     onUpdateAdaptiveQuality: (Boolean) -> Unit,
     onUpdateWifiStreamQuality: (StreamQuality) -> Unit,
     onUpdateMobileStreamQuality: (StreamQuality) -> Unit,
+    onUpdateOriginalPlaybackFailureAction: (OriginalPlaybackFailureAction) -> Unit,
     onUpdateAlacDecoderMode: (AlacDecoderMode) -> Unit,
     onUpdateSoundBalancing: (SoundBalancingMode) -> Unit,
     onUpdateStreamCacheSizeMb: (Int) -> Unit,
@@ -345,6 +347,28 @@ fun SettingsScreen(
                                 label = { Text(quality.localizedLabel()) },
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            val prefs = uiState.playbackPreferences
+            SettingsSectionCard(
+                title = stringResource(R.string.settings_original_playback_failure_title),
+                body = stringResource(R.string.settings_original_playback_failure_body),
+                action = null,
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OriginalPlaybackFailureAction.entries.forEach { action ->
+                        FilterChip(
+                            selected = prefs.originalPlaybackFailureAction == action,
+                            onClick = { onUpdateOriginalPlaybackFailureAction(action) },
+                            label = { Text(stringResource(action.labelRes())) },
+                        )
                     }
                 }
             }

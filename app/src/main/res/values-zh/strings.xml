@@ -8,6 +8,13 @@
     <string name="settings_open_server_manager">打开服务器管理</string>
     <string name="settings_stream_quality_title">串流质量</string>
     <string name="settings_stream_quality_body">限制串流码率，或尽可能保持原始音质。</string>
+    <string name="settings_original_playback_failure_title">原始格式无法播放时</string>
+    <string name="settings_original_playback_failure_body">选择设备无法解码原始串流时的处理方式。自动转码会请求服务器输出最高 320 kbps 的兼容 MP3；网络故障会单独处理。</string>
+    <string name="original_playback_failure_stop">停止</string>
+    <string name="original_playback_failure_skip">跳过歌曲</string>
+    <string name="original_playback_failure_auto_transcode">自动转码</string>
+    <string name="player_auto_transcode_status">自动转码 • %1$s %2$d kbps</string>
+    <string name="player_auto_transcode_format_status">自动转码 • %1$s</string>
     <string name="settings_alac_decoder_title">ALAC 解码</string>
     <string name="settings_alac_decoder_body">选择 Apple Lossless 音频使用的解码器。</string>
     <string name="settings_alac_decoder_auto">自动</string>
@@ -321,6 +328,12 @@
     <string name="error_load_playlist">无法加载播放列表。</string>
     <string name="error_cached_detail_unavailable">此详情尚未缓存，离线不可用。</string>
     <string name="error_start_playback">无法开始播放。</string>
+    <string name="error_playback_failed">播放失败。</string>
+    <string name="error_playback_failed_for_song">无法播放“%1$s”。</string>
+    <string name="error_playback_unsupported">无法播放“%1$s”：暂不支持此媒体格式。</string>
+    <string name="error_playback_unsupported_format">无法播放“%1$s”：暂不支持 %2$s 格式。</string>
+    <string name="error_playback_source_unavailable">无法加载“%1$s”，请检查网络或歌曲是否仍存在于服务器。</string>
+    <string name="error_playback_decoding_failed">无法解码“%1$s”，文件可能损坏或使用了不受支持的编码。</string>
     <string name="message_added_to_queue">已将 %1$s 加入队列。</string>
     <string name="error_queue_song">无法将歌曲加入队列。</string>
     <string name="message_play_next">%1$s 将在下一首播放。</string>

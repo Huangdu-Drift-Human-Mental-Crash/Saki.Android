@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import org.hdhmc.saki.data.remote.NetworkType
 import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.PlaybackFailureKind
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -47,6 +48,22 @@ class ServerSeekRepeatTest {
                 openedStreamQuality = StreamQuality.ORIGINAL,
             ),
         )
+        assertTrue(
+            supportsTranscodedServerSeek(
+                isCached = false,
+                sourceBitRate = 96,
+                openedStreamQuality = StreamQuality.KBPS_320,
+                forcedTranscode = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `original playback actions only handle format and decoding failures`() {
+        assertTrue(isOriginalPlaybackFailure(PlaybackFailureKind.UNSUPPORTED_FORMAT))
+        assertTrue(isOriginalPlaybackFailure(PlaybackFailureKind.DECODING_FAILED))
+        assertFalse(isOriginalPlaybackFailure(PlaybackFailureKind.SOURCE_UNAVAILABLE))
+        assertFalse(isOriginalPlaybackFailure(PlaybackFailureKind.UNKNOWN))
     }
 
     @Test

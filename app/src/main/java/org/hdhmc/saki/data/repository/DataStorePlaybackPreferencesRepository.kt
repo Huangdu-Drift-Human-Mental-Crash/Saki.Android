@@ -21,6 +21,7 @@ import org.hdhmc.saki.domain.model.MIN_IMAGE_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.IMAGE_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
@@ -108,6 +109,10 @@ class DataStorePlaybackPreferencesRepository @Inject constructor(
         dataStore.edit { it[KEY_ALAC_DECODER_MODE] = mode.storageKey }
     }
 
+    override suspend fun updateOriginalPlaybackFailureAction(action: OriginalPlaybackFailureAction) {
+        dataStore.edit { it[KEY_ORIGINAL_PLAYBACK_FAILURE_ACTION] = action.storageKey }
+    }
+
     override suspend fun updateShuffleState(seed: Long, anchorIndex: Int) {
         dataStore.edit {
             it[KEY_SHUFFLE_SEED] = seed
@@ -145,6 +150,8 @@ class DataStorePlaybackPreferencesRepository @Inject constructor(
         val KEY_CUSTOM_BUFFER_SECONDS = intPreferencesKey("custom_buffer_seconds")
         val KEY_IMAGE_CACHE_SIZE_MB = intPreferencesKey("image_cache_size_mb")
         val KEY_ALAC_DECODER_MODE = stringPreferencesKey("alac_decoder_mode")
+        val KEY_ORIGINAL_PLAYBACK_FAILURE_ACTION =
+            stringPreferencesKey("original_playback_failure_action")
         val KEY_SHUFFLE_SEED = longPreferencesKey("shuffle_seed")
         val KEY_SHUFFLE_ANCHOR = intPreferencesKey("shuffle_anchor_index")
     }
@@ -187,6 +194,9 @@ private fun Preferences.toPlaybackPreferences() = PlaybackPreferences(
     ),
     alacDecoderMode = AlacDecoderMode.fromStorageKey(
         this[DataStorePlaybackPreferencesRepository.KEY_ALAC_DECODER_MODE],
+    ),
+    originalPlaybackFailureAction = OriginalPlaybackFailureAction.fromStorageKey(
+        this[DataStorePlaybackPreferencesRepository.KEY_ORIGINAL_PLAYBACK_FAILURE_ACTION],
     ),
 )
 

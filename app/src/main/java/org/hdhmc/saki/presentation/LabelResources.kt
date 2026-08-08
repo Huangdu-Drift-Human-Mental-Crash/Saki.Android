@@ -7,6 +7,7 @@ import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.DefaultBrowseTab
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
+import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.TextScale
 
 @StringRes
@@ -18,6 +19,14 @@ fun StreamQuality.labelRes(): Int = when (this) {
     StreamQuality.KBPS_160 -> R.string.stream_quality_160_kbps
     StreamQuality.KBPS_128 -> R.string.stream_quality_128_kbps
     StreamQuality.KBPS_96 -> R.string.stream_quality_96_kbps
+}
+
+@StringRes
+fun OriginalPlaybackFailureAction.labelRes(): Int = when (this) {
+    OriginalPlaybackFailureAction.STOP -> R.string.original_playback_failure_stop
+    OriginalPlaybackFailureAction.SKIP -> R.string.original_playback_failure_skip
+    OriginalPlaybackFailureAction.AUTO_TRANSCODE ->
+        R.string.original_playback_failure_auto_transcode
 }
 
 @StringRes
