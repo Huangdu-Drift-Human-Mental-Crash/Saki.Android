@@ -677,9 +677,17 @@ class DefaultPlaybackManager @Inject constructor(
             queueSize = pending.songs.size,
             repeatMode = activeController.repeatMode,
         ) ?: return false
+        val wasPlaying = activeController.playWhenReady
 
         scope.launch {
-            if (skipToPendingDeferredQueueItem(targetDisplayIndex)) return@launch
+            if (
+                skipToPendingDeferredQueueItem(
+                    index = targetDisplayIndex,
+                    resumePlayback = wasPlaying,
+                )
+            ) {
+                return@launch
+            }
             withController { expandedController ->
                 if (expandedController.currentMediaItem?.toPlaybackRequestOrNull()?.songId != failedSongId) {
                     return@withController
@@ -697,7 +705,7 @@ class DefaultPlaybackManager @Inject constructor(
                 if (nextIndex == C.INDEX_UNSET) return@withController
                 expandedController.seekToDefaultPosition(nextIndex)
                 expandedController.prepare()
-                expandedController.play()
+                expandedController.playWhenReady = wasPlaying
                 syncState(expandedController)
             }
         }
@@ -1243,7 +1251,10 @@ class DefaultPlaybackManager @Inject constructor(
         }
     }
 
-    private suspend fun skipToPendingDeferredQueueItem(index: Int): Boolean {
+    private suspend fun skipToPendingDeferredQueueItem(
+        index: Int,
+        resumePlayback: Boolean = true,
+    ): Boolean {
         val pending = pendingDeferredQueue ?: return false
         val targetSongIndex = pendingDisplayToSongIndex(pending, index) ?: return false
         val targetSong = pending.songs[targetSongIndex]
@@ -1285,7 +1296,7 @@ class DefaultPlaybackManager @Inject constructor(
             activeController.shuffleModeEnabled = false
             activeController.setMediaItem(targetMediaItem)
             activeController.prepare()
-            activeController.play()
+            activeController.playWhenReady = resumePlayback
             syncState(activeController)
             scheduleDeferredQueueLoad(
                 generation = generation,

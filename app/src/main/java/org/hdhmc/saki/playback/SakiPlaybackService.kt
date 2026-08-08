@@ -70,6 +70,7 @@ import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import javax.inject.Inject
@@ -229,7 +230,11 @@ internal fun shouldApplyOriginalPlaybackFailureAction(
     localStreamQuality: StreamQuality? = null,
 ): Boolean {
     if (!isOriginalPlaybackFailure(kind) || forcedTranscode) return false
-    if (localStreamQuality != null) return localStreamQuality == StreamQuality.ORIGINAL
+    if (localStreamQuality != null) {
+        if (localStreamQuality == StreamQuality.ORIGINAL) return true
+        return kind == PlaybackFailureKind.UNSUPPORTED_FORMAT &&
+            isKnownUnsupportedDownloadedContainer(sourceSuffix, sourceContentType)
+    }
     val streamQuality = openedStreamQuality ?: requestedStreamQuality ?: return false
     if (streamQuality == StreamQuality.ORIGINAL) return true
     val source = sourceBitRate?.takeIf { it > 0 }
@@ -241,11 +246,34 @@ internal fun shouldApplyOriginalPlaybackFailureAction(
     return source <= requestedLimit
 }
 
+private fun isKnownUnsupportedDownloadedContainer(
+    suffix: String?,
+    contentType: String?,
+): Boolean {
+    val normalizedContentType = contentType?.trim()?.lowercase(Locale.ROOT)
+    return when (normalizedContentType) {
+        "audio/x-ms-wma",
+        "audio/wma",
+        "video/x-ms-asf",
+        "audio/asf",
+        "application/vnd.ms-asf",
+        -> true
+        null, "", "application/octet-stream" -> {
+            val normalizedSuffix = suffix?.trim()?.lowercase(Locale.ROOT)
+            normalizedSuffix == "wma" || normalizedSuffix == "asf"
+        }
+        else -> false
+    }
+}
+
 internal fun canRetryOriginalWithForcedTranscode(
     usesLocalSource: Boolean,
     hasCompleteStreamCache: Boolean = false,
+    hasCompleteForcedTranscodeCache: Boolean = false,
     isOfflineDegraded: Boolean,
-): Boolean = !(usesLocalSource || hasCompleteStreamCache) || !isOfflineDegraded
+): Boolean = hasCompleteForcedTranscodeCache ||
+    !(usesLocalSource || hasCompleteStreamCache) ||
+    !isOfflineDegraded
 
 internal fun selectEffectiveStreamQuality(
     prefs: PlaybackPreferences,
@@ -2002,19 +2030,29 @@ class SakiPlaybackService : MediaSessionService() {
         val hasCompleteStreamCache = mediaItem.openedStream()?.let { openedStream ->
             streamCacheRepository.isCacheKeyFullyCached(openedStream.cacheKey)
         } == true
+        val forcedTranscode = ForcedTranscode(
+            serverId = request.serverId,
+            songId = request.songId,
+        )
+        val forcedTranscodeCacheKey = buildForcedTranscodeStreamCacheKey(
+            serverId = forcedTranscode.serverId,
+            songId = forcedTranscode.songId,
+            quality = forcedTranscode.quality,
+            format = forcedTranscode.format,
+        )
+        val hasCompleteForcedTranscodeCache = streamCacheRepository.isCacheKeyFullyCached(
+            forcedTranscodeCacheKey,
+        )
         if (
             !canRetryOriginalWithForcedTranscode(
                 usesLocalSource = usesLocalSource,
                 hasCompleteStreamCache = hasCompleteStreamCache,
+                hasCompleteForcedTranscodeCache = hasCompleteForcedTranscodeCache,
                 isOfflineDegraded = endpointSelector.isOfflineDegraded(request.serverId),
             )
         ) {
             return false
         }
-        val forcedTranscode = ForcedTranscode(
-            serverId = request.serverId,
-            songId = request.songId,
-        )
         if (forcedTranscodes.putIfAbsent(sourceUri, forcedTranscode) != null) return false
         syncAutomaticTranscodeSessionExtras()
 

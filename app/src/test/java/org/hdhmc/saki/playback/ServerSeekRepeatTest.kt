@@ -184,6 +184,50 @@ class ServerSeekRepeatTest {
     }
 
     @Test
+    fun `capped downloaded pass-through uses original fallback`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 192,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = null,
+                sourceSuffix = "ASF",
+                sourceContentType = null,
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+    }
+
+    @Test
+    fun `capped downloaded transcode trusts response content type`() {
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 192,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+    }
+
+    @Test
     fun `pending queue skip advances and respects end repeat mode`() {
         assertEquals(3, nextPendingQueueDisplayIndex(2, 5, Player.REPEAT_MODE_OFF))
         assertEquals(null, nextPendingQueueDisplayIndex(4, 5, Player.REPEAT_MODE_OFF))
@@ -223,6 +267,13 @@ class ServerSeekRepeatTest {
                 usesLocalSource = false,
                 hasCompleteStreamCache = true,
                 isOfflineDegraded = false,
+            ),
+        )
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = true,
+                hasCompleteForcedTranscodeCache = true,
+                isOfflineDegraded = true,
             ),
         )
     }
