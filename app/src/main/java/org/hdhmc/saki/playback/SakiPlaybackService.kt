@@ -2095,6 +2095,10 @@ class SakiPlaybackService : MediaSessionService() {
                                 clearPlaybackFailureReport()
                                 return@launch
                             }
+                            // No automatic transition was possible, so this recovery pass is
+                            // complete. A later manual retry (possibly after a queue edit) must
+                            // start with a fresh failure budget instead of inheriting stale count.
+                            playbackFailureReporter.resetOriginalPlaybackSkipRecovery()
                             activePlayer.playWhenReady = false
                             schedulePlaybackFailureReport(activePlayer, error)
                         }

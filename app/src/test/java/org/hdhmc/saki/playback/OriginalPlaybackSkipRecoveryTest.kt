@@ -66,6 +66,18 @@ class OriginalPlaybackSkipRecoveryTest {
     }
 
     @Test
+    fun `giving up resets the failure budget for a later manual retry`() {
+        val recovery = OriginalPlaybackSkipRecovery()
+
+        assertEquals(1, recovery.recordFailure())
+        recovery.reset()
+
+        // A newly enlarged queue gets a complete recovery pass on the next user retry.
+        assertEquals(1, recovery.recordFailure())
+        assertTrue(canContinueOriginalPlaybackSkip(failureCount = 1, queueSize = 2))
+    }
+
+    @Test
     fun `deferred shuffled recovery preserves the existing permutation`() {
         val queueSize = 8
         val seed = 73L
