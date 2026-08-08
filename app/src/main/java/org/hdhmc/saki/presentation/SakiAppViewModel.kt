@@ -1903,7 +1903,14 @@ class SakiAppViewModel @Inject constructor(
         val downloadedSongIds = cachedSongRepository.getPlayableCachedSongs(serverId, localCacheQuality).keys
         val streamCachedSongIds = songs.asSequence()
             .map(Song::id)
-            .filter { songId -> streamCacheRepository.findCachedQualityKey(serverId, songId, localCacheQuality) != null }
+            .filter { songId ->
+                streamCacheRepository.findCachedQualityKey(serverId, songId, localCacheQuality) != null ||
+                    streamCacheRepository.findCachedPlaybackVariantKey(
+                        serverId = serverId,
+                        songId = songId,
+                        preferredQuality = localCacheQuality,
+                    ) != null
+            }
             .toSet()
         val playableSongIds = downloadedSongIds + streamCachedSongIds
         val originalStartIndex = songs.indexOfFirst { song -> song.id == currentSongId }

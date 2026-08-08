@@ -4,6 +4,7 @@ import org.hdhmc.saki.domain.model.StreamQuality
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StreamCacheKeysTest {
@@ -181,5 +182,82 @@ class StreamCacheKeysTest {
             buildStreamCacheKey(42L, "normal-flac", StreamQuality.ORIGINAL),
             variant.cacheKey,
         )
+    }
+
+    @Test
+    fun forcedTranscodeOffsetUsesAParseableVariantKey() {
+        val baseKey = buildForcedTranscodeStreamCacheKey(
+            serverId = 42L,
+            songId = "folder|track",
+            quality = StreamQuality.KBPS_320,
+            format = "mp3",
+        )
+        val offsetKey = buildStreamOffsetCacheKey(baseKey, timeOffsetSeconds = 83)
+
+        assertEquals(5, offsetKey.split('|').size)
+        assertEquals(
+            StreamCacheResourceKey(
+                serverId = 42L,
+                songId = "folder|track",
+                qualityKey = StreamQuality.KBPS_320.storageKey,
+                variantKey = "forced-mp3",
+                streamOffsetSeconds = 83,
+            ),
+            parseStreamCacheKey(offsetKey),
+        )
+        assertFalse(requireNotNull(parseStreamCacheKey(offsetKey)).isOfflinePlayableForcedTranscode())
+    }
+
+    @Test
+    fun normalStreamOffsetAlsoUsesAParseableVariantKey() {
+        val baseKey = buildStreamCacheKey(
+            serverId = 7L,
+            songId = "normal-song",
+            quality = StreamQuality.KBPS_128,
+        )
+
+        assertEquals(
+            StreamCacheResourceKey(
+                serverId = 7L,
+                songId = "normal-song",
+                qualityKey = StreamQuality.KBPS_128.storageKey,
+                variantKey = "stream",
+                streamOffsetSeconds = 12,
+            ),
+            parseStreamCacheKey(buildStreamOffsetCacheKey(baseKey, 12)),
+        )
+    }
+
+    @Test
+    fun legacyAppendedOffsetKeysRemainDiscoverableForCleanup() {
+        val legacyKey = "saki.stream.v3|42|legacy-song|320|forced-mp3|seek=83"
+
+        assertEquals(
+            StreamCacheResourceKey(
+                serverId = 42L,
+                songId = "legacy-song",
+                qualityKey = StreamQuality.KBPS_320.storageKey,
+                variantKey = "forced-mp3",
+                streamOffsetSeconds = 83,
+            ),
+            parseStreamCacheKey(legacyKey),
+        )
+    }
+
+    @Test
+    fun completeForcedBaseVariantIsOfflinePlayable() {
+        val parsed = requireNotNull(
+            parseStreamCacheKey(
+                buildForcedTranscodeStreamCacheKey(
+                    serverId = 42L,
+                    songId = "unsupported-wma",
+                    quality = StreamQuality.KBPS_320,
+                    format = "mp3",
+                ),
+            ),
+        )
+
+        assertTrue(parsed.isOfflinePlayableForcedTranscode())
+        assertEquals("mp3", parsed.forcedTranscodeFormat())
     }
 }

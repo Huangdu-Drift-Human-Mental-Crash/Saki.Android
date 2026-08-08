@@ -111,7 +111,7 @@ private fun Long.toWholeSecondOffsetMs(): Long =
     coerceAtLeast(0L).div(1_000L).times(1_000L)
 
 private fun String.forStreamOffset(timeOffsetSeconds: Int?): String =
-    timeOffsetSeconds?.let { offset -> "$this|seek=$offset" } ?: this
+    buildStreamOffsetCacheKey(this, timeOffsetSeconds)
 
 private fun Int.forStreamOffset(timeOffsetSeconds: Int?): Int =
     if (timeOffsetSeconds == null) this else this or DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
@@ -1281,6 +1281,27 @@ class SakiPlaybackService : MediaSessionService() {
                 fallbackMaxBitRate = uri.getQueryParameter("maxBitRate")?.toIntOrNull(),
             )
         if (forcedTranscode != null) {
+            val cacheKey = buildForcedTranscodeStreamCacheKey(
+                serverId = serverId,
+                songId = songId,
+                quality = forcedTranscode.quality,
+                format = forcedTranscode.format,
+            )
+            if (
+                allowCachedResource &&
+                timeOffsetSeconds == null &&
+                streamCacheRepository.isCacheKeyFullyCached(cacheKey)
+            ) {
+                openedStreams[sourceKey] = OpenedStream(
+                    quality = forcedTranscode.quality,
+                    forcedTranscode = true,
+                    cacheKey = cacheKey,
+                )
+                return dataSpec.buildUpon()
+                    .setUri(cachedStreamUri(cacheKey))
+                    .setKey(cacheKey)
+                    .build()
+            }
             val streamRequest = runBlocking {
                 subsonicRepository.buildStreamRequest(
                     serverId = serverId,
@@ -1294,12 +1315,6 @@ class SakiPlaybackService : MediaSessionService() {
                 throw IOException("No stream candidates for song $songId on server $serverId")
             }
             val candidate = streamRequest.candidates.first()
-            val cacheKey = buildForcedTranscodeStreamCacheKey(
-                serverId = serverId,
-                songId = songId,
-                quality = forcedTranscode.quality,
-                format = forcedTranscode.format,
-            )
             return dataSpec.buildUpon()
                 .setUri(candidate.url)
                 .setKey(cacheKey.forStreamOffset(timeOffsetSeconds))
@@ -1323,16 +1338,44 @@ class SakiPlaybackService : MediaSessionService() {
         } else {
             null
         }
-        val cachedQuality = cachedQualityKey?.let { key -> StreamQuality.fromStorageKey(key) }
-        val cachedResourceKey = cachedQuality?.let { quality ->
+        val normalCachedResourceKey = cachedQualityKey?.let { key ->
+            val quality = StreamQuality.fromStorageKey(key)
             streamCacheRepository.buildCacheKey(serverId, songId, quality)
         }
-        if (cachedQuality != null && cachedResourceKey != null) {
+        val cachedResourceKey = normalCachedResourceKey ?: if (
+            timeOffsetSeconds == null && preferLocalCache
+        ) {
+            streamCacheRepository.findCachedPlaybackVariantKey(
+                serverId = serverId,
+                songId = songId,
+                preferredQuality = cacheLookupQuality,
+            )
+        } else {
+            null
+        }
+        val cachedResource = cachedResourceKey?.let(::parseStreamCacheKey)
+        val cachedQuality = cachedResource?.qualityKey?.let(StreamQuality::fromStorageKey)
+        val cachedForcedTranscode = cachedResource
+            ?.takeIf { resource -> resource.isOfflinePlayableForcedTranscode() }
+            ?.forcedTranscodeFormat()
+            ?.let { format ->
+                ForcedTranscode(
+                    serverId = serverId,
+                    songId = songId,
+                    quality = requireNotNull(cachedQuality),
+                    format = format,
+                )
+            }
+        if (cachedQuality != null) {
             openedStreams[sourceKey] = OpenedStream(
                 quality = cachedQuality,
-                forcedTranscode = false,
+                forcedTranscode = cachedForcedTranscode != null,
                 cacheKey = cachedResourceKey,
             )
+            if (cachedForcedTranscode != null) {
+                forcedTranscodes[sourceKey] = cachedForcedTranscode
+                playerScope.launch { syncAutomaticTranscodeSessionExtras() }
+            }
         }
         if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
             return dataSpec.buildUpon()
