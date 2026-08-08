@@ -178,6 +178,8 @@ class DefaultStreamCacheRepository @Inject constructor(
         return null
     }
 
+    override fun isCacheKeyFullyCached(cacheKey: String): Boolean = isFullyCached(cacheKey)
+
     override fun getStreamCacheProgress(
         serverId: Long,
         songId: String,

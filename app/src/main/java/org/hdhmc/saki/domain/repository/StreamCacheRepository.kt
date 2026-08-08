@@ -40,6 +40,9 @@ interface StreamCacheRepository {
      */
     fun findCachedQualityKey(serverId: Long, songId: String, preferredQuality: StreamQuality): String?
 
+    /** Returns whether the exact cache resource key is complete. */
+    fun isCacheKeyFullyCached(cacheKey: String): Boolean
+
     fun getStreamCacheProgress(serverId: Long, songId: String, quality: StreamQuality): StreamCacheProgress?
 
     suspend fun estimateCollectionCache(

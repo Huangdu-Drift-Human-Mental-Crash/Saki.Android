@@ -161,6 +161,7 @@ private data class ForcedTranscode(
 private data class OpenedStream(
     val quality: StreamQuality,
     val forcedTranscode: Boolean,
+    val cacheKey: String,
 )
 
 private data class BluetoothLyricsDisplayConfig(
@@ -365,6 +366,7 @@ class SakiPlaybackService : MediaSessionService() {
                     openedStreams[selection.placeholderUri] = OpenedStream(
                         quality = selection.streamQuality,
                         forcedTranscode = selection.forcedTranscode,
+                        cacheKey = selection.cacheKey,
                     )
                 }
 
@@ -1060,6 +1062,7 @@ class SakiPlaybackService : MediaSessionService() {
         val endpoint: ServerEndpoint,
         val placeholderUri: String,
         val streamQuality: StreamQuality,
+        val cacheKey: String,
         val forcedTranscode: Boolean = false,
     )
 
@@ -1117,6 +1120,7 @@ class SakiPlaybackService : MediaSessionService() {
         val forcedTranscode = forcedTranscodes[sourceKey]
         val isStreamPlaceholder = uri.scheme == "saki" && uri.host == "stream"
         if (!isStreamPlaceholder && forcedTranscode == null) return dataSpec
+        openedStreams.remove(sourceKey)
 
         val serverId = forcedTranscode?.serverId
             ?: uri.getQueryParameter("serverId")?.toLongOrNull()
@@ -1171,6 +1175,7 @@ class SakiPlaybackService : MediaSessionService() {
                         placeholderUri = sourceKey,
                         streamQuality = forcedTranscode.quality,
                         forcedTranscode = true,
+                        cacheKey = cacheKey,
                     ),
                 )
                 .build()
@@ -1186,8 +1191,14 @@ class SakiPlaybackService : MediaSessionService() {
         val cachedResourceKey = cachedQuality?.let { quality ->
             streamCacheRepository.buildCacheKey(serverId, songId, quality)
         }
+        if (cachedQuality != null && cachedResourceKey != null) {
+            openedStreams[sourceKey] = OpenedStream(
+                quality = cachedQuality,
+                forcedTranscode = false,
+                cacheKey = cachedResourceKey,
+            )
+        }
         if (allowCachedResource && preferLocalCache && cachedResourceKey != null) {
-            openedStreams.remove(uri.toString())
             return dataSpec.buildUpon()
                 .setUri(cachedStreamUri(cachedResourceKey))
                 .setKey(cachedResourceKey)
@@ -1221,6 +1232,7 @@ class SakiPlaybackService : MediaSessionService() {
                         endpoint = candidate.endpoint,
                         placeholderUri = uri.toString(),
                         streamQuality = requestedQuality,
+                        cacheKey = cacheKey,
                     ),
                 )
                 .build()
@@ -1253,6 +1265,7 @@ class SakiPlaybackService : MediaSessionService() {
                     endpoint = candidate.endpoint,
                     placeholderUri = uri.toString(),
                     streamQuality = quality,
+                    cacheKey = cacheKey,
                 ),
             )
             .build()
@@ -1376,11 +1389,7 @@ class SakiPlaybackService : MediaSessionService() {
             val targetPositionMs = requestedPositionMs
                 .coerceIn(0L, (durationMs - 1_000L).coerceAtLeast(0L))
                 .toWholeSecondOffsetMs()
-            val hasCompleteBaseStream = streamCacheRepository.findCachedQualityKey(
-                serverId = request.serverId,
-                songId = request.songId,
-                preferredQuality = openedQuality,
-            ) != null
+            val hasCompleteBaseStream = streamCacheRepository.isCacheKeyFullyCached(openedStream.cacheKey)
             val currentOffsetMs = exoPlayer.currentStreamOffsetMs()
 
             if (hasCompleteBaseStream && currentOffsetMs == 0L) {
