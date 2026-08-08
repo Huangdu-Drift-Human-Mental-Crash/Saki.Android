@@ -658,10 +658,14 @@ class DefaultPlaybackManager @Inject constructor(
         return pendingDisplayOrder(pending)?.getOrNull(displayIndex) ?: displayIndex
     }
 
-    private fun requestPendingQueueSkip(failedSongId: String): Boolean {
+    private fun requestPendingQueueSkip(
+        failedSongId: String,
+        failureCount: Int,
+    ): Boolean {
         val pending = pendingDeferredQueue
             ?.takeIf { queue -> queue.currentSongId == failedSongId }
             ?: return false
+        if (!canContinueOriginalPlaybackSkip(failureCount, pending.songs.size)) return false
         val activeController = controller ?: return false
         if (activeController.mediaItemCount != 1) return false
         if (activeController.currentMediaItem?.toPlaybackRequestOrNull()?.songId != failedSongId) {
@@ -684,6 +688,7 @@ class DefaultPlaybackManager @Inject constructor(
                 skipToPendingDeferredQueueItem(
                     index = targetDisplayIndex,
                     resumePlayback = wasPlaying,
+                    isFailureRecovery = true,
                 )
             ) {
                 return@launch
@@ -703,6 +708,11 @@ class DefaultPlaybackManager @Inject constructor(
                     expandedController.shuffleModeEnabled,
                 )
                 if (nextIndex == C.INDEX_UNSET) return@withController
+                val targetRequest = expandedController.getMediaItemAt(nextIndex).toPlaybackRequestOrNull()
+                    ?: return@withController
+                playbackFailureReporter.expectAutomaticSkipTransition(
+                    PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+                )
                 expandedController.seekToDefaultPosition(nextIndex)
                 expandedController.prepare()
                 expandedController.playWhenReady = wasPlaying
@@ -1254,6 +1264,7 @@ class DefaultPlaybackManager @Inject constructor(
     private suspend fun skipToPendingDeferredQueueItem(
         index: Int,
         resumePlayback: Boolean = true,
+        isFailureRecovery: Boolean = false,
     ): Boolean {
         val pending = pendingDeferredQueue ?: return false
         val targetSongIndex = pendingDisplayToSongIndex(pending, index) ?: return false
@@ -1294,6 +1305,13 @@ class DefaultPlaybackManager @Inject constructor(
             )
             shuffleDisplayOrder = null
             activeController.shuffleModeEnabled = false
+            if (isFailureRecovery) {
+                val targetRequest = targetMediaItem.toPlaybackRequestOrNull()
+                    ?: return@withController false
+                playbackFailureReporter.expectAutomaticSkipTransition(
+                    PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+                )
+            }
             activeController.setMediaItem(targetMediaItem)
             activeController.prepare()
             activeController.playWhenReady = resumePlayback

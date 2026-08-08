@@ -1593,6 +1593,7 @@ class SakiPlaybackService : MediaSessionService() {
         savePlayQueue(immediate = true)
         cancelStreamPrefetch()
         clearPlaybackFailureReport()
+        playbackFailureReporter.resetOriginalPlaybackSkipRecovery()
         openedStreams.clear()
         forcedTranscodes.clear()
         releaseSoundBalancingEffect()
@@ -1890,6 +1891,11 @@ class SakiPlaybackService : MediaSessionService() {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            playbackFailureReporter.onMediaItemTransition(
+                mediaItem?.toPlaybackRequestOrNull()?.let { request ->
+                    PlaybackRecoveryItemKey(request.serverId, request.songId)
+                },
+            )
             syncAutomaticTranscodeSessionExtras()
             clearPlaybackFailureReport()
         }
@@ -1973,9 +1979,15 @@ class SakiPlaybackService : MediaSessionService() {
                         return
                     }
                     OriginalPlaybackFailureAction.SKIP -> {
+                        val failureCount = playbackFailureReporter.recordOriginalPlaybackSkipFailure()
                         if (
-                            skipFailedMediaItem(activePlayer) ||
-                            failedItem?.songId?.let(playbackFailureReporter::requestPendingQueueSkip) == true
+                            skipFailedMediaItem(activePlayer, failureCount) ||
+                            failedItem?.songId?.let { failedSongId ->
+                                playbackFailureReporter.requestPendingQueueSkip(
+                                    failedSongId = failedSongId,
+                                    failureCount = failureCount,
+                                )
+                            } == true
                         ) {
                             clearPlaybackFailureReport()
                             return
@@ -2022,9 +2034,17 @@ class SakiPlaybackService : MediaSessionService() {
         }
     }
 
-    private fun skipFailedMediaItem(activePlayer: ExoPlayer): Boolean {
+    private fun skipFailedMediaItem(
+        activePlayer: ExoPlayer,
+        failureCount: Int,
+    ): Boolean {
         val currentIndex = activePlayer.currentMediaItemIndex
-        if (currentIndex == C.INDEX_UNSET || activePlayer.mediaItemCount <= 1) return false
+        if (
+            currentIndex == C.INDEX_UNSET ||
+            !canContinueOriginalPlaybackSkip(failureCount, activePlayer.mediaItemCount)
+        ) {
+            return false
+        }
         val navigationRepeatMode = if (activePlayer.repeatMode == Player.REPEAT_MODE_ONE) {
             Player.REPEAT_MODE_ALL
         } else {
@@ -2036,8 +2056,13 @@ class SakiPlaybackService : MediaSessionService() {
             activePlayer.shuffleModeEnabled,
         )
         if (nextIndex == C.INDEX_UNSET || nextIndex == currentIndex) return false
+        val targetRequest = activePlayer.getMediaItemAt(nextIndex).toPlaybackRequestOrNull()
+            ?: return false
 
         val wasPlaying = activePlayer.playWhenReady
+        playbackFailureReporter.expectAutomaticSkipTransition(
+            PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+        )
         activePlayer.seekTo(nextIndex, 0L)
         activePlayer.prepare()
         activePlayer.playWhenReady = wasPlaying
