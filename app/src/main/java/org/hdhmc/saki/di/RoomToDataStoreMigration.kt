@@ -9,6 +9,7 @@ import org.hdhmc.saki.data.local.database.SakiDatabase
 import org.hdhmc.saki.data.repository.DataStoreAppPreferencesRepository
 import org.hdhmc.saki.data.repository.DataStorePlaybackPreferencesRepository
 import org.hdhmc.saki.domain.model.SoundBalancingMode
+import org.hdhmc.saki.domain.model.normalizeStreamCacheSizeMb
 
 import androidx.datastore.preferences.core.booleanPreferencesKey
 
@@ -72,7 +73,8 @@ class RoomToDataStoreMigration(
         }
         ds[DataStorePlaybackPreferencesRepository.KEY_SOUND_BALANCING_MODE] = modeKey
 
-        ds[DataStorePlaybackPreferencesRepository.KEY_STREAM_CACHE_SIZE_MB] = entity.streamCacheSizeMb
+        ds[DataStorePlaybackPreferencesRepository.KEY_STREAM_CACHE_SIZE_MB] =
+            normalizeStreamCacheSizeMb(entity.streamCacheSizeMb)
         ds[DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS] = entity.bluetoothLyricsEnabled
     }
 }

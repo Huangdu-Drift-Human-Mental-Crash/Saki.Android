@@ -6,13 +6,11 @@ import org.hdhmc.saki.di.IoDispatcher
 import org.hdhmc.saki.domain.model.DEFAULT_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.BufferStrategy
-import org.hdhmc.saki.domain.model.MAX_STREAM_CACHE_SIZE_MB
-import org.hdhmc.saki.domain.model.MIN_STREAM_CACHE_SIZE_MB
 import org.hdhmc.saki.domain.model.PlaybackPreferences
 import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
-import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
+import org.hdhmc.saki.domain.model.normalizeStreamCacheSizeMb
 import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -62,7 +60,7 @@ class DefaultPlaybackPreferencesRepository @Inject constructor(
 
     override suspend fun updateStreamCacheSizeMb(sizeMb: Int): Unit = withContext(ioDispatcher) {
         updatePreferences { current ->
-            current.copy(streamCacheSizeMb = sizeMb.normalizeStreamCacheSizeMb())
+            current.copy(streamCacheSizeMb = normalizeStreamCacheSizeMb(sizeMb))
         }
     }
 
@@ -110,15 +108,7 @@ private fun PlaybackPreferencesEntity.toDomain(): PlaybackPreferences {
             .takeIf(String::isNotBlank)
             ?.let(SoundBalancingMode::fromStorageKey)
             ?: if (soundBalancingEnabled) SoundBalancingMode.MEDIUM else SoundBalancingMode.OFF,
-        streamCacheSizeMb = streamCacheSizeMb.normalizeStreamCacheSizeMb(),
+        streamCacheSizeMb = normalizeStreamCacheSizeMb(streamCacheSizeMb),
         bluetoothLyricsEnabled = bluetoothLyricsEnabled,
     )
-}
-
-private fun Int.normalizeStreamCacheSizeMb(): Int {
-    val clamped = coerceIn(MIN_STREAM_CACHE_SIZE_MB, MAX_STREAM_CACHE_SIZE_MB)
-    val stepsFromMin = ((clamped - MIN_STREAM_CACHE_SIZE_MB) / STREAM_CACHE_SIZE_STEP_MB.toDouble()).toInt()
-    val lower = MIN_STREAM_CACHE_SIZE_MB + (stepsFromMin * STREAM_CACHE_SIZE_STEP_MB)
-    val upper = (lower + STREAM_CACHE_SIZE_STEP_MB).coerceAtMost(MAX_STREAM_CACHE_SIZE_MB)
-    return if (clamped - lower < upper - clamped) lower else upper
 }

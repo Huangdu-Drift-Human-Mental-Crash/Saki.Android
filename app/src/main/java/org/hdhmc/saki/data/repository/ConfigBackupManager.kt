@@ -10,6 +10,7 @@ import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.ServerEndpoint
 import org.hdhmc.saki.domain.model.normalizeBluetoothLyricsOffsetMs
 import org.hdhmc.saki.domain.model.normalizeSongsPageSize
+import org.hdhmc.saki.domain.model.normalizeStreamCacheSizeMb
 import org.hdhmc.saki.domain.repository.ServerConfigRepository
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
@@ -124,7 +125,8 @@ class ConfigBackupManager @Inject constructor(
                 backup.settings.forEach { (key, value) ->
                     when (key) {
                         DataStorePlaybackPreferencesRepository.KEY_STREAM_CACHE_SIZE_MB.name -> {
-                            ds[DataStorePlaybackPreferencesRepository.KEY_STREAM_CACHE_SIZE_MB] = value.toIntOrNull() ?: return@forEach
+                            ds[DataStorePlaybackPreferencesRepository.KEY_STREAM_CACHE_SIZE_MB] =
+                                value.toIntOrNull()?.let(::normalizeStreamCacheSizeMb) ?: return@forEach
                             settingsApplied = true
                         }
                         DataStorePlaybackPreferencesRepository.KEY_BLUETOOTH_LYRICS.name -> {
