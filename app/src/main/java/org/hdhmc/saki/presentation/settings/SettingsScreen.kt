@@ -97,10 +97,12 @@ import org.hdhmc.saki.domain.model.SakiPaletteStyle
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.SONGS_PAGE_SIZE_STEP
 import org.hdhmc.saki.domain.model.SoundBalancingMode
-import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_STEP_MB
+import org.hdhmc.saki.domain.model.STREAM_CACHE_SIZE_OPTIONS_MB
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.model.TextScale
 import org.hdhmc.saki.domain.model.ThemeMode
+import org.hdhmc.saki.domain.model.streamCacheSizeMbAtOptionIndex
+import org.hdhmc.saki.domain.model.streamCacheSizeOptionIndex
 import org.hdhmc.saki.presentation.SakiSettingsUiState
 import org.hdhmc.saki.presentation.labelRes
 import org.hdhmc.saki.presentation.library.ArtworkCard
@@ -171,7 +173,7 @@ fun SettingsScreen(
     val storageSummary = uiState.cacheStorageSummary
     val configuredStreamCacheSizeMb = uiState.playbackPreferences.streamCacheSizeMb
     var streamCacheSliderValue by remember(configuredStreamCacheSizeMb) {
-        mutableFloatStateOf(configuredStreamCacheSizeMb.toFloat())
+        mutableFloatStateOf(streamCacheSizeOptionIndex(configuredStreamCacheSizeMb).toFloat())
     }
     val configuredImageCacheSizeMb = uiState.playbackPreferences.imageCacheSizeMb
     var imageCacheSliderValue by remember(configuredImageCacheSizeMb) {
@@ -789,7 +791,7 @@ fun SettingsScreen(
                 Slider(
                     value = streamCacheSliderValue,
                     onValueChange = { streamCacheSliderValue = it },
-                    valueRange = MIN_STREAM_CACHE_SIZE_MB.toFloat()..MAX_STREAM_CACHE_SIZE_MB.toFloat(),
+                    valueRange = 0f..STREAM_CACHE_SIZE_OPTIONS_MB.lastIndex.toFloat(),
                     steps = STREAM_CACHE_SLIDER_STEPS,
                     onValueChangeFinished = {
                         val newSizeMb = streamCacheSliderValue.toStreamCacheSizeMb()
@@ -1439,8 +1441,8 @@ private fun ThemeSeedSwatch(
     }
 }
 
-private const val STREAM_CACHE_SLIDER_STEPS =
-    ((MAX_STREAM_CACHE_SIZE_MB - MIN_STREAM_CACHE_SIZE_MB) / STREAM_CACHE_SIZE_STEP_MB) - 1
+private val STREAM_CACHE_SLIDER_STEPS =
+    STREAM_CACHE_SIZE_OPTIONS_MB.size - 2
 
 private const val SONGS_PAGE_SIZE_SLIDER_STEPS =
     ((MAX_SONGS_PAGE_SIZE - MIN_SONGS_PAGE_SIZE) / SONGS_PAGE_SIZE_STEP) - 1
@@ -1450,9 +1452,7 @@ private const val BLUETOOTH_LYRICS_OFFSET_SLIDER_STEPS =
         BLUETOOTH_LYRICS_OFFSET_STEP_MS) - 1
 
 private fun Float.toStreamCacheSizeMb(): Int {
-    val stepsFromMin = ((this - MIN_STREAM_CACHE_SIZE_MB) / STREAM_CACHE_SIZE_STEP_MB).roundToInt()
-    return (MIN_STREAM_CACHE_SIZE_MB + (stepsFromMin * STREAM_CACHE_SIZE_STEP_MB))
-        .coerceIn(MIN_STREAM_CACHE_SIZE_MB, MAX_STREAM_CACHE_SIZE_MB)
+    return streamCacheSizeMbAtOptionIndex(roundToInt())
 }
 
 private fun Float.toSongsPageSize(): Int {

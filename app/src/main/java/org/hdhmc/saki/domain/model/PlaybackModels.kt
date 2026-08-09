@@ -69,8 +69,44 @@ enum class StreamQuality(
 
 const val DEFAULT_STREAM_CACHE_SIZE_MB = 2_048
 const val MIN_STREAM_CACHE_SIZE_MB = 256
-const val MAX_STREAM_CACHE_SIZE_MB = 8_192
-const val STREAM_CACHE_SIZE_STEP_MB = 256
+const val MAX_STREAM_CACHE_SIZE_MB = 32_768
+
+private const val STREAM_CACHE_FINE_GRAIN_MAX_SIZE_MB = 8_192
+private const val STREAM_CACHE_FINE_GRAIN_STEP_MB = 256
+private const val STREAM_CACHE_COARSE_GRAIN_STEP_MB = 1_024
+
+val STREAM_CACHE_SIZE_OPTIONS_MB: List<Int> = buildList {
+    addAll(
+        (MIN_STREAM_CACHE_SIZE_MB..STREAM_CACHE_FINE_GRAIN_MAX_SIZE_MB)
+            .step(STREAM_CACHE_FINE_GRAIN_STEP_MB),
+    )
+    addAll(
+        ((STREAM_CACHE_FINE_GRAIN_MAX_SIZE_MB + STREAM_CACHE_COARSE_GRAIN_STEP_MB)
+            ..MAX_STREAM_CACHE_SIZE_MB)
+            .step(STREAM_CACHE_COARSE_GRAIN_STEP_MB),
+    )
+}
+
+fun normalizeStreamCacheSizeMb(sizeMb: Int): Int {
+    val optionIndex = STREAM_CACHE_SIZE_OPTIONS_MB.binarySearch(sizeMb)
+    if (optionIndex >= 0) return STREAM_CACHE_SIZE_OPTIONS_MB[optionIndex]
+
+    val insertionIndex = -optionIndex - 1
+    if (insertionIndex == 0) return STREAM_CACHE_SIZE_OPTIONS_MB.first()
+    if (insertionIndex == STREAM_CACHE_SIZE_OPTIONS_MB.size) {
+        return STREAM_CACHE_SIZE_OPTIONS_MB.last()
+    }
+
+    val lower = STREAM_CACHE_SIZE_OPTIONS_MB[insertionIndex - 1]
+    val upper = STREAM_CACHE_SIZE_OPTIONS_MB[insertionIndex]
+    return if (sizeMb - lower < upper - sizeMb) lower else upper
+}
+
+fun streamCacheSizeOptionIndex(sizeMb: Int): Int =
+    STREAM_CACHE_SIZE_OPTIONS_MB.binarySearch(normalizeStreamCacheSizeMb(sizeMb))
+
+fun streamCacheSizeMbAtOptionIndex(index: Int): Int =
+    STREAM_CACHE_SIZE_OPTIONS_MB[index.coerceIn(0, STREAM_CACHE_SIZE_OPTIONS_MB.lastIndex)]
 
 const val DEFAULT_IMAGE_CACHE_SIZE_MB = 128
 const val MIN_IMAGE_CACHE_SIZE_MB = 64
