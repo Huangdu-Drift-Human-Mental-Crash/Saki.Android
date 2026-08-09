@@ -8,6 +8,7 @@ import org.hdhmc.saki.R
 import org.hdhmc.saki.data.remote.EndpointSelector
 import org.hdhmc.saki.data.repository.ConfigBackupManager
 import org.hdhmc.saki.data.repository.ImportResult
+import org.hdhmc.saki.data.download.PlaylistDownloadCoordinator
 import org.hdhmc.saki.presentation.library.BrowseNavRoute
 import org.hdhmc.saki.domain.model.Album
 import org.hdhmc.saki.domain.model.AlacDecoderMode
@@ -39,6 +40,8 @@ import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.Playlist
+import org.hdhmc.saki.domain.model.PlaylistDownloadEstimate
+import org.hdhmc.saki.domain.model.PlaylistDownloadTask
 import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
@@ -105,6 +108,7 @@ class SakiAppViewModel @Inject constructor(
     private val serverConfigRepository: ServerConfigRepository,
     private val subsonicRepository: SubsonicRepository,
     private val cachedSongRepository: CachedSongRepository,
+    private val playlistDownloadCoordinator: PlaylistDownloadCoordinator,
     private val streamCacheRepository: StreamCacheRepository,
     private val playbackPreferencesRepository: PlaybackPreferencesRepository,
     private val libraryCacheRepository: LibraryCacheRepository,
@@ -279,6 +283,17 @@ class SakiAppViewModel @Inject constructor(
             streamCacheRepository.observeCollectionCacheTask().collectLatest { task ->
                 mutableUiState.update { state ->
                     state.copy(collectionStreamCacheTask = task)
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            playlistDownloadCoordinator.observeTasks().collectLatest { tasks ->
+                mutableUiState.update { state ->
+                    state.copy(
+                        playlistDownloadTasksBySourceKey = tasks.tasksBySourceKey,
+                        activePlaylistDownloadTask = tasks.activeTask,
+                    )
                 }
             }
         }
@@ -1348,6 +1363,40 @@ class SakiAppViewModel @Inject constructor(
         streamCacheRepository.cancelCollectionCache()
     }
 
+    suspend fun estimatePlaylistDownload(
+        songs: List<Song>,
+    ): PlaylistDownloadEstimate? {
+        val serverId = uiState.value.selectedServerId ?: return null
+        return runCatching {
+            playlistDownloadCoordinator.estimate(serverId, songs)
+        }.onFailure { throwable ->
+            snackbarMessages.emit(
+                SnackbarMessage(throwable.localizedOr(R.string.error_estimate_playlist_download)),
+            )
+        }.getOrNull()
+    }
+
+    fun startPlaylistDownload(
+        playlist: Playlist,
+        estimate: PlaylistDownloadEstimate,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                playlistDownloadCoordinator.enqueue(estimate.serverId, playlist, estimate)
+            }.onFailure { throwable ->
+                snackbarMessages.emit(
+                    SnackbarMessage(throwable.localizedOr(R.string.error_start_playlist_download)),
+                )
+            }
+        }
+    }
+
+    fun cancelPlaylistDownload() {
+        viewModelScope.launch {
+            playlistDownloadCoordinator.cancel()
+        }
+    }
+
     fun playCachedSong(song: CachedSong) {
         viewModelScope.launch {
             runCatching {
@@ -1396,6 +1445,7 @@ class SakiAppViewModel @Inject constructor(
         val targetServerId = uiState.value.selectedServerId
         viewModelScope.launch {
             runCatching {
+                playlistDownloadCoordinator.cancelActiveForServer(targetServerId)
                 cachedSongRepository.clearCachedSongs(targetServerId)
             }.onSuccess { removed ->
                 snackbarMessages.emit(
@@ -2909,6 +2959,8 @@ data class SakiAppUiState(
     val streamCachedSongIds: Set<String> = emptySet(),
     val downloadingSongIds: Set<String> = emptySet(),
     val collectionStreamCacheTask: CollectionStreamCacheTask? = null,
+    val playlistDownloadTasksBySourceKey: Map<String, PlaylistDownloadTask> = emptyMap(),
+    val activePlaylistDownloadTask: PlaylistDownloadTask? = null,
     val playbackState: PlaybackSessionState = PlaybackSessionState(),
     val currentLyrics: SongLyrics? = null,
 ) {
@@ -2961,6 +3013,8 @@ data class SakiBrowseAvailabilityUiState(
     val streamCachedSongIds: Set<String> = emptySet(),
     val downloadingSongIds: Set<String> = emptySet(),
     val collectionStreamCacheTask: CollectionStreamCacheTask? = null,
+    val playlistDownloadTasksBySourceKey: Map<String, PlaylistDownloadTask> = emptyMap(),
+    val activePlaylistDownloadTask: PlaylistDownloadTask? = null,
 )
 
 data class SakiBrowseUiState(
@@ -3075,9 +3129,18 @@ private fun SakiAppUiState.toBrowseAvailabilityUiState(): SakiBrowseAvailability
         selectedServerId = selectedServerId,
         cachedSongs = cachedSongs,
         streamCachedSongIds = streamCachedSongIds,
-        downloadingSongIds = downloadingSongIds,
+        downloadingSongIds = downloadingSongIds + activePlaylistDownloadTask
+            .activeSongIdsForServer(selectedServerId),
         collectionStreamCacheTask = collectionStreamCacheTask,
+        playlistDownloadTasksBySourceKey = playlistDownloadTasksBySourceKey,
+        activePlaylistDownloadTask = activePlaylistDownloadTask,
     )
+
+internal fun PlaylistDownloadTask?.activeSongIdsForServer(serverId: Long?): Set<String> {
+    return this?.takeIf { task -> task.isActive && task.serverId == serverId }
+        ?.activeSongIds
+        .orEmpty()
+}
 
 private fun SakiAppUiState.toBrowseUiState(): SakiBrowseUiState {
     return SakiBrowseUiState(

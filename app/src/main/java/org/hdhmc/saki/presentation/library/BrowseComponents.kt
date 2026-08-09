@@ -16,6 +16,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -47,6 +50,7 @@ import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.StopCircle
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreVert
@@ -87,6 +91,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -107,6 +112,9 @@ import org.hdhmc.saki.domain.model.CollectionStreamCacheEstimate
 import org.hdhmc.saki.domain.model.CollectionStreamCacheTask
 import org.hdhmc.saki.domain.model.CollectionStreamCacheTaskStatus
 import org.hdhmc.saki.domain.model.Playlist
+import org.hdhmc.saki.domain.model.PlaylistDownloadEstimate
+import org.hdhmc.saki.domain.model.PlaylistDownloadTask
+import org.hdhmc.saki.domain.model.PlaylistDownloadTaskStatus
 import org.hdhmc.saki.domain.model.PlaylistSummary
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
@@ -134,6 +142,11 @@ private data class LibraryDetailArtworkVisuals(
     val artworkModel: Any?,
     val accentColor: Color,
     val trackAccentColor: Color,
+)
+
+private data class PendingPlaylistDownloadConfirmation(
+    val playlist: Playlist,
+    val estimate: PlaylistDownloadEstimate,
 )
 
 internal data class LibraryDetailTwoPaneMetrics(
@@ -867,6 +880,10 @@ private fun AlbumDetailHeroCard(
     isEstimatingCache: Boolean,
     cacheActionEnabled: Boolean,
     onCache: () -> Unit,
+    downloadTask: PlaylistDownloadTask? = null,
+    isEstimatingDownload: Boolean = false,
+    downloadActionEnabled: Boolean = false,
+    onDownload: (() -> Unit)? = null,
     onBack: () -> Unit,
     accentColor: Color,
     playContentDescription: String,
@@ -892,6 +909,10 @@ private fun AlbumDetailHeroCard(
                 isEstimatingCache = isEstimatingCache,
                 cacheActionEnabled = cacheActionEnabled,
                 onCache = onCache,
+                downloadTask = downloadTask,
+                isEstimatingDownload = isEstimatingDownload,
+                downloadActionEnabled = downloadActionEnabled,
+                onDownload = onDownload,
                 onBack = onBack,
                 accentColor = accentColor,
             )
@@ -906,6 +927,10 @@ private fun AlbumDetailHeroCard(
                 isEstimatingCache = isEstimatingCache,
                 cacheActionEnabled = cacheActionEnabled,
                 onCache = onCache,
+                downloadTask = downloadTask,
+                isEstimatingDownload = isEstimatingDownload,
+                downloadActionEnabled = downloadActionEnabled,
+                onDownload = onDownload,
                 onBack = onBack,
                 accentColor = accentColor,
                 playContentDescription = playContentDescription,
@@ -926,6 +951,10 @@ private fun WideAlbumDetailHeroCard(
     isEstimatingCache: Boolean,
     cacheActionEnabled: Boolean,
     onCache: () -> Unit,
+    downloadTask: PlaylistDownloadTask?,
+    isEstimatingDownload: Boolean,
+    downloadActionEnabled: Boolean,
+    onDownload: (() -> Unit)?,
     onBack: () -> Unit,
     accentColor: Color,
 ) {
@@ -1007,9 +1036,10 @@ private fun WideAlbumDetailHeroCard(
                         softWrap = false,
                     )
                 }
-                Row(
+                FlowRow(
                     modifier = Modifier.padding(top = 22.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     FilledTonalButton(
                         onClick = onPlay,
@@ -1027,6 +1057,14 @@ private fun WideAlbumDetailHeroCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(stringResource(R.string.library_play))
+                    }
+                    if (onDownload != null) {
+                        PlaylistDownloadButton(
+                            task = downloadTask,
+                            isEstimating = isEstimatingDownload,
+                            enabled = downloadActionEnabled,
+                            onClick = onDownload,
+                        )
                     }
                     CollectionStreamCacheButton(
                         task = cacheTask,
@@ -1051,6 +1089,10 @@ private fun CompactAlbumDetailHeroCard(
     isEstimatingCache: Boolean,
     cacheActionEnabled: Boolean,
     onCache: () -> Unit,
+    downloadTask: PlaylistDownloadTask?,
+    isEstimatingDownload: Boolean,
+    downloadActionEnabled: Boolean,
+    onDownload: (() -> Unit)?,
     onBack: () -> Unit,
     accentColor: Color,
     playContentDescription: String,
@@ -1120,6 +1162,14 @@ private fun CompactAlbumDetailHeroCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (onDownload != null) {
+                    PlaylistDownloadIconButton(
+                        task = downloadTask,
+                        isEstimating = isEstimatingDownload,
+                        enabled = downloadActionEnabled,
+                        onClick = onDownload,
+                    )
+                }
                 CollectionStreamCacheIconButton(
                     task = cacheTask,
                     isEstimating = isEstimatingCache,
@@ -1157,6 +1207,134 @@ private fun CompactAlbumDetailHeroCard(
                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                 contentDescription = stringResource(R.string.library_back),
                 modifier = Modifier.padding(9.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun PlaylistDownloadButton(
+    task: PlaylistDownloadTask?,
+    isEstimating: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val running = task?.isActive == true
+    val animatedProgress by animateFloatAsState(
+        targetValue = task?.progress ?: 0f,
+        animationSpec = tween(durationMillis = 320),
+        label = "playlistDownloadProgress",
+    )
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled && !isEstimating,
+        shape = MaterialTheme.shapes.small,
+    ) {
+        when {
+            isEstimating -> CircularWavyProgressIndicator(modifier = Modifier.size(18.dp))
+            running -> Box(contentAlignment = Alignment.Center) {
+                CircularWavyProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier.size(20.dp),
+                )
+                Icon(
+                    imageVector = Icons.Rounded.StopCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(10.dp),
+                )
+            }
+            else -> Icon(
+                imageVector = Icons.Rounded.DownloadForOffline,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            when {
+                isEstimating -> stringResource(R.string.library_playlist_download_estimating)
+                running -> stringResource(
+                    R.string.library_playlist_download_compact_progress,
+                    task.processedSongCount,
+                    task.totalSongCount,
+                )
+                task?.status == PlaylistDownloadTaskStatus.FAILED -> {
+                    stringResource(
+                        R.string.library_playlist_download_retry_failed,
+                        task.failedSongCount,
+                    )
+                }
+                task?.status == PlaylistDownloadTaskStatus.CANCELLED -> {
+                    stringResource(R.string.library_playlist_download_continue)
+                }
+                task?.status == PlaylistDownloadTaskStatus.COMPLETED -> {
+                    stringResource(R.string.library_playlist_download_downloaded)
+                }
+                else -> stringResource(R.string.library_playlist_download_action)
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun PlaylistDownloadIconButton(
+    task: PlaylistDownloadTask?,
+    isEstimating: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val running = task?.isActive == true
+    val animatedProgress by animateFloatAsState(
+        targetValue = task?.progress ?: 0f,
+        animationSpec = tween(durationMillis = 320),
+        label = "compactPlaylistDownloadProgress",
+    )
+    FilledIconButton(
+        onClick = onClick,
+        enabled = enabled && !isEstimating,
+        modifier = Modifier.size(46.dp),
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = Color.Black.copy(alpha = 0.42f),
+            contentColor = Color.White,
+        ),
+    ) {
+        when {
+            isEstimating -> CircularWavyProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = Color.White,
+                trackColor = Color.White.copy(alpha = 0.24f),
+            )
+            running -> Box(contentAlignment = Alignment.Center) {
+                CircularWavyProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier.size(30.dp),
+                    color = Color.White,
+                    trackColor = Color.White.copy(alpha = 0.24f),
+                )
+                Icon(
+                    imageVector = Icons.Rounded.StopCircle,
+                    contentDescription = stringResource(R.string.library_playlist_download_cancel),
+                    modifier = Modifier.size(12.dp),
+                    tint = Color.White,
+                )
+            }
+            else -> Icon(
+                imageVector = Icons.Rounded.DownloadForOffline,
+                contentDescription = when (task?.status) {
+                    PlaylistDownloadTaskStatus.FAILED -> stringResource(
+                        R.string.library_playlist_download_retry_failed,
+                        task.failedSongCount,
+                    )
+                    PlaylistDownloadTaskStatus.CANCELLED -> {
+                        stringResource(R.string.library_playlist_download_continue)
+                    }
+                    PlaylistDownloadTaskStatus.COMPLETED -> {
+                        stringResource(R.string.library_playlist_download_downloaded)
+                    }
+                    else -> stringResource(R.string.library_playlist_download_action)
+                },
             )
         }
     }
@@ -1369,6 +1547,119 @@ private fun CollectionStreamCacheConfirmationDialog(
             }
         },
         dismissButton = if (allCached) {
+            null
+        } else {
+            {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun PlaylistDownloadConfirmationDialog(
+    title: String,
+    estimate: PlaylistDownloadEstimate,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val context = LocalContext.current
+    val textMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f)
+        .coerceIn(120.dp, 420.dp)
+    val allDownloaded = estimate.totalSongCount > 0 && estimate.pendingSongCount == 0
+    val formatBytes: (Long) -> String = { bytes ->
+        android.text.format.Formatter.formatShortFileSize(context, bytes.coerceAtLeast(0L))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.library_playlist_download_dialog_title, title)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = textMaxHeight)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    stringResource(
+                        R.string.library_playlist_download_estimate_summary,
+                        estimate.pendingSongCount,
+                        estimate.totalSongCount,
+                        formatBytes(estimate.estimatedAdditionalBytes),
+                    ),
+                )
+                Text(
+                    stringResource(
+                        R.string.library_playlist_download_quality,
+                        stringResource(estimate.quality.labelRes()),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(
+                        R.string.library_playlist_download_available_space,
+                        formatBytes(estimate.availableBytes),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (estimate.alreadyDownloadedSongCount > 0) {
+                    Text(
+                        stringResource(
+                            R.string.library_playlist_download_already_downloaded,
+                            estimate.alreadyDownloadedSongCount,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (estimate.unknownSizeSongCount > 0) {
+                    CollectionStreamCacheWarning(
+                        stringResource(
+                            R.string.library_playlist_download_unknown_sizes,
+                            estimate.unknownSizeSongCount,
+                        ),
+                    )
+                }
+                if (!estimate.hasEnoughSpace) {
+                    CollectionStreamCacheWarning(
+                        stringResource(
+                            R.string.library_playlist_download_insufficient_space,
+                            formatBytes(estimate.estimatedAdditionalBytes),
+                            formatBytes(estimate.availableBytes),
+                        ),
+                    )
+                }
+                Text(
+                    if (allDownloaded) {
+                        stringResource(R.string.library_playlist_download_all_downloaded)
+                    } else {
+                        stringResource(R.string.library_playlist_download_disclaimer)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = if (allDownloaded) onDismiss else onConfirm,
+                enabled = allDownloaded || estimate.hasEnoughSpace,
+            ) {
+                Text(
+                    if (allDownloaded) {
+                        stringResource(R.string.common_close)
+                    } else {
+                        stringResource(R.string.library_playlist_download_confirm)
+                    },
+                )
+            }
+        },
+        dismissButton = if (allDownloaded) {
             null
         } else {
             {
@@ -1794,6 +2085,11 @@ fun PlaylistDetailScreen(
     onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate? = { null },
     onStartCollectionStreamCache: (CollectionStreamCacheEstimate) -> Unit = {},
     onCancelCollectionStreamCache: () -> Unit = {},
+    playlistDownloadTask: PlaylistDownloadTask? = null,
+    activePlaylistDownloadTask: PlaylistDownloadTask? = null,
+    onEstimatePlaylistDownload: suspend (List<Song>) -> PlaylistDownloadEstimate? = { null },
+    onStartPlaylistDownload: (Playlist, PlaylistDownloadEstimate) -> Unit = { _, _ -> },
+    onCancelPlaylistDownload: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val cacheSourceKey = "server:${server.id}:playlist:${playlist.id}"
@@ -1814,6 +2110,48 @@ fun PlaylistDetailScreen(
             cacheScope.launch {
                 pendingCacheEstimate = onEstimateCollectionStreamCache(playlist.songs)
                 isEstimatingCache = false
+            }
+        }
+    }
+    var pendingDownloadConfirmation by remember(server.id, playlist.id) {
+        mutableStateOf<PendingPlaylistDownloadConfirmation?>(null)
+    }
+    var isEstimatingDownload by remember(server.id, playlist.id) { mutableStateOf(false) }
+    val matchingDownloadTask = playlistDownloadTask?.takeIf { task -> task.sourceKey == cacheSourceKey }
+    val heroDownloadTask = matchingDownloadTask?.takeUnless { task ->
+        task.status == PlaylistDownloadTaskStatus.COMPLETED &&
+            playlist.songs.distinctBy(Song::id).any { song ->
+                val cached = cachedSongsBySongId[song.id]
+                cached == null || cached.quality.ordinal > task.quality.ordinal
+            }
+    }
+    val isMatchingDownloadActive = matchingDownloadTask?.isActive == true
+    val isOtherDownloadActive = activePlaylistDownloadTask?.isActive == true &&
+        activePlaylistDownloadTask.sourceKey != cacheSourceKey
+    val downloadActionEnabled = playlist.songs.isNotEmpty() &&
+        (isMatchingDownloadActive || (!isOfflineDegraded && !isOtherDownloadActive))
+    val requestPlaylistDownload: () -> Unit = {
+        if (isMatchingDownloadActive) {
+            onCancelPlaylistDownload()
+        } else if (!isOfflineDegraded && !isEstimatingDownload && !isOtherDownloadActive) {
+            val playlistSnapshot = playlist.copy(
+                songs = playlist.songs.map { song ->
+                    song.copy(artists = song.artists.toList())
+                },
+            )
+            isEstimatingDownload = true
+            cacheScope.launch {
+                try {
+                    val estimate = onEstimatePlaylistDownload(playlistSnapshot.songs)
+                    if (estimate != null) {
+                        pendingDownloadConfirmation = PendingPlaylistDownloadConfirmation(
+                            playlist = playlistSnapshot,
+                            estimate = estimate,
+                        )
+                    }
+                } finally {
+                    isEstimatingDownload = false
+                }
             }
         }
     }
@@ -1878,6 +2216,10 @@ fun PlaylistDetailScreen(
                         isEstimatingCache = isEstimatingCache,
                         cacheActionEnabled = cacheActionEnabled,
                         onCache = requestCollectionCache,
+                        downloadTask = heroDownloadTask,
+                        isEstimatingDownload = isEstimatingDownload,
+                        downloadActionEnabled = downloadActionEnabled,
+                        onDownload = requestPlaylistDownload,
                         onBack = onBack,
                         playContentDescription = stringResource(R.string.library_play_playlist),
                     )
@@ -1938,6 +2280,10 @@ fun PlaylistDetailScreen(
                     isEstimatingCache = isEstimatingCache,
                     cacheActionEnabled = cacheActionEnabled,
                     onCache = requestCollectionCache,
+                    downloadTask = heroDownloadTask,
+                    isEstimatingDownload = isEstimatingDownload,
+                    downloadActionEnabled = downloadActionEnabled,
+                    onDownload = requestPlaylistDownload,
                     onBack = onBack,
                     playContentDescription = stringResource(R.string.library_play_playlist),
                 )
@@ -1977,6 +2323,17 @@ fun PlaylistDetailScreen(
             onConfirm = {
                 pendingCacheEstimate = null
                 onStartCollectionStreamCache(estimate)
+            },
+        )
+    }
+    pendingDownloadConfirmation?.let { pending ->
+        PlaylistDownloadConfirmationDialog(
+            title = pending.playlist.name,
+            estimate = pending.estimate,
+            onDismiss = { pendingDownloadConfirmation = null },
+            onConfirm = {
+                pendingDownloadConfirmation = null
+                onStartPlaylistDownload(pending.playlist, pending.estimate)
             },
         )
     }

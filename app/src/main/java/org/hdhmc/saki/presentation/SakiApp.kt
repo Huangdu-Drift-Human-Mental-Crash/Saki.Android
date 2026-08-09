@@ -326,6 +326,9 @@ private fun BrowseRoute(
         onEstimateCollectionStreamCache = viewModel::estimateCollectionStreamCache,
         onStartCollectionStreamCache = viewModel::startCollectionStreamCache,
         onCancelCollectionStreamCache = viewModel::cancelCollectionStreamCache,
+        onEstimatePlaylistDownload = viewModel::estimatePlaylistDownload,
+        onStartPlaylistDownload = viewModel::startPlaylistDownload,
+        onCancelPlaylistDownload = viewModel::cancelPlaylistDownload,
         onOpenSettings = onOpenSettings,
         onImportConfig = { uri -> viewModel.importConfig(uri) },
     )
