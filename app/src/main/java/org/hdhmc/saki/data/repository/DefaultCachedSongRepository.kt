@@ -1,12 +1,13 @@
 package org.hdhmc.saki.data.repository
 
 import android.content.Context
+import org.hdhmc.saki.data.download.CancellableBinaryDownloader
+import org.hdhmc.saki.data.download.DownloadedBinary
 import org.hdhmc.saki.data.local.dao.CachedSongDao
 import org.hdhmc.saki.data.local.dao.LibraryCacheDao
 import org.hdhmc.saki.data.local.entity.CachedSongEntity
 import org.hdhmc.saki.data.local.entity.CachedSongMetadataEntity
 import org.hdhmc.saki.di.IoDispatcher
-import org.hdhmc.saki.domain.model.AuthenticatedUrlCandidate
 import org.hdhmc.saki.domain.model.CacheStorageSummary
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.Song
@@ -16,33 +17,33 @@ import org.hdhmc.saki.domain.repository.PlaybackPreferencesRepository
 import org.hdhmc.saki.domain.repository.SubsonicRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.io.IOException
-import java.net.ConnectException
-import java.net.NoRouteToHostException
-import java.net.SocketTimeoutException
-import java.net.URLConnection
-import java.net.UnknownHostException
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class DefaultCachedSongRepository @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val cachedSongDao: CachedSongDao,
     private val libraryCacheDao: LibraryCacheDao,
-    private val okHttpClient: OkHttpClient,
+    private val binaryDownloader: CancellableBinaryDownloader,
     private val playbackPreferencesRepository: PlaybackPreferencesRepository,
     private val subsonicRepository: SubsonicRepository,
     @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : CachedSongRepository {
+    private val songDownloadLocks = List(DOWNLOAD_LOCK_COUNT) { Mutex() }
+    private val coverDownloadLocks = List(DOWNLOAD_LOCK_COUNT) { Mutex() }
+
     override fun observeCachedSongs(): Flow<List<CachedSong>> {
         return combine(
             cachedSongDao.observeCachedSongs(),
@@ -99,19 +100,38 @@ class DefaultCachedSongRepository @Inject constructor(
     override suspend fun cacheSong(
         serverId: Long,
         song: Song,
-    ): CachedSong = withContext(ioDispatcher) {
+    ): CachedSong {
         val quality = playbackPreferencesRepository.getPreferences().downloadQuality
+        return cacheSong(serverId, song, quality)
+    }
+
+    override suspend fun cacheSong(
+        serverId: Long,
+        song: Song,
+        quality: StreamQuality,
+    ): CachedSong = withContext(ioDispatcher) {
+        songDownloadLocks.lockFor("$serverId:${song.id}").withLock {
+            cacheSongLocked(serverId, song, quality)
+        }
+    }
+
+    private suspend fun cacheSongLocked(
+        serverId: Long,
+        song: Song,
+        quality: StreamQuality,
+    ): CachedSong {
         val existing = cachedSongDao.getCachedSong(serverId, song.id)
         if (
             existing != null &&
-            existing.qualityKey == quality.storageKey &&
-            File(existing.localPath).exists()
+            File(existing.localPath).isNonEmptyFile() &&
+            StreamQuality.fromStorageKey(existing.qualityKey).isAtLeast(quality)
         ) {
-            val enriched = existing.withPlaybackMetadataFrom(song, quality)
+            val existingQuality = StreamQuality.fromStorageKey(existing.qualityKey)
+            val enriched = existing.withPlaybackMetadataFrom(song, existingQuality)
             if (enriched != existing) {
                 cachedSongDao.upsertCachedSong(enriched)
             }
-            return@withContext enriched.toDomain()
+            return enriched.toDomain()
         }
 
         val audioDirectory = File(appContext.filesDir, "offline/audio/$serverId").apply {
@@ -127,83 +147,166 @@ class DefaultCachedSongRepository @Inject constructor(
             quality = quality,
             destinationDirectory = audioDirectory,
         )
-        val coverArtPath = song.coverArtId?.let { coverArtId ->
-            runCatching {
-                downloadCoverArt(
+        var entityCommitted = false
+        suspend fun persistEntity(coverArtPath: String?): CachedSongEntity {
+            val entity = CachedSongEntity(
+                cacheId = existing?.cacheId ?: "$serverId:${song.id}",
+                serverId = serverId,
+                songId = song.id,
+                title = song.title,
+                album = song.album,
+                albumId = song.albumId,
+                artist = song.artist,
+                artistId = song.artistId,
+                coverArtId = song.coverArtId,
+                coverArtPath = coverArtPath,
+                localPath = audioDownload.file.absolutePath,
+                durationSeconds = song.durationSeconds,
+                track = song.track,
+                discNumber = song.discNumber,
+                suffix = audioDownload.suffix ?: song.suffix,
+                contentType = audioDownload.contentType ?: song.contentType,
+                bitRate = song.cachedBitRateKbps(quality),
+                sampleRate = song.sampleRate,
+                qualityKey = quality.storageKey,
+                fileSizeBytes = audioDownload.file.length(),
+                downloadedAt = System.currentTimeMillis(),
+            )
+
+            withContext(NonCancellable) {
+                try {
+                    cachedSongDao.upsertCachedSong(entity)
+                } catch (exception: Exception) {
+                    if (existing?.localPath != entity.localPath) {
+                        entity.localPath.let(::File).delete()
+                    }
+                    throw exception
+                }
+
+                existing?.let { stale ->
+                    if (stale.localPath != entity.localPath) {
+                        File(stale.localPath).delete()
+                    }
+                }
+                entityCommitted = true
+            }
+            return entity
+        }
+
+        val entity = try {
+            val coverArtId = song.coverArtId
+            if (coverArtId == null) {
+                persistEntity(coverArtPath = null)
+            } else {
+                coverDownloadLocks.lockFor("$serverId:$coverArtId").withLock {
+                    val coverArtPath = try {
+                        getOrDownloadCoverArt(
+                            serverId = serverId,
+                            coverArtId = coverArtId,
+                            destinationDirectory = coverDirectory,
+                        ).absolutePath
+                    } catch (exception: CancellationException) {
+                        throw exception
+                    } catch (_: Exception) {
+                        null
+                    }
+                    persistEntity(coverArtPath)
+                }
+            }
+        } catch (exception: CancellationException) {
+            if (!entityCommitted) audioDownload.file.delete()
+            throw exception
+        }
+
+        existing?.coverArtPath
+            ?.takeIf { stalePath -> stalePath != entity.coverArtPath }
+            ?.let { stalePath ->
+                deleteCoverIfUnreferenced(
                     serverId = serverId,
-                    coverArtId = coverArtId,
-                    destinationDirectory = coverDirectory,
-                ).absolutePath
-            }.getOrNull()
-        }
-
-        val entity = CachedSongEntity(
-            cacheId = existing?.cacheId ?: "$serverId:${song.id}",
-            serverId = serverId,
-            songId = song.id,
-            title = song.title,
-            album = song.album,
-            albumId = song.albumId,
-            artist = song.artist,
-            artistId = song.artistId,
-            coverArtId = song.coverArtId,
-            coverArtPath = coverArtPath,
-            localPath = audioDownload.file.absolutePath,
-            durationSeconds = song.durationSeconds,
-            track = song.track,
-            discNumber = song.discNumber,
-            suffix = audioDownload.suffix ?: song.suffix,
-            contentType = audioDownload.contentType ?: song.contentType,
-            bitRate = song.cachedBitRateKbps(quality),
-            sampleRate = song.sampleRate,
-            qualityKey = quality.storageKey,
-            fileSizeBytes = audioDownload.file.length(),
-            downloadedAt = System.currentTimeMillis(),
-        )
-
-        existing?.let { stale ->
-            if (stale.localPath != entity.localPath) {
-                File(stale.localPath).delete()
+                    coverArtId = existing.coverArtId,
+                    coverArtPath = stalePath,
+                )
             }
-            if (stale.coverArtPath != null && stale.coverArtPath != entity.coverArtPath) {
-                File(stale.coverArtPath).delete()
+
+        return entity.toDomain()
+    }
+
+    private suspend fun deleteCoverIfUnreferenced(
+        serverId: Long,
+        coverArtId: String?,
+        coverArtPath: String,
+    ) {
+        val lockKey = "$serverId:${coverArtId ?: coverArtPath}"
+        coverDownloadLocks.lockFor(lockKey).withLock {
+            withContext(NonCancellable) {
+                if (cachedSongDao.countCachedSongsReferencingCover(coverArtPath) == 0) {
+                    File(coverArtPath).delete()
+                }
             }
         }
-
-        cachedSongDao.upsertCachedSong(entity)
-        entity.toDomain()
     }
 
     override suspend fun deleteCachedSong(cacheId: String): Unit = withContext(ioDispatcher) {
-        cachedSongDao.getCachedSongById(cacheId)?.let { cachedSong ->
-            File(cachedSong.localPath).delete()
-            cachedSong.coverArtPath?.let { File(it).delete() }
+        val initial = cachedSongDao.getCachedSongById(cacheId)
+        if (initial == null) {
+            cachedSongDao.deleteCachedSong(cacheId)
+            return@withContext
         }
-        cachedSongDao.deleteCachedSong(cacheId)
+        songDownloadLocks.lockFor("${initial.serverId}:${initial.songId}").withLock {
+            val cachedSong = cachedSongDao.getCachedSongById(cacheId)
+            if (cachedSong == null) {
+                cachedSongDao.deleteCachedSong(cacheId)
+                return@withLock
+            }
+            val deleteRecordAndFiles: suspend () -> Unit = {
+                withContext(NonCancellable) {
+                    File(cachedSong.localPath).delete()
+                    cachedSongDao.deleteCachedSong(cacheId)
+                    cachedSong.coverArtPath?.let { coverPath ->
+                        if (cachedSongDao.countCachedSongsReferencingCover(coverPath) == 0) {
+                            File(coverPath).delete()
+                        }
+                    }
+                }
+            }
+            val coverArtPath = cachedSong.coverArtPath
+            if (coverArtPath == null) {
+                deleteRecordAndFiles()
+            } else {
+                val coverLockKey = "${cachedSong.serverId}:${cachedSong.coverArtId ?: coverArtPath}"
+                coverDownloadLocks.lockFor(coverLockKey).withLock {
+                    deleteRecordAndFiles()
+                }
+            }
+        }
     }
 
     override suspend fun clearCachedSongs(serverId: Long?): Int = withContext(ioDispatcher) {
-        val cachedSongs = cachedSongDao.getScopedCachedSongs(serverId)
-        if (cachedSongs.isEmpty()) {
-            return@withContext 0
+        songDownloadLocks.withAllLocks {
+            withContext(NonCancellable) {
+                val cachedSongs = cachedSongDao.getScopedCachedSongs(serverId)
+                if (cachedSongs.isEmpty()) {
+                    0
+                } else {
+                    cachedSongs
+                        .map(CachedSongEntity::localPath)
+                        .distinct()
+                        .forEach { path -> File(path).delete() }
+                    cachedSongs
+                        .mapNotNull(CachedSongEntity::coverArtPath)
+                        .distinct()
+                        .forEach { path -> File(path).delete() }
+
+                    if (serverId != null) {
+                        cachedSongDao.deleteCachedSongsForServer(serverId)
+                    } else {
+                        cachedSongDao.deleteAllCachedSongs()
+                    }
+
+                    cachedSongs.size
+                }
+            }
         }
-
-        cachedSongs
-            .map(CachedSongEntity::localPath)
-            .distinct()
-            .forEach { path -> File(path).delete() }
-        cachedSongs
-            .mapNotNull(CachedSongEntity::coverArtPath)
-            .distinct()
-            .forEach { path -> File(path).delete() }
-
-        if (serverId != null) {
-            cachedSongDao.deleteCachedSongsForServer(serverId)
-        } else {
-            cachedSongDao.deleteAllCachedSongs()
-        }
-
-        cachedSongs.size
     }
 
     override suspend fun getCacheStorageSummary(serverId: Long?): CacheStorageSummary = withContext(ioDispatcher) {
@@ -249,7 +352,7 @@ class DefaultCachedSongRepository @Inject constructor(
             else -> quality.format
         }
 
-        return downloadBinary(
+        return binaryDownloader.download(
             candidates = candidates,
             destinationDirectory = destinationDirectory,
             destinationBaseName = buildCacheFileStem(song.title, song.id, quality.storageKey),
@@ -267,7 +370,7 @@ class DefaultCachedSongRepository @Inject constructor(
             coverArtId = coverArtId,
             size = 720,
         )
-        return downloadBinary(
+        return binaryDownloader.download(
             candidates = request.candidates,
             destinationDirectory = destinationDirectory,
             destinationBaseName = buildCacheFileStem("cover", coverArtId, "art"),
@@ -275,61 +378,22 @@ class DefaultCachedSongRepository @Inject constructor(
         ).file
     }
 
-    private fun downloadBinary(
-        candidates: List<AuthenticatedUrlCandidate>,
+    private suspend fun getOrDownloadCoverArt(
+        serverId: Long,
+        coverArtId: String,
         destinationDirectory: File,
-        destinationBaseName: String,
-        preferredSuffix: String?,
-    ): DownloadedBinary {
-        var lastTransportFailure: IOException? = null
-
-        for (candidate in candidates) {
-            try {
-                val request = Request.Builder()
-                    .url(candidate.url)
-                    .get()
-                    .build()
-                okHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw IOException("HTTP ${response.code} from ${candidate.endpoint.baseUrl}")
-                    }
-
-                    val responseBody = response.body ?: throw IOException(
-                        "Empty response from ${candidate.endpoint.baseUrl}",
-                    )
-                    val contentType = responseBody.contentType()?.toString()
-                    val suffix = preferredSuffix
-                        ?: responseBody.contentType()?.subtype
-                        ?: URLConnection.guessContentTypeFromName(candidate.url)?.substringAfter('/')
-                        ?: "bin"
-                    val targetFile = File(destinationDirectory, "$destinationBaseName.${suffix.normalizeSuffix()}")
-                    val tempFile = File(destinationDirectory, "$destinationBaseName.tmp")
-                    responseBody.byteStream().use { input ->
-                        tempFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    if (targetFile.exists()) {
-                        targetFile.delete()
-                    }
-                    tempFile.renameTo(targetFile)
-
-                    return DownloadedBinary(
-                        file = targetFile,
-                        contentType = contentType,
-                        suffix = suffix.normalizeSuffix(),
-                    )
-                }
-            } catch (exception: IOException) {
-                if (!exception.shouldRetryNextEndpoint()) {
-                    throw exception
-                }
-                lastTransportFailure = exception
-            }
-        }
-
-        throw lastTransportFailure ?: IOException("No endpoint could provide the requested file.")
+    ): File {
+        val existing = File(
+            destinationDirectory,
+            "${buildCacheFileStem("cover", coverArtId, "art")}.jpg",
+        )
+        return existing.takeIf(File::isNonEmptyFile) ?: downloadCoverArt(
+            serverId = serverId,
+            coverArtId = coverArtId,
+            destinationDirectory = destinationDirectory,
+        )
     }
+
 }
 
 private suspend fun CachedSongDao.getScopedCachedSongs(serverId: Long?): List<CachedSongEntity> {
@@ -339,12 +403,6 @@ private suspend fun CachedSongDao.getScopedCachedSongs(serverId: Long?): List<Ca
         getCachedSongs()
     }
 }
-
-private data class DownloadedBinary(
-    val file: File,
-    val contentType: String?,
-    val suffix: String?,
-)
 
 private data class CachedSongMetadataKey(
     val serverId: Long,
@@ -412,8 +470,10 @@ private fun CachedSongEntity.toDomain(metadata: CachedSongMetadataEntity? = null
 }
 
 private fun CachedSong.canPlayAt(preferredQuality: StreamQuality): Boolean {
-    return File(localPath).isFile && quality.isAtLeast(preferredQuality)
+    return File(localPath).isNonEmptyFile() && quality.isAtLeast(preferredQuality)
 }
+
+private fun File.isNonEmptyFile(): Boolean = isFile && length() > 0L
 
 private fun Song.cachedBitRateKbps(quality: StreamQuality): Int? {
     val requestedMaxBitRate = quality.maxBitRate
@@ -458,24 +518,45 @@ private fun buildCacheFileStem(
     uniqueId: String,
     variant: String,
 ): String {
-    val safeTitle = title.replace(Regex("[^a-zA-Z0-9._-]+"), "_")
-        .trim('_')
-        .ifBlank { "track" }
-    return "${safeTitle}_${uniqueId}_$variant"
+    val safeTitle = title.toSafeFileSegment(fallback = "track", maxLength = 48)
+    val safeUniqueId = uniqueId.toSafeFileSegment(fallback = "id", maxLength = 64) +
+        "_${uniqueId.sha256Prefix()}"
+    val safeVariant = variant.toSafeFileSegment(fallback = "variant", maxLength = 24)
+    return "${safeTitle}_${safeUniqueId}_$safeVariant"
 }
 
-private fun String.normalizeSuffix(): String {
-    return trim()
-        .trimStart('.')
-        .lowercase()
-        .ifBlank { "bin" }
+private fun String.toSafeFileSegment(fallback: String, maxLength: Int): String {
+    return replace(Regex("[^a-zA-Z0-9._-]+"), "_")
+        .trim('_', '.')
+        .take(maxLength)
+        .ifBlank { fallback }
 }
 
-private fun IOException.shouldRetryNextEndpoint(): Boolean {
-    return this is UnknownHostException ||
-        this is ConnectException ||
-        this is SocketTimeoutException ||
-        this is NoRouteToHostException
+private fun String.sha256Prefix(): String {
+    return MessageDigest.getInstance("SHA-256")
+        .digest(toByteArray(Charsets.UTF_8))
+        .take(8)
+        .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 }
 
 private const val IN_CLAUSE_QUERY_CHUNK_SIZE = 500
+private const val DOWNLOAD_LOCK_COUNT = 32
+
+private fun List<Mutex>.lockFor(key: String): Mutex {
+    return this[Math.floorMod(key.hashCode(), size)]
+}
+
+private suspend fun <T> List<Mutex>.withAllLocks(block: suspend () -> T): T {
+    var acquiredCount = 0
+    try {
+        forEach { mutex ->
+            mutex.lock()
+            acquiredCount += 1
+        }
+        return block()
+    } finally {
+        for (index in acquiredCount - 1 downTo 0) {
+            this[index].unlock()
+        }
+    }
+}

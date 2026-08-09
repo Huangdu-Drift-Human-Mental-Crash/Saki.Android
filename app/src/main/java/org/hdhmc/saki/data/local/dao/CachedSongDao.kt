@@ -33,6 +33,9 @@ interface CachedSongDao {
     @Query("SELECT * FROM cached_songs WHERE cacheId = :cacheId LIMIT 1")
     suspend fun getCachedSongById(cacheId: String): CachedSongEntity?
 
+    @Query("SELECT COUNT(*) FROM cached_songs WHERE coverArtPath = :coverArtPath")
+    suspend fun countCachedSongsReferencingCover(coverArtPath: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCachedSong(song: CachedSongEntity)
 

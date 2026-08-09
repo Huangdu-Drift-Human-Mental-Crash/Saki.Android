@@ -36,6 +36,12 @@ interface CachedSongRepository {
         song: Song,
     ): CachedSong
 
+    suspend fun cacheSong(
+        serverId: Long,
+        song: Song,
+        quality: StreamQuality,
+    ): CachedSong
+
     suspend fun deleteCachedSong(cacheId: String)
 
     suspend fun clearCachedSongs(serverId: Long? = null): Int

@@ -1,6 +1,9 @@
 package org.hdhmc.saki.presentation.library
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.icu.text.AlphabeticIndex
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -98,6 +101,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -139,6 +143,8 @@ import org.hdhmc.saki.domain.model.CollectionStreamCacheEstimate
 import org.hdhmc.saki.domain.model.CollectionStreamCacheTask
 import org.hdhmc.saki.domain.model.CollectionStreamCacheTaskStatus
 import org.hdhmc.saki.domain.model.Playlist
+import org.hdhmc.saki.domain.model.PlaylistDownloadEstimate
+import org.hdhmc.saki.domain.model.PlaylistDownloadTask
 import org.hdhmc.saki.domain.model.SearchResults
 import org.hdhmc.saki.domain.model.ServerConfig
 import org.hdhmc.saki.domain.model.Song
@@ -159,6 +165,7 @@ import org.hdhmc.saki.presentation.SakiBrowseUiState
 import org.hdhmc.saki.presentation.asString
 import org.hdhmc.saki.ui.theme.SakiChromeIconButton
 import org.hdhmc.saki.ui.theme.SakiTheme
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
@@ -178,6 +185,11 @@ private val BrowseAdaptiveNavigationContentGap = 12.dp
 private val AlbumAdaptiveGridMinContentWidth = 520.dp
 private val AlbumAdaptiveGridMinCellWidth = 168.dp
 private val FastScrollAdaptiveEdgeProtection = 16.dp
+
+private data class PendingPlaylistDownloadStart(
+    val playlist: Playlist,
+    val estimate: PlaylistDownloadEstimate,
+)
 
 internal fun fastScrollBottomOverlayPadding(width: Dp, overlayPadding: Dp): Dp =
     if (width >= BrowseAdaptiveNavigationMinWidth) {
@@ -222,15 +234,52 @@ fun BrowseScreen(
     onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate?,
     onStartCollectionStreamCache: (String, String, List<Song>, CollectionStreamCacheEstimate) -> Unit,
     onCancelCollectionStreamCache: () -> Unit,
+    onEstimatePlaylistDownload: suspend (List<Song>) -> PlaylistDownloadEstimate?,
+    onStartPlaylistDownload: (Playlist, PlaylistDownloadEstimate) -> Unit,
+    onCancelPlaylistDownload: () -> Unit,
     onOpenSettings: () -> Unit,
     onImportConfig: (android.net.Uri) -> Unit,
 ) {
     val background = rememberBrowseBackgroundBrush()
+    val context = LocalContext.current
+    val currentOnStartPlaylistDownload by rememberUpdatedState(onStartPlaylistDownload)
+    val currentSelectedServerId by rememberUpdatedState(uiState.selectedServerId)
+    var pendingPlaylistDownloadStart by remember {
+        mutableStateOf<PendingPlaylistDownloadStart?>(null)
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) {
+        pendingPlaylistDownloadStart
+            ?.takeIf { pending -> pending.estimate.serverId == currentSelectedServerId }
+            ?.let { pending ->
+                currentOnStartPlaylistDownload(pending.playlist, pending.estimate)
+            }
+        pendingPlaylistDownloadStart = null
+    }
+    val startPlaylistDownloadWithNotificationPermission:
+        (Playlist, PlaylistDownloadEstimate) -> Unit = { playlist, estimate ->
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                pendingPlaylistDownloadStart = PendingPlaylistDownloadStart(playlist, estimate)
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                currentOnStartPlaylistDownload(playlist, estimate)
+            }
+        }
     val currentServer = uiState.servers.firstOrNull { it.id == uiState.selectedServerId }
     val availabilityUiState by availabilityUiStateFlow.collectAsStateWithLifecycle()
     val activeCollectionStreamCacheTask = availabilityUiState.collectionStreamCacheTask
         ?.takeIf { task -> task.status == CollectionStreamCacheTaskStatus.RUNNING }
-    val pageBottomOverlayPadding = if (activeCollectionStreamCacheTask == null) {
+    val activePlaylistDownloadTask = availabilityUiState.activePlaylistDownloadTask
+    val pageBottomOverlayPadding = if (
+        activeCollectionStreamCacheTask == null && activePlaylistDownloadTask == null
+    ) {
         bottomOverlayPadding
     } else {
         0.dp
@@ -395,6 +444,9 @@ fun BrowseScreen(
                                         onEstimateCollectionStreamCache = onEstimateCollectionStreamCache,
                                         onStartCollectionStreamCache = onStartCollectionStreamCache,
                                         onCancelCollectionStreamCache = onCancelCollectionStreamCache,
+                                        onEstimatePlaylistDownload = onEstimatePlaylistDownload,
+                                        onStartPlaylistDownload = startPlaylistDownloadWithNotificationPermission,
+                                        onCancelPlaylistDownload = onCancelPlaylistDownload,
                                         onBack = onBack,
                                     )
                                 } else {
@@ -448,8 +500,19 @@ fun BrowseScreen(
         activeCollectionStreamCacheTask?.let { task ->
             ActiveCollectionStreamCacheCard(
                 task = task,
-                bottomOverlayPadding = bottomOverlayPadding,
+                bottomOverlayPadding = if (activePlaylistDownloadTask == null) {
+                    bottomOverlayPadding
+                } else {
+                    0.dp
+                },
                 onCancel = onCancelCollectionStreamCache,
+            )
+        }
+        activePlaylistDownloadTask?.let { task ->
+            ActivePlaylistDownloadCard(
+                task = task,
+                bottomOverlayPadding = bottomOverlayPadding,
+                onCancel = onCancelPlaylistDownload,
             )
         }
     }
@@ -542,6 +605,70 @@ private fun ActiveCollectionStreamCacheCard(
                     imageVector = Icons.Rounded.StopCircle,
                     contentDescription = stringResource(R.string.library_stream_cache_cancel),
                     tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ActivePlaylistDownloadCard(
+    task: PlaylistDownloadTask,
+    bottomOverlayPadding: Dp,
+    onCancel: () -> Unit,
+) {
+    val animatedProgress by animateFloatAsState(
+        targetValue = task.progress,
+        animationSpec = tween(durationMillis = 320),
+        label = "activePlaylistDownloadProgress",
+    )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 8.dp + bottomOverlayPadding),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CircularWavyProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.size(32.dp),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.library_playlist_download_active_title, task.title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.library_playlist_download_progress,
+                        task.processedSongCount,
+                        task.totalSongCount,
+                        task.failedSongCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
+                )
+            }
+            IconButton(onClick = onCancel) {
+                Icon(
+                    imageVector = Icons.Rounded.StopCircle,
+                    contentDescription = stringResource(R.string.library_playlist_download_cancel),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
         }
@@ -678,6 +805,9 @@ private fun PlaylistDetailRoute(
     onEstimateCollectionStreamCache: suspend (List<Song>) -> CollectionStreamCacheEstimate?,
     onStartCollectionStreamCache: (String, String, List<Song>, CollectionStreamCacheEstimate) -> Unit,
     onCancelCollectionStreamCache: () -> Unit,
+    onEstimatePlaylistDownload: suspend (List<Song>) -> PlaylistDownloadEstimate?,
+    onStartPlaylistDownload: (Playlist, PlaylistDownloadEstimate) -> Unit,
+    onCancelPlaylistDownload: () -> Unit,
     onBack: () -> Unit,
 ) {
     val playbackUiState by playbackUiStateFlow.collectAsStateWithLifecycle()
@@ -707,6 +837,13 @@ private fun PlaylistDetailRoute(
             )
         },
         onCancelCollectionStreamCache = onCancelCollectionStreamCache,
+        playlistDownloadTask = availabilityUiState.playlistDownloadTasksBySourceKey[
+            "server:${server.id}:playlist:${playlist.id}"
+        ],
+        activePlaylistDownloadTask = availabilityUiState.activePlaylistDownloadTask,
+        onEstimatePlaylistDownload = onEstimatePlaylistDownload,
+        onStartPlaylistDownload = onStartPlaylistDownload,
+        onCancelPlaylistDownload = onCancelPlaylistDownload,
         currentPlaybackSongId = playbackUiState.currentPlaybackSongId,
         isPlaying = playbackUiState.isPlaying,
         onBack = onBack,

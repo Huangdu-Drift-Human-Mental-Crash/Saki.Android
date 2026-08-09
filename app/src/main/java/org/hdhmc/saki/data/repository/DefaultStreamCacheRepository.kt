@@ -11,6 +11,8 @@ import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import org.hdhmc.saki.data.download.HttpDownloadException
+import org.hdhmc.saki.data.download.isRetryableDownloadHttpStatus
 import org.hdhmc.saki.data.remote.EndpointSelector
 import org.hdhmc.saki.data.remote.HTTP_USER_AGENT
 import org.hdhmc.saki.data.remote.NetworkType
@@ -742,6 +744,8 @@ internal fun Throwable.hasRetryableTransportCause(): Boolean =
             throwable is NoRouteToHostException ||
             throwable is SocketException ||
             throwable is EOFException ||
+            (throwable is HttpDownloadException &&
+                throwable.statusCode.isRetryableDownloadHttpStatus()) ||
             throwable.javaClass.name == OKHTTP_STREAM_RESET_EXCEPTION_CLASS
     }
 
