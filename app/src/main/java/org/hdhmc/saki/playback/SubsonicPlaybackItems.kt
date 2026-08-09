@@ -9,6 +9,7 @@ import org.hdhmc.saki.domain.model.ArtistRef
 import org.hdhmc.saki.domain.model.CachedSong
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.Song
+import org.hdhmc.saki.domain.model.StreamQuality
 import org.hdhmc.saki.domain.model.SubsonicStreamRequest
 import java.io.File
 
@@ -30,6 +31,7 @@ private const val EXTRA_COVER_ART_PATH = "saki.playback.cover_art_path"
 private const val EXTRA_ARTWORK_URI = "saki.playback.artwork_uri"
 private const val EXTRA_LOCAL_PATH = "saki.playback.local_path"
 private const val EXTRA_QUALITY_LABEL = "saki.playback.quality_label"
+private const val EXTRA_LOCAL_STREAM_QUALITY = "saki.playback.local_stream_quality"
 private const val EXTRA_STREAM_CACHE_KEY = "saki.playback.stream_cache_key"
 private const val EXTRA_IS_CACHED = "saki.playback.is_cached"
 private const val EXTRA_MAX_BIT_RATE = "saki.playback.max_bit_rate"
@@ -73,6 +75,7 @@ internal data class PlaybackRequest(
     val sampleRate: Int?,
     val queueSource: String?,
     val libraryIndex: Int?,
+    val localStreamQuality: StreamQuality? = null,
 )
 
 internal fun estimatedPlaybackBitRateKbps(
@@ -169,6 +172,7 @@ internal fun CachedSong.toCachedMediaItem(
         sampleRate = sampleRate,
         queueSource = queueSource,
         libraryIndex = libraryIndex,
+        localStreamQuality = quality,
     )
 
     return MediaItem.Builder()
@@ -224,6 +228,9 @@ internal fun MediaItem.toPlaybackRequestOrNull(): PlaybackRequest? {
         sampleRate = extras.getInt(EXTRA_SAMPLE_RATE).takeIf { extras.containsKey(EXTRA_SAMPLE_RATE) },
         queueSource = extras.getString(EXTRA_QUEUE_SOURCE),
         libraryIndex = extras.getInt(EXTRA_LIBRARY_INDEX).takeIf { extras.containsKey(EXTRA_LIBRARY_INDEX) },
+        localStreamQuality = extras.getString(EXTRA_LOCAL_STREAM_QUALITY)?.let { storageKey ->
+            StreamQuality.entries.firstOrNull { quality -> quality.storageKey == storageKey }
+        },
     )
 }
 
@@ -350,6 +357,9 @@ internal fun PlaybackRequest.toBundle(): Bundle {
         sampleRate?.let { putInt(EXTRA_SAMPLE_RATE, it) }
         putString(EXTRA_QUEUE_SOURCE, queueSource)
         libraryIndex?.let { putInt(EXTRA_LIBRARY_INDEX, it) }
+        localStreamQuality?.let { quality ->
+            putString(EXTRA_LOCAL_STREAM_QUALITY, quality.storageKey)
+        }
     }
 }
 

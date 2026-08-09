@@ -3,6 +3,7 @@ package org.hdhmc.saki.domain.repository
 import org.hdhmc.saki.domain.model.BufferStrategy
 import org.hdhmc.saki.domain.model.AlacDecoderMode
 import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.SoundBalancingMode
 import org.hdhmc.saki.domain.model.StreamQuality
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +38,8 @@ interface PlaybackPreferencesRepository {
     suspend fun updateImageCacheSizeMb(sizeMb: Int)
 
     suspend fun updateAlacDecoderMode(mode: AlacDecoderMode)
+
+    suspend fun updateOriginalPlaybackFailureAction(action: OriginalPlaybackFailureAction)
 
     suspend fun updateShuffleState(seed: Long, anchorIndex: Int)
 

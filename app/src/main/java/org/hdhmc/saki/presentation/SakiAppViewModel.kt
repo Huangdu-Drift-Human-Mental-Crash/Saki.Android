@@ -1,6 +1,7 @@
 package org.hdhmc.saki.presentation
 
 import android.util.Log
+import androidx.compose.material3.SnackbarDuration
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.hdhmc.saki.R
@@ -35,6 +36,7 @@ import org.hdhmc.saki.domain.model.regroupByLocale
 import org.hdhmc.saki.domain.model.PlaybackProgressState
 import org.hdhmc.saki.domain.model.PlaybackPreferences
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
+import org.hdhmc.saki.domain.model.OriginalPlaybackFailureAction
 import org.hdhmc.saki.domain.model.PlaybackSessionState
 import org.hdhmc.saki.domain.model.Playlist
 import org.hdhmc.saki.domain.model.PlaylistSummary
@@ -120,6 +122,7 @@ class SakiAppViewModel @Inject constructor(
     private var lastLoadedServerId: Long? = null
     private var appliedDefaultBrowsePreference = false
     private var deferredStreamCacheSummaryJob: Job? = null
+    private var lastReportedPlaybackFailureEventId = 0L
     private val sortedAlbumPrefetchJobs = mutableMapOf<AlbumListType, Job>()
 
     private val mutableEndpointStatus = MutableStateFlow(EndpointStatus())
@@ -285,6 +288,17 @@ class SakiAppViewModel @Inject constructor(
                 mutableUiState.update { state ->
                     state.copy(playbackState = playbackState)
                 }
+                playbackState.failure
+                    ?.takeIf { failure -> failure.eventId > lastReportedPlaybackFailureEventId }
+                    ?.let { failure ->
+                        lastReportedPlaybackFailureEventId = failure.eventId
+                        snackbarMessages.emit(
+                            SnackbarMessage(
+                                text = failure.toUiText(),
+                                duration = SnackbarDuration.Long,
+                            ),
+                        )
+                    }
             }
         }
 
@@ -1491,6 +1505,12 @@ class SakiAppViewModel @Inject constructor(
         }
     }
 
+    fun updateOriginalPlaybackFailureAction(action: OriginalPlaybackFailureAction) {
+        viewModelScope.launch {
+            playbackPreferencesRepository.updateOriginalPlaybackFailureAction(action)
+        }
+    }
+
     fun updateAlacDecoderMode(mode: AlacDecoderMode) {
         viewModelScope.launch {
             playbackPreferencesRepository.updateAlacDecoderMode(mode)
@@ -1883,7 +1903,14 @@ class SakiAppViewModel @Inject constructor(
         val downloadedSongIds = cachedSongRepository.getPlayableCachedSongs(serverId, localCacheQuality).keys
         val streamCachedSongIds = songs.asSequence()
             .map(Song::id)
-            .filter { songId -> streamCacheRepository.findCachedQualityKey(serverId, songId, localCacheQuality) != null }
+            .filter { songId ->
+                streamCacheRepository.findCachedQualityKey(serverId, songId, localCacheQuality) != null ||
+                    streamCacheRepository.findCachedPlaybackVariantKey(
+                        serverId = serverId,
+                        songId = songId,
+                        preferredQuality = localCacheQuality,
+                    ) != null
+            }
             .toSet()
         val playableSongIds = downloadedSongIds + streamCachedSongIds
         val originalStartIndex = songs.indexOfFirst { song -> song.id == currentSongId }

@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import org.hdhmc.saki.data.remote.NetworkType
 import org.hdhmc.saki.domain.model.PlaybackPreferences
+import org.hdhmc.saki.domain.model.PlaybackFailureKind
 import org.hdhmc.saki.domain.model.StreamQuality
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,6 +46,272 @@ class ServerSeekRepeatTest {
                 isCached = false,
                 sourceBitRate = 320,
                 openedStreamQuality = StreamQuality.ORIGINAL,
+            ),
+        )
+        assertTrue(
+            supportsTranscodedServerSeek(
+                isCached = true,
+                sourceBitRate = 96,
+                openedStreamQuality = StreamQuality.KBPS_320,
+                forcedTranscode = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `original playback actions only handle format and decoding failures`() {
+        assertTrue(isOriginalPlaybackFailure(PlaybackFailureKind.UNSUPPORTED_FORMAT))
+        assertTrue(isOriginalPlaybackFailure(PlaybackFailureKind.DECODING_FAILED))
+        assertFalse(isOriginalPlaybackFailure(PlaybackFailureKind.SOURCE_UNAVAILABLE))
+        assertFalse(isOriginalPlaybackFailure(PlaybackFailureKind.UNKNOWN))
+    }
+
+    @Test
+    fun `original playback action requires an original non-forced stream`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = StreamQuality.ORIGINAL,
+                requestedStreamQuality = StreamQuality.KBPS_128,
+                sourceBitRate = null,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.KBPS_128,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 320,
+                sourceSuffix = "mp3",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.ORIGINAL,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = null,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `capped pass-through stream is treated as original`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = StreamQuality.KBPS_320,
+                requestedStreamQuality = StreamQuality.KBPS_320,
+                sourceBitRate = 192,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.KBPS_128,
+                requestedStreamQuality = StreamQuality.KBPS_128,
+                sourceBitRate = 320,
+                sourceSuffix = "mp3",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `known unsupported container is pass-through evidence without bitrate`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = StreamQuality.KBPS_320,
+                requestedStreamQuality = StreamQuality.KBPS_320,
+                sourceBitRate = null,
+                sourceSuffix = "WMA",
+                sourceContentType = null,
+                forcedTranscode = false,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = StreamQuality.KBPS_320,
+                requestedStreamQuality = StreamQuality.KBPS_320,
+                sourceBitRate = null,
+                sourceSuffix = "mp3",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `downloaded stream uses its persisted quality for original fallback`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.KBPS_320,
+                sourceBitRate = 1_411,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.ORIGINAL,
+            ),
+        )
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.DECODING_FAILED,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 320,
+                sourceSuffix = "mp3",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+    }
+
+    @Test
+    fun `capped downloaded pass-through uses original fallback`() {
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 192,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/x-ms-wma",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+        assertTrue(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = null,
+                sourceSuffix = "ASF",
+                sourceContentType = null,
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+    }
+
+    @Test
+    fun `capped downloaded transcode trusts response content type`() {
+        assertFalse(
+            shouldApplyOriginalPlaybackFailureAction(
+                kind = PlaybackFailureKind.UNSUPPORTED_FORMAT,
+                openedStreamQuality = null,
+                requestedStreamQuality = StreamQuality.ORIGINAL,
+                sourceBitRate = 192,
+                sourceSuffix = "wma",
+                sourceContentType = "audio/mpeg",
+                forcedTranscode = false,
+                localStreamQuality = StreamQuality.KBPS_320,
+            ),
+        )
+    }
+
+    @Test
+    fun `pending queue skip advances and respects end repeat mode`() {
+        assertEquals(3, nextPendingQueueDisplayIndex(2, 5, Player.REPEAT_MODE_OFF))
+        assertEquals(null, nextPendingQueueDisplayIndex(4, 5, Player.REPEAT_MODE_OFF))
+        assertEquals(0, nextPendingQueueDisplayIndex(4, 5, Player.REPEAT_MODE_ALL))
+        assertEquals(0, nextPendingQueueDisplayIndex(4, 5, Player.REPEAT_MODE_ONE))
+    }
+
+    @Test
+    fun `downloaded original can retry remotely only while server is reachable`() {
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = true,
+                isOfflineDegraded = false,
+            ),
+        )
+        assertFalse(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = true,
+                isOfflineDegraded = true,
+            ),
+        )
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = false,
+                isOfflineDegraded = true,
+            ),
+        )
+        assertFalse(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = false,
+                hasCompleteStreamCache = true,
+                isOfflineDegraded = true,
+            ),
+        )
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = false,
+                hasCompleteStreamCache = true,
+                isOfflineDegraded = false,
+            ),
+        )
+        assertTrue(
+            canRetryOriginalWithForcedTranscode(
+                usesLocalSource = true,
+                hasCompleteForcedTranscodeCache = true,
+                isOfflineDegraded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `complete forced transcode cache resumes with local seek`() {
+        assertEquals(
+            ForcedTranscodeResumePlan(
+                serverOffsetMs = null,
+                playerPositionMs = 83_000L,
+            ),
+            planForcedTranscodeResume(
+                resumePositionMs = 83_000L,
+                hasCompleteForcedTranscodeCache = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `uncached forced transcode resumes with server offset`() {
+        assertEquals(
+            ForcedTranscodeResumePlan(
+                serverOffsetMs = 83_000L,
+                playerPositionMs = 0L,
+            ),
+            planForcedTranscodeResume(
+                resumePositionMs = 83_000L,
+                hasCompleteForcedTranscodeCache = false,
+            ),
+        )
+        assertEquals(
+            ForcedTranscodeResumePlan(
+                serverOffsetMs = null,
+                playerPositionMs = 0L,
+            ),
+            planForcedTranscodeResume(
+                resumePositionMs = 0L,
+                hasCompleteForcedTranscodeCache = false,
             ),
         )
     }

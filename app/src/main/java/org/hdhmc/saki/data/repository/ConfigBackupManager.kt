@@ -184,6 +184,10 @@ class ConfigBackupManager @Inject constructor(
                         DataStorePlaybackPreferencesRepository.KEY_ALAC_DECODER_MODE.name -> {
                             ds[DataStorePlaybackPreferencesRepository.KEY_ALAC_DECODER_MODE] = value; settingsApplied = true
                         }
+                        DataStorePlaybackPreferencesRepository.KEY_ORIGINAL_PLAYBACK_FAILURE_ACTION.name -> {
+                            ds[DataStorePlaybackPreferencesRepository.KEY_ORIGINAL_PLAYBACK_FAILURE_ACTION] = value
+                            settingsApplied = true
+                        }
                     }
                 }
             }

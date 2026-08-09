@@ -32,6 +32,7 @@ import org.hdhmc.saki.playback.StreamCacheEofTrackingDataSource
 import org.hdhmc.saki.playback.StreamCacheWriteCoordinator
 import org.hdhmc.saki.playback.buildStreamCacheKey
 import org.hdhmc.saki.playback.estimateSongStreamBytes
+import org.hdhmc.saki.playback.isOfflinePlayableForcedTranscode
 import org.hdhmc.saki.playback.parseStreamCacheKey
 import dagger.Lazy
 import java.io.EOFException
@@ -178,6 +179,22 @@ class DefaultStreamCacheRepository @Inject constructor(
         return null
     }
 
+    override fun findCachedPlaybackVariantKey(
+        serverId: Long,
+        songId: String,
+        preferredQuality: StreamQuality,
+    ): String? {
+        val byQuality = snapshotForQueries().playbackVariantKeysByServerAndQuality[serverId]
+            ?: return null
+        val preferredIndex = StreamQuality.entries.indexOf(preferredQuality)
+        for (index in 0..preferredIndex) {
+            byQuality[StreamQuality.entries[index].storageKey]?.get(songId)?.let { return it }
+        }
+        return null
+    }
+
+    override fun isCacheKeyFullyCached(cacheKey: String): Boolean = isFullyCached(cacheKey)
+
     override fun getStreamCacheProgress(
         serverId: Long,
         songId: String,
@@ -311,19 +328,26 @@ class DefaultStreamCacheRepository @Inject constructor(
         val snapshot = snapshotForQueries()
         if (serverId == null) {
             StreamCacheSummary(
-                cachedSongIds = snapshot.cachedSongIdsByServerAndQuality.values
-                    .flatMap { byQuality -> byQuality.values }
-                    .flattenToSet(),
+                cachedSongIds = (
+                    snapshot.cachedSongIdsByServerAndQuality.keys +
+                        snapshot.playbackVariantKeysByServerAndQuality.keys
+                    )
+                    .flatMapTo(mutableSetOf()) { cachedServerId ->
+                        combinedStreamCachedSongIds(
+                            normalByQuality = snapshot.cachedSongIdsByServerAndQuality[cachedServerId].orEmpty(),
+                            variantsByQuality = snapshot.playbackVariantKeysByServerAndQuality[cachedServerId].orEmpty(),
+                            quality = null,
+                        )
+                    },
                 bytes = snapshot.bytesByServer.values.sum(),
             )
         } else {
             StreamCacheSummary(
-                cachedSongIds = snapshot.cachedSongIdsByServerAndQuality[serverId]
-                    ?.let { byQuality ->
-                        quality?.let { byQuality[it.storageKey].orEmpty() }
-                            ?: byQuality.values.flattenToSet()
-                    }
-                    .orEmpty(),
+                cachedSongIds = combinedStreamCachedSongIds(
+                    normalByQuality = snapshot.cachedSongIdsByServerAndQuality[serverId].orEmpty(),
+                    variantsByQuality = snapshot.playbackVariantKeysByServerAndQuality[serverId].orEmpty(),
+                    quality = quality,
+                ),
                 bytes = snapshot.bytesByServer[serverId] ?: 0L,
             )
         }
@@ -637,6 +661,8 @@ class DefaultStreamCacheRepository @Inject constructor(
 
     private fun buildSnapshot(): StreamCacheSnapshot {
         val cachedSongIdsByServerAndQuality = mutableMapOf<Long, MutableMap<String, MutableSet<String>>>()
+        val playbackVariantKeysByServerAndQuality =
+            mutableMapOf<Long, MutableMap<String, MutableMap<String, String>>>()
         val bytesByServer = mutableMapOf<Long, Long>()
 
         streamCache.keys.forEach { key ->
@@ -647,16 +673,29 @@ class DefaultStreamCacheRepository @Inject constructor(
             val completeLength = completeStreamLength(streamCache.getContentMetadata(key))
             val isFullyCached = completeLength != null && streamCache.isCached(key, 0L, completeLength)
             if (isFullyCached) {
-                cachedSongIdsByServerAndQuality
-                    .getOrPut(parsed.serverId) { mutableMapOf() }
-                    .getOrPut(parsed.qualityKey) { mutableSetOf() }
-                    .add(parsed.songId)
+                when {
+                    parsed.variantKey == null && parsed.streamOffsetSeconds == null -> {
+                        cachedSongIdsByServerAndQuality
+                            .getOrPut(parsed.serverId) { mutableMapOf() }
+                            .getOrPut(parsed.qualityKey) { mutableSetOf() }
+                            .add(parsed.songId)
+                    }
+                    parsed.isOfflinePlayableForcedTranscode() -> {
+                        playbackVariantKeysByServerAndQuality
+                            .getOrPut(parsed.serverId) { mutableMapOf() }
+                            .getOrPut(parsed.qualityKey) { mutableMapOf() }
+                            .putIfAbsent(parsed.songId, key)
+                    }
+                }
             }
         }
 
         return StreamCacheSnapshot(
             cachedSongIdsByServerAndQuality = cachedSongIdsByServerAndQuality.mapValues { (_, byQuality) ->
                 byQuality.mapValues { (_, ids) -> ids.toSet() }
+            },
+            playbackVariantKeysByServerAndQuality = playbackVariantKeysByServerAndQuality.mapValues { (_, byQuality) ->
+                byQuality.mapValues { (_, keysBySong) -> keysBySong.toMap() }
             },
             bytesByServer = bytesByServer.toMap(),
         )
@@ -672,8 +711,23 @@ class DefaultStreamCacheRepository @Inject constructor(
 
 private data class StreamCacheSnapshot(
     val cachedSongIdsByServerAndQuality: Map<Long, Map<String, Set<String>>> = emptyMap(),
+    val playbackVariantKeysByServerAndQuality: Map<Long, Map<String, Map<String, String>>> = emptyMap(),
     val bytesByServer: Map<Long, Long> = emptyMap(),
 )
+
+internal fun combinedStreamCachedSongIds(
+    normalByQuality: Map<String, Set<String>>,
+    variantsByQuality: Map<String, Map<String, String>>,
+    quality: StreamQuality?,
+): Set<String> = buildSet {
+    if (quality != null) {
+        addAll(normalByQuality[quality.storageKey].orEmpty())
+        addAll(variantsByQuality[quality.storageKey].orEmpty().keys)
+    } else {
+        normalByQuality.values.forEach(::addAll)
+        variantsByQuality.values.forEach { keysBySong -> addAll(keysBySong.keys) }
+    }
+}
 
 private const val STREAM_CACHE_SNAPSHOT_INITIAL_DELAY_MS = 5_000L
 private const val STREAM_CACHE_SNAPSHOT_REQUEST_DEBOUNCE_MS = 250L

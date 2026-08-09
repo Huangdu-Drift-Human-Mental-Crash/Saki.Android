@@ -7,6 +7,7 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -19,7 +20,9 @@ import org.hdhmc.saki.data.remote.NetworkTypeProvider
 import org.hdhmc.saki.di.DefaultDispatcher
 import org.hdhmc.saki.di.MainDispatcher
 import org.hdhmc.saki.domain.model.CachedSong
+import org.hdhmc.saki.domain.model.AutomaticPlaybackTranscode
 import org.hdhmc.saki.domain.model.PlaybackProgressState
+import org.hdhmc.saki.domain.model.PlaybackFailureKind
 import org.hdhmc.saki.domain.model.PlaybackQueueItem
 import org.hdhmc.saki.domain.model.PlaybackRuntimeInfo
 import org.hdhmc.saki.domain.model.PlaybackSessionState
@@ -35,6 +38,7 @@ import org.hdhmc.saki.domain.repository.SubsonicRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -42,6 +46,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -70,6 +75,7 @@ class DefaultPlaybackManager @Inject constructor(
     private val subsonicRepository: SubsonicRepository,
     private val networkTypeProvider: NetworkTypeProvider,
     private val endpointSelector: EndpointSelector,
+    private val playbackFailureReporter: PlaybackFailureReporter,
 ) : PlaybackManager {
     private val scope = CoroutineScope(SupervisorJob() + mainDispatcher)
     private val controllerMutex = Mutex()
@@ -93,6 +99,12 @@ class DefaultPlaybackManager @Inject constructor(
             syncExternalShuffleState(player)
             syncState(player)
             maybeScheduleVirtualQueueWindowUpdate(player)
+        }
+    }
+
+    private val controllerSessionListener = object : MediaController.Listener {
+        override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
+            syncState(controller)
         }
     }
 
@@ -188,6 +200,12 @@ class DefaultPlaybackManager @Inject constructor(
     }
 
     init {
+        playbackFailureReporter.setOriginalPlaybackSkipHandler(::requestOriginalPlaybackSkip)
+        scope.launch {
+            playbackFailureReporter.failure.collect {
+                controller?.let(::syncState)
+            }
+        }
         scope.launch {
             streamCacheRepository.observeCacheVersion().collect {
                 if (it > 0L) cacheReady = true
@@ -403,6 +421,7 @@ class DefaultPlaybackManager @Inject constructor(
                 itemCount = mediaItems.size,
                 hasMoreBefore = window.start > 0,
                 hasMoreAfter = window.hasMoreAfter,
+                logicalItemCount = null,
             )
             shuffleDisplayOrder = null
             activeController.shuffleModeEnabled = false
@@ -482,6 +501,7 @@ class DefaultPlaybackManager @Inject constructor(
                     val currentIndex = activeController.currentMediaItemIndex
                     val enableShuffle = pendingDeferredShuffleEnabled ?: restoreShuffle
                     val pendingShuffleSeed = pendingDeferredShuffleSeed
+                    val pendingShuffleAnchor = pendingDeferredShuffleAnchorIndex
                     pendingDeferredShuffleEnabled = null
                     pendingDeferredShuffleSeed = 0L
                     pendingDeferredShuffleAnchorIndex = 0
@@ -489,7 +509,10 @@ class DefaultPlaybackManager @Inject constructor(
                         shuffleSeed = pendingShuffleSeed.takeUnless { it == 0L }
                             ?: shuffleSeedForQueue.takeUnless { it == 0L }
                             ?: System.nanoTime()
-                        shuffleAnchorIndex = currentIndex
+                        // The seed and anchor together identify the pending shuffle permutation.
+                        // Automatic recovery may start playback from a later item, but must not
+                        // regenerate the queue around that item or revisit already-failed tracks.
+                        shuffleAnchorIndex = pendingShuffleAnchor.coerceIn(0, fullQueueSize - 1)
                         sendShuffleOrderToService(activeController, fullQueueSize, shuffleSeed, shuffleAnchorIndex)
                         activeController.shuffleModeEnabled = true
                         shuffleDisplayOrder = SakiShuffleOrder(fullQueueSize, shuffleSeed, shuffleAnchorIndex).toDisplayOrder()
@@ -572,6 +595,7 @@ class DefaultPlaybackManager @Inject constructor(
         val itemCount: Int,
         val hasMoreBefore: Boolean,
         val hasMoreAfter: Boolean,
+        val logicalItemCount: Int?,
     )
 
     private data class PendingDeferredQueue(
@@ -639,6 +663,264 @@ class DefaultPlaybackManager @Inject constructor(
     ): Int? {
         if (displayIndex !in pending.visualQueue.indices) return null
         return pendingDisplayOrder(pending)?.getOrNull(displayIndex) ?: displayIndex
+    }
+
+    private suspend fun requestOriginalPlaybackSkip(
+        failedItem: PlaybackRecoveryItemKey,
+        failureCount: Int,
+    ): Boolean = withController { activeController ->
+        val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+            ?: return@withController false
+        if (
+            currentRequest.serverId != failedItem.serverId ||
+            currentRequest.songId != failedItem.songId
+        ) {
+            return@withController false
+        }
+
+        val pending = pendingDeferredQueue
+            ?.takeIf { queue ->
+                queue.serverId == failedItem.serverId &&
+                    queue.currentSongId == failedItem.songId &&
+                    activeController.mediaItemCount == 1
+            }
+        if (pending != null) {
+            return@withController skipPendingQueueFailure(
+                activeController = activeController,
+                pending = pending,
+                failedItem = failedItem,
+                failureCount = failureCount,
+            )
+        }
+
+        val activeVirtualQueue = virtualQueue
+            ?.takeIf { queue ->
+                queue.serverId == failedItem.serverId &&
+                    !activeController.shuffleModeEnabled &&
+                    activeController.mediaItemCount == queue.itemCount &&
+                    currentRequest.queueSource == PLAYBACK_QUEUE_SOURCE_LIBRARY_SONGS
+            }
+        if (activeVirtualQueue != null) {
+            return@withController skipVirtualQueueFailure(
+                activeController = activeController,
+                failedItem = failedItem,
+                failureCount = failureCount,
+                activeVirtualQueue = activeVirtualQueue,
+            )
+        }
+
+        skipConcreteQueueFailure(
+            activeController = activeController,
+            failureCount = failureCount,
+            logicalQueueSize = activeController.mediaItemCount,
+        )
+    }
+
+    private suspend fun skipPendingQueueFailure(
+        activeController: MediaController,
+        pending: PendingDeferredQueue,
+        failedItem: PlaybackRecoveryItemKey,
+        failureCount: Int,
+    ): Boolean {
+        if (!canContinueOriginalPlaybackSkip(failureCount, pending.songs.size)) return false
+        val displayOrder = pendingDisplayOrder(pending)
+        val currentDisplayIndex = displayOrder
+            ?.indexOf(pending.startIndex)
+            ?.takeIf { index -> index >= 0 }
+            ?: pending.startIndex
+        val targetDisplayIndex = nextPendingQueueDisplayIndex(
+            currentDisplayIndex = currentDisplayIndex,
+            queueSize = pending.songs.size,
+            repeatMode = activeController.repeatMode,
+        ) ?: return false
+        val wasPlaying = activeController.playWhenReady
+
+        if (
+            skipToPendingDeferredQueueItem(
+                index = targetDisplayIndex,
+                resumePlayback = wasPlaying,
+                isFailureRecovery = true,
+            )
+        ) {
+            return true
+        }
+
+        val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+            ?: return false
+        if (
+            currentRequest.serverId != failedItem.serverId ||
+            currentRequest.songId != failedItem.songId
+        ) {
+            return false
+        }
+        return skipConcreteQueueFailure(
+            activeController = activeController,
+            failureCount = failureCount,
+            logicalQueueSize = pending.songs.size,
+        )
+    }
+
+    private fun skipConcreteQueueFailure(
+        activeController: MediaController,
+        failureCount: Int,
+        logicalQueueSize: Int,
+    ): Boolean {
+        val currentIndex = activeController.currentMediaItemIndex
+        if (
+            currentIndex == C.INDEX_UNSET ||
+            !canContinueOriginalPlaybackSkip(failureCount, logicalQueueSize)
+        ) {
+            return false
+        }
+        val navigationRepeatMode = if (activeController.repeatMode == Player.REPEAT_MODE_ONE) {
+            Player.REPEAT_MODE_ALL
+        } else {
+            activeController.repeatMode
+        }
+        val nextIndex = activeController.currentTimeline.getNextWindowIndex(
+            currentIndex,
+            navigationRepeatMode,
+            activeController.shuffleModeEnabled,
+        )
+        if (nextIndex == C.INDEX_UNSET || nextIndex == currentIndex) return false
+        return moveToRecoveryTarget(activeController, nextIndex)
+    }
+
+    private suspend fun skipVirtualQueueFailure(
+        activeController: MediaController,
+        failedItem: PlaybackRecoveryItemKey,
+        failureCount: Int,
+        activeVirtualQueue: ActiveVirtualQueue,
+    ): Boolean {
+        while (true) {
+            val latestVirtualQueue = virtualQueue
+                ?.takeIf { queue -> queue.generation == activeVirtualQueue.generation }
+                ?: return false
+            val currentIndex = activeController.currentMediaItemIndex
+            if (currentIndex == C.INDEX_UNSET) return false
+            val logicalItemCount = latestVirtualQueue.logicalItemCount
+                ?: (latestVirtualQueue.windowStart + latestVirtualQueue.itemCount)
+                    .takeIf { !latestVirtualQueue.hasMoreAfter }
+            when (
+                planVirtualQueueRecovery(
+                    failureCount = failureCount,
+                    logicalItemCount = logicalItemCount,
+                    hasNextInWindow = currentIndex < activeController.mediaItemCount - 1,
+                    hasMoreAfter = latestVirtualQueue.hasMoreAfter,
+                    repeatEnabled = activeController.repeatMode != Player.REPEAT_MODE_OFF,
+                )
+            ) {
+                VirtualQueueRecoveryAction.ADVANCE_IN_WINDOW -> {
+                    return moveToRecoveryTarget(activeController, currentIndex + 1)
+                }
+                VirtualQueueRecoveryAction.EXTEND_FORWARD -> {
+                    virtualQueueUpdateJob?.cancelAndJoin()
+                    virtualQueueUpdateJob = null
+                    val previousWindowEnd = latestVirtualQueue.windowStart + latestVirtualQueue.itemCount
+                    extendVirtualQueueAfter(latestVirtualQueue.generation)
+                    val extendedQueue = virtualQueue
+                        ?.takeIf { queue -> queue.generation == latestVirtualQueue.generation }
+                        ?: return false
+                    val currentWindowEnd = extendedQueue.windowStart + extendedQueue.itemCount
+                    if (
+                        currentWindowEnd == previousWindowEnd &&
+                        extendedQueue.hasMoreAfter == latestVirtualQueue.hasMoreAfter
+                    ) {
+                        return false
+                    }
+                }
+                VirtualQueueRecoveryAction.WRAP_TO_START -> {
+                    return restartVirtualQueueForRecovery(
+                        activeController = activeController,
+                        failedItem = failedItem,
+                        activeVirtualQueue = latestVirtualQueue,
+                        logicalItemCount = logicalItemCount ?: return false,
+                    )
+                }
+                VirtualQueueRecoveryAction.STOP -> return false
+            }
+
+            val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+                ?: return false
+            if (
+                currentRequest.serverId != failedItem.serverId ||
+                currentRequest.songId != failedItem.songId
+            ) {
+                return false
+            }
+        }
+    }
+
+    private suspend fun restartVirtualQueueForRecovery(
+        activeController: MediaController,
+        failedItem: PlaybackRecoveryItemKey,
+        activeVirtualQueue: ActiveVirtualQueue,
+        logicalItemCount: Int,
+    ): Boolean {
+        val loadSize = minOf(VIRTUAL_QUEUE_INITIAL_LOAD_SIZE, logicalItemCount)
+        if (loadSize <= 0) return false
+        val songs = getLibrarySongsPage(
+            serverId = activeVirtualQueue.serverId,
+            limit = loadSize,
+            offset = 0,
+        )
+        if (songs.isEmpty()) return false
+        val mediaItems = buildMediaItems(
+            serverId = activeVirtualQueue.serverId,
+            songs = songs,
+            preferredQuality = playbackQuality(activeVirtualQueue.serverId),
+            libraryStartIndex = 0,
+        )
+        if (mediaItems.isEmpty()) return false
+
+        val currentRequest = activeController.currentMediaItem?.toPlaybackRequestOrNull()
+            ?: return false
+        val latestVirtualQueue = virtualQueue
+            ?.takeIf { queue -> queue.generation == activeVirtualQueue.generation }
+            ?: return false
+        if (
+            currentRequest.serverId != failedItem.serverId ||
+            currentRequest.songId != failedItem.songId ||
+            latestVirtualQueue.hasMoreAfter
+        ) {
+            return false
+        }
+
+        val targetRequest = mediaItems.first().toPlaybackRequestOrNull() ?: return false
+        val wasPlaying = activeController.playWhenReady
+        playbackFailureReporter.expectAutomaticSkipTransition(
+            PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+        )
+        virtualQueue = latestVirtualQueue.copy(
+            windowStart = 0,
+            itemCount = mediaItems.size,
+            hasMoreBefore = false,
+            hasMoreAfter = mediaItems.size < logicalItemCount,
+            logicalItemCount = logicalItemCount,
+        )
+        activeController.setMediaItems(mediaItems, 0, 0L)
+        activeController.prepare()
+        activeController.playWhenReady = wasPlaying
+        syncState(activeController)
+        maybeScheduleVirtualQueueWindowUpdate(activeController)
+        return true
+    }
+
+    private fun moveToRecoveryTarget(
+        activeController: MediaController,
+        targetIndex: Int,
+    ): Boolean {
+        val targetRequest = activeController.getMediaItemAt(targetIndex).toPlaybackRequestOrNull()
+            ?: return false
+        val wasPlaying = activeController.playWhenReady
+        playbackFailureReporter.expectAutomaticSkipTransition(
+            PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+        )
+        activeController.seekToDefaultPosition(targetIndex)
+        activeController.prepare()
+        activeController.playWhenReady = wasPlaying
+        syncState(activeController)
+        return true
     }
 
     private suspend fun buildVirtualQueueWindow(
@@ -776,7 +1058,12 @@ class DefaultPlaybackManager @Inject constructor(
             offset = offset,
         )
         if (songs.isEmpty()) {
-            updateVirtualQueue(generation) { queue -> queue.copy(hasMoreAfter = false) }
+            updateVirtualQueue(generation) { queue ->
+                queue.copy(
+                    hasMoreAfter = false,
+                    logicalItemCount = offset,
+                )
+            }
             return
         }
 
@@ -799,6 +1086,8 @@ class DefaultPlaybackManager @Inject constructor(
             virtualQueue = latest.copy(
                 itemCount = latest.itemCount + mediaItems.size,
                 hasMoreAfter = mediaItems.size >= VIRTUAL_QUEUE_PAGE_SIZE,
+                logicalItemCount = (offset + mediaItems.size)
+                    .takeIf { mediaItems.size < VIRTUAL_QUEUE_PAGE_SIZE },
             )
             trimVirtualQueueBeforeIfNeeded(activeController)
             syncState(activeController)
@@ -1025,6 +1314,13 @@ class DefaultPlaybackManager @Inject constructor(
 
     override suspend fun resume() {
         withController { activeController ->
+            activeController.playerError?.let {
+                // Media3 does not retry a failed item, or emit onPlayerError again, from play()
+                // alone. Re-prepare so a transient source failure can recover, while retaining a
+                // service-originated report for persistent failures such as unsupported cached
+                // containers.
+                activeController.prepare()
+            }
             activeController.play()
             syncState(activeController)
         }
@@ -1173,7 +1469,11 @@ class DefaultPlaybackManager @Inject constructor(
         }
     }
 
-    private suspend fun skipToPendingDeferredQueueItem(index: Int): Boolean {
+    private suspend fun skipToPendingDeferredQueueItem(
+        index: Int,
+        resumePlayback: Boolean = true,
+        isFailureRecovery: Boolean = false,
+    ): Boolean {
         val pending = pendingDeferredQueue ?: return false
         val targetSongIndex = pendingDisplayToSongIndex(pending, index) ?: return false
         val targetSong = pending.songs[targetSongIndex]
@@ -1202,10 +1502,15 @@ class DefaultPlaybackManager @Inject constructor(
             val enableShuffle = pendingDeferredShuffleEnabled ?: currentPending.restoreShuffle
             val shuffleSeedForQueue = pendingDeferredShuffleSeed.takeUnless { it == 0L }
                 ?: currentPending.shuffleSeedForQueue
+            val shuffleAnchorForQueue = deferredShuffleAnchorAfterSelection(
+                currentAnchorIndex = pendingDeferredShuffleAnchorIndex,
+                selectedSongIndex = targetSongIndex,
+                isFailureRecovery = isFailureRecovery,
+            )
             val generation = beginDeferredQueueLoad()
             pendingDeferredShuffleEnabled = if (currentPending.songs.size > 1) enableShuffle else null
             pendingDeferredShuffleSeed = shuffleSeedForQueue
-            pendingDeferredShuffleAnchorIndex = targetSongIndex
+            pendingDeferredShuffleAnchorIndex = shuffleAnchorForQueue
             pendingDeferredQueue = currentPending.copy(
                 generation = generation,
                 startIndex = targetSongIndex,
@@ -1213,9 +1518,16 @@ class DefaultPlaybackManager @Inject constructor(
             )
             shuffleDisplayOrder = null
             activeController.shuffleModeEnabled = false
+            if (isFailureRecovery) {
+                val targetRequest = targetMediaItem.toPlaybackRequestOrNull()
+                    ?: return@withController false
+                playbackFailureReporter.expectAutomaticSkipTransition(
+                    PlaybackRecoveryItemKey(targetRequest.serverId, targetRequest.songId),
+                )
+            }
             activeController.setMediaItem(targetMediaItem)
             activeController.prepare()
-            activeController.play()
+            activeController.playWhenReady = resumePlayback
             syncState(activeController)
             scheduleDeferredQueueLoad(
                 generation = generation,
@@ -1280,6 +1592,7 @@ class DefaultPlaybackManager @Inject constructor(
                 )
                 val controllerFuture = MediaController.Builder(appContext, sessionToken)
                     .setApplicationLooper(Looper.getMainLooper())
+                    .setListener(controllerSessionListener)
                     .buildAsync()
                 val connectedController = controllerFuture.await(appContext)
                 connectedController.addListener(controllerListener)
@@ -1298,6 +1611,9 @@ class DefaultPlaybackManager @Inject constructor(
             .takeUnless { it == C.INDEX_UNSET }
             ?: -1
         val currentRequest = player.currentMediaItem?.toPlaybackRequestOrNull()
+        val automaticTranscode = (player as? MediaController)
+            ?.sessionExtras
+            ?.toAutomaticPlaybackTranscode(player.currentMediaItem?.mediaId)
         val pendingQueue = pendingDeferredQueue
             ?.takeIf { pending ->
                 player.mediaItemCount == 1 &&
@@ -1374,6 +1690,8 @@ class DefaultPlaybackManager @Inject constructor(
                 repeatMode = player.repeatMode.toRepeatModeSetting(),
                 shuffleEnabled = pendingDeferredShuffleEnabled ?: (shuffleDisplayOrder != null || player.shuffleModeEnabled),
                 runtimeInfo = player.currentAudioRuntimeInfoOrNull(),
+                automaticTranscode = automaticTranscode,
+                failure = playbackFailureReporter.failure.value,
             )
         }
     }
@@ -1527,6 +1845,99 @@ class DefaultPlaybackManager @Inject constructor(
         const val VIRTUAL_QUEUE_PRELOAD_THRESHOLD = 12
     }
 }
+
+private fun Bundle.toAutomaticPlaybackTranscode(currentMediaId: String?): AutomaticPlaybackTranscode? {
+    if (getString(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_MEDIA_ID) != currentMediaId) return null
+    val formatLabel = getString(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_FORMAT)
+        ?.takeIf(String::isNotBlank)
+        ?: return null
+    val maxBitRateKbps = getInt(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE)
+        .takeIf { containsKey(SakiPlaybackService.EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE) }
+    return AutomaticPlaybackTranscode(
+        formatLabel = formatLabel,
+        maxBitRateKbps = maxBitRateKbps,
+    )
+}
+
+internal fun classifyPlaybackFailure(
+    errorCode: Int,
+    suffix: String?,
+    contentType: String?,
+): PlaybackFailureKind {
+    if (
+        errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+        errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+        (isKnownUnsupportedOriginalContainer(suffix, contentType) && errorCode in 3_000..3_999)
+    ) {
+        return PlaybackFailureKind.UNSUPPORTED_FORMAT
+    }
+    return when (errorCode) {
+        in 2_000..2_999 -> PlaybackFailureKind.SOURCE_UNAVAILABLE
+        in 3_000..3_999,
+        in 4_000..4_999,
+        -> PlaybackFailureKind.DECODING_FAILED
+        else -> PlaybackFailureKind.UNKNOWN
+    }
+}
+
+internal fun isKnownUnsupportedOriginalContainer(
+    suffix: String?,
+    contentType: String?,
+): Boolean {
+    val normalizedSuffix = suffix?.trim()?.lowercase(Locale.ROOT)
+    val normalizedContentType = contentType?.trim()?.lowercase(Locale.ROOT)
+    return normalizedSuffix == "wma" ||
+        normalizedSuffix == "asf" ||
+        normalizedContentType == "audio/x-ms-wma" ||
+        normalizedContentType == "video/x-ms-asf" ||
+        normalizedContentType == "application/vnd.ms-asf"
+}
+
+internal fun nextPendingQueueDisplayIndex(
+    currentDisplayIndex: Int,
+    queueSize: Int,
+    repeatMode: Int,
+): Int? {
+    if (queueSize <= 1 || currentDisplayIndex !in 0 until queueSize) return null
+    if (currentDisplayIndex < queueSize - 1) return currentDisplayIndex + 1
+    return 0.takeIf { repeatMode != Player.REPEAT_MODE_OFF }
+}
+
+internal fun deferredShuffleAnchorAfterSelection(
+    currentAnchorIndex: Int,
+    selectedSongIndex: Int,
+    isFailureRecovery: Boolean,
+): Int = if (isFailureRecovery) currentAnchorIndex else selectedSongIndex
+
+internal enum class VirtualQueueRecoveryAction {
+    ADVANCE_IN_WINDOW,
+    EXTEND_FORWARD,
+    WRAP_TO_START,
+    STOP,
+}
+
+internal fun planVirtualQueueRecovery(
+    failureCount: Int,
+    logicalItemCount: Int?,
+    hasNextInWindow: Boolean,
+    hasMoreAfter: Boolean,
+    repeatEnabled: Boolean,
+): VirtualQueueRecoveryAction {
+    if (
+        logicalItemCount != null &&
+        !canContinueOriginalPlaybackSkip(failureCount, logicalItemCount)
+    ) {
+        return VirtualQueueRecoveryAction.STOP
+    }
+    if (hasNextInWindow) return VirtualQueueRecoveryAction.ADVANCE_IN_WINDOW
+    if (hasMoreAfter) return VirtualQueueRecoveryAction.EXTEND_FORWARD
+    if (repeatEnabled && logicalItemCount != null) return VirtualQueueRecoveryAction.WRAP_TO_START
+    return VirtualQueueRecoveryAction.STOP
+}
+
+internal fun PlaybackQueueItem.playbackFormatLabel(): String? =
+    suffix?.trim()?.takeIf(String::isNotEmpty)?.uppercase(Locale.ROOT)
+        ?: contentType?.trim()?.takeIf(String::isNotEmpty)
 
 private suspend fun ListenableFuture<MediaController>.await(
     appContext: Context,
