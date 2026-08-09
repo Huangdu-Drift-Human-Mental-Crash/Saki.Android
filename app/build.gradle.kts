@@ -1,5 +1,8 @@
 import java.util.Properties
 import org.gradle.api.tasks.compile.JavaCompile
+import org.hdhmc.saki.build.GitVersionValueSource
+import org.hdhmc.saki.build.PrintSakiVersionTask
+import org.hdhmc.saki.build.SakiVersionInfo
 
 plugins {
     alias(libs.plugins.android.application)
@@ -35,25 +38,32 @@ val hasReleaseSigningProperties = listOf(
     releaseKeyPassword,
 ).all { it != null }
 
-val sakiVersionName = providers.gradleProperty("saki.versionName")
-    .orElse("0.1.0")
-    .get()
-
-fun versionCodeFromName(versionName: String): Int {
-    val versionCore = versionName.substringBefore('-').substringBefore('+')
-    val parts = versionCore.split('.')
-    require(parts.size == 3) {
-        "saki.versionName must use MAJOR.MINOR.PATCH, but was '$versionName'"
+val sakiVersion = run {
+    val explicitVersionName = providers.gradleProperty("saki.versionName").orNull
+    val explicitVersionCode = providers.gradleProperty("saki.versionCode").orNull
+    require((explicitVersionName == null) == (explicitVersionCode == null)) {
+        "Pass both -Psaki.versionName and -Psaki.versionCode when overriding Git versioning"
     }
-    val (major, minor, patch) = parts.mapIndexed { index, part ->
-        part.toIntOrNull() ?: error(
-            "saki.versionName component ${index + 1} must be numeric, but was '$versionName'"
-        )
+    if (explicitVersionName != null && explicitVersionCode != null) {
+        require(!explicitVersionName.startsWith('v')) {
+            "saki.versionName must not include the display-only 'v' prefix"
+        }
+        val versionCode = explicitVersionCode.toIntOrNull()
+        require(versionCode != null && versionCode in 1..2_100_000_000) {
+            "saki.versionCode must be a positive Android version code"
+        }
+        SakiVersionInfo(explicitVersionName, versionCode)
+    } else {
+        providers.of(GitVersionValueSource::class) {
+            parameters.repositoryDirectory.set(rootProject.layout.projectDirectory)
+            parameters.fallbackBaseVersion.set(providers.gradleProperty("saki.versionBase"))
+            parameters.fallbackBaseRef.set(providers.gradleProperty("saki.versionBaseRef"))
+            parameters.mainBranch.set("master")
+            parameters.mainRef.set("origin/master")
+            parameters.branchOverride.set(providers.environmentVariable("SAKI_GIT_BRANCH"))
+            parameters.commitOverride.set(providers.environmentVariable("SAKI_GIT_COMMIT"))
+        }.get()
     }
-    require(major >= 0) { "saki.versionName major must be >= 0, but was '$versionName'" }
-    require(minor in 0..99) { "saki.versionName minor must be 0..99, but was '$versionName'" }
-    require(patch in 0..99) { "saki.versionName patch must be 0..99, but was '$versionName'" }
-    return major * 10_000 + minor * 100 + patch
 }
 
 android {
@@ -66,8 +76,8 @@ android {
         applicationId = "org.hdhmc.saki"
         minSdk = 24
         targetSdk = 37
-        versionCode = versionCodeFromName(sakiVersionName)
-        versionName = sakiVersionName
+        versionCode = sakiVersion.versionCode
+        versionName = sakiVersion.versionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -112,6 +122,13 @@ android {
             )
         }
     }
+}
+
+tasks.register<PrintSakiVersionTask>("printSakiVersion") {
+    group = "help"
+    description = "Prints the Git-derived Android version."
+    versionName.set(sakiVersion.versionName)
+    versionCode.set(sakiVersion.versionCode)
 }
 // Moshi codegen is configured through KSP, but its artifact also exposes a
 // legacy javac processor service. Hilt's Java compile tasks need annotation
