@@ -12,6 +12,7 @@ PROCESS.md
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
+/buildSrc/build
 /captures
 .externalNativeBuild
 .cxx
