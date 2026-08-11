@@ -44,6 +44,7 @@ private const val EXTRA_SOURCE_BIT_RATE = "saki.playback.source_bit_rate"
 private const val EXTRA_SAMPLE_RATE = "saki.playback.sample_rate"
 private const val EXTRA_QUEUE_SOURCE = "saki.playback.queue_source"
 private const val EXTRA_LIBRARY_INDEX = "saki.playback.library_index"
+private const val EXTRA_QUEUE_GENERATION = "saki.playback.queue_generation"
 
 internal const val PLAYBACK_QUEUE_SOURCE_LIBRARY_SONGS = "library_songs"
 
@@ -192,6 +193,43 @@ internal fun CachedSong.toCachedMediaItem(
 internal fun MediaItem.metadataDurationMs(): Long? {
     val extras = requestMetadata.extras ?: return null
     return extras.getLong(EXTRA_DURATION_MS).takeIf { extras.containsKey(EXTRA_DURATION_MS) }
+}
+
+internal fun MediaItem.withPlaybackQueueGeneration(generation: Long): MediaItem {
+    val extras = Bundle(requestMetadata.extras ?: Bundle.EMPTY).apply {
+        putLong(EXTRA_QUEUE_GENERATION, generation)
+    }
+    return buildUpon()
+        .setRequestMetadata(
+            requestMetadata.buildUpon()
+                .setExtras(extras)
+                .build(),
+        )
+        .build()
+}
+
+internal fun MediaItem.playbackQueueGenerationOrNull(): Long? {
+    val extras = requestMetadata.extras ?: return null
+    return extras.getLong(EXTRA_QUEUE_GENERATION)
+        .takeIf { extras.containsKey(EXTRA_QUEUE_GENERATION) }
+}
+
+internal fun List<MediaItem>.toShuffleQueueSnapshot(): ShuffleQueueSnapshot {
+    val generations = map(MediaItem::playbackQueueGenerationOrNull)
+    val commonGeneration = generations.firstOrNull()
+        ?.takeIf { generation -> generations.all { it == generation } }
+    val identities = map { mediaItem ->
+        val request = mediaItem.toPlaybackRequestOrNull()
+        ShuffleQueueItemIdentity(
+            serverId = request?.serverId ?: Long.MIN_VALUE,
+            songId = request?.songId.orEmpty().ifBlank { mediaItem.mediaId },
+        )
+    }
+    return ShuffleQueueSnapshot(
+        itemCount = size,
+        identity = shuffleQueueIdentity(identities),
+        generation = commonGeneration,
+    )
 }
 
 internal fun MediaItem.toPlaybackRequestOrNull(): PlaybackRequest? {

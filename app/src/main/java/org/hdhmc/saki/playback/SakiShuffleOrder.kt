@@ -13,17 +13,24 @@ import androidx.media3.exoplayer.source.ShuffleOrder
 class SakiShuffleOrder(
     private val shuffled: IntArray,
     private val indexInShuffled: IntArray,
+    private val seed: Long,
 ) : ShuffleOrder {
 
     constructor(length: Int, seed: Long, anchorIndex: Int) : this(
-        buildShuffledArray(length, seed, anchorIndex.coerceIn(0, (length - 1).coerceAtLeast(0))),
+        shuffled = buildShuffledArray(
+            length,
+            seed,
+            anchorIndex.coerceIn(0, (length - 1).coerceAtLeast(0)),
+        ),
+        seed = seed,
     )
 
-    private constructor(shuffled: IntArray) : this(
+    private constructor(shuffled: IntArray, seed: Long) : this(
         shuffled = shuffled,
         indexInShuffled = IntArray(shuffled.size).also { inv ->
             for (i in shuffled.indices) inv[shuffled[i]] = i
         },
+        seed = seed,
     )
 
     override fun getLength(): Int = shuffled.size
@@ -56,7 +63,7 @@ class SakiShuffleOrder(
         for (i in 0 until insertionCount) {
             newShuffled[destPos++] = insertionIndex + i
         }
-        return SakiShuffleOrder(newShuffled)
+        return SakiShuffleOrder(newShuffled, seed)
     }
 
     override fun cloneAndRemove(indexFrom: Int, indexToExclusive: Int): ShuffleOrder {
@@ -65,10 +72,23 @@ class SakiShuffleOrder(
             .filter { it < indexFrom || it >= indexToExclusive }
             .map { if (it >= indexToExclusive) it - removeCount else it }
             .toIntArray()
-        return SakiShuffleOrder(newShuffled)
+        return SakiShuffleOrder(newShuffled, seed)
     }
 
-    override fun cloneAndClear(): ShuffleOrder = SakiShuffleOrder(IntArray(0))
+    override fun cloneAndClear(): ShuffleOrder = SakiShuffleOrder(IntArray(0), seed)
+
+    override fun cloneAndSet(insertionCount: Int, startIndex: Int): ShuffleOrder {
+        if (insertionCount == 0) return cloneAndClear()
+
+        // Media3 supplies the new start index for a whole-playlist replacement. Rebuild the same
+        // deterministic permutation family around that item instead of using the interface's
+        // default clear + linear insert implementation.
+        val anchor = startIndex
+            .takeIf { it in 0 until insertionCount }
+            ?: getFirstIndex().takeIf { it in 0 until insertionCount }
+            ?: 0
+        return SakiShuffleOrder(insertionCount, seed, anchor)
+    }
 
     /** Traverses the shuffle order and returns the list of player indices in display order. */
     fun toDisplayOrder(): List<Int> {
