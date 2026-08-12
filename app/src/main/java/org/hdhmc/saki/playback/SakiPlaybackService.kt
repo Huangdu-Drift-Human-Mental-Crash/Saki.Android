@@ -32,6 +32,7 @@ import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ForwardingTimeline
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.ConnectionResult
@@ -98,6 +99,7 @@ private const val STREAM_PREFETCH_LOG_TAG = "SakiStreamPrefetch"
 private const val PLAYBACK_RECOVERY_LOG_TAG = "SakiPlaybackRecovery"
 private const val STREAM_PREFETCH_REEVALUATION_MS = 30_000L
 private const val STREAM_PREFETCH_RETRY_DELAY_MS = 30_000L
+private const val SHUFFLE_ORDER_REQUEST_TIMEOUT_MS = 2 * 60_000L
 private const val BLUETOOTH_LYRICS_MIN_POLL_DELAY_MS = 50L
 private const val BLUETOOTH_LYRICS_MAX_POLL_DELAY_MS = 500L
 private const val PLAYBACK_FAILURE_REPORT_DELAY_MS = 750L
@@ -355,22 +357,42 @@ internal fun selectEffectiveStreamQuality(
     }
 }
 
+private data class PendingShuffleOrder(
+    val requestId: String,
+    val seed: Long,
+    val anchor: Int,
+    val target: ShuffleQueueTarget,
+    val result: SettableFuture<SessionResult>,
+)
+
+private data class AppliedShuffleOrder(
+    val requestId: String,
+    val target: ShuffleQueueTarget,
+)
+
 @AndroidEntryPoint
 @UnstableApi
 class SakiPlaybackService : MediaSessionService() {
     companion object {
         const val ACTION_SET_SHUFFLE_ORDER = "saki.action.SET_SHUFFLE_ORDER"
+        const val ACTION_CANCEL_SHUFFLE_ORDER = "saki.action.CANCEL_SHUFFLE_ORDER"
+        const val ACTION_VALIDATE_SHUFFLE_ORDER = "saki.action.VALIDATE_SHUFFLE_ORDER"
         const val ACTION_TOGGLE_REPEAT = "saki.action.TOGGLE_REPEAT"
         const val ACTION_TOGGLE_SHUFFLE = "saki.action.TOGGLE_SHUFFLE"
         const val EXTRA_SHUFFLE_SEED = "saki.extra.SHUFFLE_SEED"
         const val EXTRA_SHUFFLE_ANCHOR = "saki.extra.SHUFFLE_ANCHOR"
         const val EXTRA_SHUFFLE_COUNT = "saki.extra.SHUFFLE_COUNT"
+        const val EXTRA_SHUFFLE_QUEUE_IDENTITY = "saki.extra.SHUFFLE_QUEUE_IDENTITY"
+        const val EXTRA_SHUFFLE_QUEUE_GENERATION = "saki.extra.SHUFFLE_QUEUE_GENERATION"
+        const val EXTRA_SHUFFLE_REQUEST_ID = "saki.extra.SHUFFLE_REQUEST_ID"
         const val EXTRA_AUTO_TRANSCODE_MEDIA_ID = "saki.extra.AUTO_TRANSCODE_MEDIA_ID"
         const val EXTRA_AUTO_TRANSCODE_FORMAT = "saki.extra.AUTO_TRANSCODE_FORMAT"
         const val EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE = "saki.extra.AUTO_TRANSCODE_MAX_BIT_RATE"
     }
 
-    private var pendingShuffleOrder: Triple<Long, Int, Int>? = null // seed, anchor, count
+    private var pendingShuffleOrder: PendingShuffleOrder? = null
+    private var pendingShuffleOrderTimeoutJob: Job? = null
+    private var appliedShuffleOrder: AppliedShuffleOrder? = null
     @Inject
     lateinit var okHttpClient: OkHttpClient
 
@@ -546,12 +568,7 @@ class SakiPlaybackService : MediaSessionService() {
                 addListener(ServerSeekStateListener())
                 addListener(object : Player.Listener {
                     override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
-                        val pending = pendingShuffleOrder ?: return
-                        val (seed, anchor, count) = pending
-                        if (mediaItemCount == count) {
-                            setShuffleOrder(SakiShuffleOrder(count, seed, anchor))
-                            pendingShuffleOrder = null
-                        }
+                        applyPendingShuffleOrderIfReady(this@apply)
                     }
                 })
             }
@@ -675,7 +692,10 @@ class SakiPlaybackService : MediaSessionService() {
                                         .build(),
                                 )
                                 .build()
-                            activePlayer.replaceMediaItem(activePlayer.currentMediaItemIndex, updated)
+                            activePlayer.replaceMediaItemPreservingShuffleOrder(
+                                activePlayer.currentMediaItemIndex,
+                                updated,
+                            )
                         }
                         delay(
                             bluetoothLyricsPollDelayMs(
@@ -689,6 +709,55 @@ class SakiPlaybackService : MediaSessionService() {
                 }
             }
         }
+    }
+
+    private fun applyPendingShuffleOrderIfReady(activePlayer: ExoPlayer): Boolean {
+        val pending = pendingShuffleOrder ?: return false
+        val snapshot = (0 until activePlayer.mediaItemCount)
+            .map(activePlayer::getMediaItemAt)
+            .toShuffleQueueSnapshot()
+        if (!pending.target.matches(snapshot)) return false
+
+        // Clear before mutating ExoPlayer because setShuffleOrder itself emits a timeline event.
+        pendingShuffleOrder = null
+        pendingShuffleOrderTimeoutJob?.cancel()
+        pendingShuffleOrderTimeoutJob = null
+        return runCatching {
+            appliedShuffleOrder = AppliedShuffleOrder(
+                requestId = pending.requestId,
+                target = pending.target,
+            )
+            activePlayer.setShuffleOrder(
+                SakiShuffleOrder(
+                    pending.target.itemCount,
+                    pending.seed,
+                    pending.anchor,
+                ),
+            )
+            activePlayer.shuffleModeEnabled = true
+            syncMediaButtonPreferences()
+            syncAutomaticTranscodeSessionExtras()
+        }.fold(
+            onSuccess = {
+                pending.result.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                true
+            },
+            onFailure = { throwable ->
+                appliedShuffleOrder = null
+                activePlayer.shuffleModeEnabled = false
+                syncAutomaticTranscodeSessionExtras()
+                pending.result.setException(throwable)
+                false
+            },
+        )
+    }
+
+    private fun clearPendingShuffleOrder() {
+        val pending = pendingShuffleOrder ?: return
+        pendingShuffleOrder = null
+        pendingShuffleOrderTimeoutJob?.cancel()
+        pendingShuffleOrderTimeoutJob = null
+        pending.result.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
     }
 
     private fun syncMediaButtonPreferences() {
@@ -755,10 +824,14 @@ class SakiPlaybackService : MediaSessionService() {
         playerScope.launch {
             runCatching {
                 val count = activePlayer.mediaItemCount
+                // A notification-originated decision supersedes any manager request that is still
+                // waiting for a deferred queue. Complete that future before mutating ExoPlayer.
+                clearPendingShuffleOrder()
+                appliedShuffleOrder = null
+                syncAutomaticTranscodeSessionExtras()
                 if (count <= 1) {
                     playbackPreferencesRepository.clearShuffleState()
                     activePlayer.shuffleModeEnabled = false
-                    pendingShuffleOrder = null
                     syncMediaButtonPreferences()
                     return@runCatching
                 }
@@ -766,14 +839,12 @@ class SakiPlaybackService : MediaSessionService() {
                 if (activePlayer.shuffleModeEnabled) {
                     playbackPreferencesRepository.clearShuffleState()
                     activePlayer.shuffleModeEnabled = false
-                    pendingShuffleOrder = null
                 } else {
                     val seed = System.nanoTime()
                     val anchor = activePlayer.currentMediaItemIndex.coerceIn(0, count - 1)
                     playbackPreferencesRepository.updateShuffleState(seed, anchor)
                     activePlayer.setShuffleOrder(SakiShuffleOrder(count, seed, anchor))
                     activePlayer.shuffleModeEnabled = true
-                    pendingShuffleOrder = null
                 }
                 syncMediaButtonPreferences()
             }.onSuccess {
@@ -1719,6 +1790,7 @@ class SakiPlaybackService : MediaSessionService() {
         cancelStreamPrefetch()
         clearPlaybackFailureReport()
         playbackFailureReporter.resetOriginalPlaybackSkipRecovery()
+        clearPendingShuffleOrder()
         openedStreams.clear()
         forcedTranscodes.clear()
         releaseSoundBalancingEffect()
@@ -1841,6 +1913,8 @@ class SakiPlaybackService : MediaSessionService() {
             if (controller.packageName == packageName || controller.isTrusted) {
                 val sessionCommands = sessionCommandsBuilder
                     .add(SessionCommand(ACTION_SET_SHUFFLE_ORDER, Bundle.EMPTY))
+                    .add(SessionCommand(ACTION_CANCEL_SHUFFLE_ORDER, Bundle.EMPTY))
+                    .add(SessionCommand(ACTION_VALIDATE_SHUFFLE_ORDER, Bundle.EMPTY))
                     .build()
                 return baseResult
                     .setAvailableSessionCommands(sessionCommands)
@@ -1891,15 +1965,97 @@ class SakiPlaybackService : MediaSessionService() {
                     val seed = args.getLong(EXTRA_SHUFFLE_SEED)
                     val anchor = args.getInt(EXTRA_SHUFFLE_ANCHOR)
                     val count = args.getInt(EXTRA_SHUFFLE_COUNT)
+                    val queueIdentity = args.getString(EXTRA_SHUFFLE_QUEUE_IDENTITY).orEmpty()
+                    val queueGeneration = args.getLong(EXTRA_SHUFFLE_QUEUE_GENERATION)
+                        .takeIf { args.containsKey(EXTRA_SHUFFLE_QUEUE_GENERATION) }
+                    val requestId = args.getString(EXTRA_SHUFFLE_REQUEST_ID).orEmpty()
                     val exoPlayer = player as? ExoPlayer
-                    if (exoPlayer != null && count > 0 && count == exoPlayer.mediaItemCount) {
-                        val order = SakiShuffleOrder(count, seed, anchor)
-                        exoPlayer.setShuffleOrder(order)
-                        pendingShuffleOrder = null
-                    } else {
-                        pendingShuffleOrder = Triple(seed, anchor, count)
+                    val future = SettableFuture.create<SessionResult>()
+                    if (
+                        exoPlayer == null ||
+                        count <= 1 ||
+                        queueIdentity.isBlank() ||
+                        requestId.isBlank()
+                    ) {
+                        future.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
+                        return future
+                    }
+
+                    clearPendingShuffleOrder()
+                    pendingShuffleOrder = PendingShuffleOrder(
+                        requestId = requestId,
+                        seed = seed,
+                        anchor = anchor.coerceIn(0, count - 1),
+                        target = ShuffleQueueTarget(
+                            itemCount = count,
+                            identity = queueIdentity,
+                            generation = queueGeneration,
+                        ),
+                        result = future,
+                    )
+                    pendingShuffleOrderTimeoutJob = playerScope.launch {
+                        delay(SHUFFLE_ORDER_REQUEST_TIMEOUT_MS)
+                        if (pendingShuffleOrder?.result === future) {
+                            clearPendingShuffleOrder()
+                        }
+                    }
+                    applyPendingShuffleOrderIfReady(exoPlayer)
+                    return future
+                }
+                ACTION_CANCEL_SHUFFLE_ORDER -> {
+                    val requestId = args.getString(EXTRA_SHUFFLE_REQUEST_ID).orEmpty()
+                    val matchesPending = pendingShuffleOrder?.requestId == requestId
+                    val matchesApplied = appliedShuffleOrder?.requestId == requestId
+                    if (requestId.isBlank() || (!matchesPending && !matchesApplied)) {
+                        return SettableFuture.create<SessionResult>().apply {
+                            set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
+                        }
+                    }
+                    if (matchesPending) clearPendingShuffleOrder()
+                    if (matchesApplied) {
+                        appliedShuffleOrder = null
+                        player?.shuffleModeEnabled = false
+                        syncMediaButtonPreferences()
+                        syncAutomaticTranscodeSessionExtras()
                     }
                     return successSessionResult()
+                }
+                ACTION_VALIDATE_SHUFFLE_ORDER -> {
+                    val requestId = args.getString(EXTRA_SHUFFLE_REQUEST_ID).orEmpty()
+                    val activePlayer = player
+                    val currentApplied = appliedShuffleOrder
+                    val snapshot = activePlayer?.let { player ->
+                        (0 until player.mediaItemCount)
+                            .map(player::getMediaItemAt)
+                            .toShuffleQueueSnapshot()
+                    }
+                    val isCurrent = requestId.isNotBlank() &&
+                        currentApplied?.requestId == requestId &&
+                        activePlayer?.shuffleModeEnabled == true &&
+                        snapshot != null &&
+                        currentApplied.target.matches(snapshot)
+                    val extras = Bundle().apply {
+                        if (isCurrent) {
+                            putString(EXTRA_SHUFFLE_REQUEST_ID, requestId)
+                            putInt(EXTRA_SHUFFLE_COUNT, snapshot!!.itemCount)
+                            putString(EXTRA_SHUFFLE_QUEUE_IDENTITY, snapshot.identity)
+                            snapshot.generation?.let { generation ->
+                                putLong(EXTRA_SHUFFLE_QUEUE_GENERATION, generation)
+                            }
+                        }
+                    }
+                    return SettableFuture.create<SessionResult>().apply {
+                        set(
+                            SessionResult(
+                                if (isCurrent) {
+                                    SessionResult.RESULT_SUCCESS
+                                } else {
+                                    SessionResult.RESULT_ERROR_INVALID_STATE
+                                },
+                                extras,
+                            ),
+                        )
+                    }
                 }
                 ACTION_TOGGLE_REPEAT -> {
                     cycleNotificationRepeatMode()
@@ -1947,6 +2103,9 @@ class SakiPlaybackService : MediaSessionService() {
                 request
             }
 
+            val resolvedExtras = Bundle(mediaItem.requestMetadata.extras ?: Bundle.EMPTY).apply {
+                putAll(finalRequest.toBundle())
+            }
             return MediaItem.Builder()
                 .setMediaId(finalRequest.songId)
                 .setUri(placeholderUri)
@@ -1955,7 +2114,7 @@ class SakiPlaybackService : MediaSessionService() {
                 .setRequestMetadata(
                     MediaItem.RequestMetadata.Builder()
                         .setMediaUri(placeholderUri)
-                        .setExtras(finalRequest.toBundle())
+                        .setExtras(resolvedExtras)
                         .build(),
                 )
                 .build()
@@ -1998,6 +2157,10 @@ class SakiPlaybackService : MediaSessionService() {
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+            if (!shuffleModeEnabled) {
+                appliedShuffleOrder = null
+                syncAutomaticTranscodeSessionExtras()
+            }
             syncMediaButtonPreferences()
         }
 
@@ -2249,16 +2412,14 @@ class SakiPlaybackService : MediaSessionService() {
         val activeItem = player?.currentMediaItem
         val placeholderUri = activeItem?.localConfiguration?.uri?.toString()
         val forcedTranscode = placeholderUri?.let(forcedTranscodes::get)
-        val extras = if (activeItem != null && forcedTranscode != null) {
-            Bundle().apply {
+        val extras = Bundle().apply {
+            if (activeItem != null && forcedTranscode != null) {
                 putString(EXTRA_AUTO_TRANSCODE_MEDIA_ID, activeItem.mediaId)
                 putString(EXTRA_AUTO_TRANSCODE_FORMAT, forcedTranscode.format.uppercase(java.util.Locale.ROOT))
                 forcedTranscode.quality.maxBitRate?.let { maxBitRate ->
                     putInt(EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE, maxBitRate)
                 }
             }
-        } else {
-            Bundle.EMPTY
         }
         mediaSession?.setSessionExtras(extras)
     }
@@ -2327,7 +2488,35 @@ class SakiPlaybackService : MediaSessionService() {
                 item.mediaMetadata.buildUpon().setTitle(title).build(),
             )
             .build()
-        activePlayer.replaceMediaItem(activePlayer.currentMediaItemIndex, restored)
+        activePlayer.replaceMediaItemPreservingShuffleOrder(
+            activePlayer.currentMediaItemIndex,
+            restored,
+        )
+    }
+
+    private fun ExoPlayer.replaceMediaItemPreservingShuffleOrder(
+        index: Int,
+        mediaItem: MediaItem,
+    ) {
+        val previousShuffleOrder = shuffleOrder.takeIf { shuffleModeEnabled }
+        val previousTraversal = previousShuffleOrder?.toTraversal()
+        replaceMediaItem(index, mediaItem)
+        if (
+            previousShuffleOrder != null &&
+            previousShuffleOrder.length == mediaItemCount &&
+            shuffleOrder.toTraversal() != previousTraversal
+        ) {
+            setShuffleOrder(previousShuffleOrder)
+        }
+    }
+
+    private fun ShuffleOrder.toTraversal(): List<Int> = buildList {
+        var index = firstIndex
+        repeat(length) {
+            if (index == C.INDEX_UNSET) return@buildList
+            add(index)
+            index = getNextIndex(index)
+        }
     }
 
     private fun List<LyricLine>.binarySearchLastBefore(positionMs: Long): Int {
