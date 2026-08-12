@@ -54,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -476,6 +477,8 @@ class DefaultPlaybackManager @Inject constructor(
     ) {
         val currentSongId = songs[startIndex].id
         deferredQueueJob = scope.launch {
+            var activeShuffleRequestId: String? = null
+            var shuffleStatePublished = false
             try {
                 val deferredItems = buildDeferredQueueItems(
                     serverId = serverId,
@@ -519,20 +522,30 @@ class DefaultPlaybackManager @Inject constructor(
                         // Automatic recovery may start playback from a later item, but must not
                         // regenerate the queue around that item or revisit already-failed tracks.
                         shuffleAnchorIndex = pendingShuffleAnchor.coerceIn(0, fullQueueSize - 1)
-                        val applied = sendShuffleOrderToService(
-                            activeController,
-                            fullQueueSize,
-                            shuffleSeed,
-                            shuffleAnchorIndex,
+                        val requestId = UUID.randomUUID().toString()
+                        activeShuffleRequestId = requestId
+                        val shuffleRequest = sendShuffleOrderToService(
+                            controller = activeController,
+                            count = fullQueueSize,
+                            seed = shuffleSeed,
+                            anchor = shuffleAnchorIndex,
+                            requestId = requestId,
                         )
-                        if (generation != queueLoadGeneration) return@withController
-                        if (applied) {
+                        if (generation != queueLoadGeneration) {
+                            cancelShuffleOrderInService(
+                                activeController,
+                                shuffleRequest.requestId,
+                            )
+                            return@withController
+                        }
+                        if (shuffleRequest.applied) {
                             shuffleDisplayOrder = SakiShuffleOrder(
                                 fullQueueSize,
                                 shuffleSeed,
                                 shuffleAnchorIndex,
                             ).toDisplayOrder()
                             shouldPersistShuffleState = true
+                            shuffleStatePublished = true
                         }
                     } else {
                         activeController.shuffleModeEnabled = false
@@ -551,6 +564,17 @@ class DefaultPlaybackManager @Inject constructor(
             } catch (_: Exception) {
                 // Keep the already-started track playing if deferred queue expansion fails.
             } finally {
+                if (!shuffleStatePublished) {
+                    activeShuffleRequestId?.let { requestId ->
+                        withContext(NonCancellable) {
+                            runCatching {
+                                withController { activeController ->
+                                    cancelShuffleOrderInService(activeController, requestId)
+                                }
+                            }
+                        }
+                    }
+                }
                 // Only the active deferred load may clear pending state. Cancelled or stale loads
                 // have a newer generation, and must leave the newer playback request alone.
                 if (generation == queueLoadGeneration) {
@@ -1234,14 +1258,17 @@ class DefaultPlaybackManager @Inject constructor(
             if (saved != null && mediaItems.size > 1) {
                 shuffleSeed = saved.first
                 shuffleAnchorIndex = saved.second.coerceIn(0, mediaItems.size - 1)
-                val applied = sendShuffleOrderToService(
+                val shuffleRequest = sendShuffleOrderToService(
                     activeController,
                     mediaItems.size,
                     shuffleSeed,
                     shuffleAnchorIndex,
                 )
-                if (generation != queueLoadGeneration) return@withController
-                if (applied) {
+                if (generation != queueLoadGeneration) {
+                    cancelShuffleOrderInService(activeController, shuffleRequest.requestId)
+                    return@withController
+                }
+                if (shuffleRequest.applied) {
                     shuffleDisplayOrder = SakiShuffleOrder(
                         mediaItems.size,
                         shuffleSeed,
@@ -1432,10 +1459,10 @@ class DefaultPlaybackManager @Inject constructor(
         count: Int,
         seed: Long,
         anchor: Int,
-    ): Boolean {
+        requestId: String = UUID.randomUUID().toString(),
+    ): ShuffleOrderRequestResult {
         val queue = controller.toShuffleQueueSnapshot()
-        if (queue.itemCount != count) return false
-        val requestId = UUID.randomUUID().toString()
+        if (queue.itemCount != count) return ShuffleOrderRequestResult.notApplied()
         latestShuffleRequestId = requestId
         val args = Bundle().apply {
             putLong(SakiPlaybackService.EXTRA_SHUFFLE_SEED, seed)
@@ -1451,12 +1478,47 @@ class DefaultPlaybackManager @Inject constructor(
             SessionCommand(SakiPlaybackService.ACTION_SET_SHUFFLE_ORDER, Bundle.EMPTY),
             args,
         ).await(appContext)
-        val applied = result.resultCode == SessionResult.RESULT_SUCCESS &&
-            controller.toShuffleQueueSnapshot() == queue
+        val validatedSnapshot = if (result.resultCode == SessionResult.RESULT_SUCCESS) {
+            validateShuffleOrderInService(controller, requestId)
+        } else {
+            null
+        }
+        val applied = validatedSnapshot == queue &&
+            latestShuffleRequestId == requestId &&
+            controller.toShuffleQueueSnapshot() == queue &&
+            controller.shuffleModeEnabled
         if (!applied && latestShuffleRequestId == requestId) {
             latestShuffleRequestId = null
         }
-        return applied
+        if (!applied && result.resultCode == SessionResult.RESULT_SUCCESS) {
+            withContext(NonCancellable) {
+                cancelShuffleOrderInService(controller, requestId)
+            }
+        }
+        return ShuffleOrderRequestResult(requestId = requestId, applied = applied)
+    }
+
+    private suspend fun validateShuffleOrderInService(
+        controller: MediaController,
+        requestId: String,
+    ): ShuffleQueueSnapshot? {
+        val result = runCatching {
+            controller.sendCustomCommand(
+                SessionCommand(SakiPlaybackService.ACTION_VALIDATE_SHUFFLE_ORDER, Bundle.EMPTY),
+                Bundle().apply {
+                    putString(SakiPlaybackService.EXTRA_SHUFFLE_REQUEST_ID, requestId)
+                },
+            ).await(appContext)
+        }.getOrNull() ?: return null
+        if (result.resultCode != SessionResult.RESULT_SUCCESS) return null
+        val extras = result.extras
+        if (extras.getString(SakiPlaybackService.EXTRA_SHUFFLE_REQUEST_ID) != requestId) return null
+        return ShuffleQueueSnapshot(
+            itemCount = extras.getInt(SakiPlaybackService.EXTRA_SHUFFLE_COUNT),
+            identity = extras.getString(SakiPlaybackService.EXTRA_SHUFFLE_QUEUE_IDENTITY).orEmpty(),
+            generation = extras.getLong(SakiPlaybackService.EXTRA_SHUFFLE_QUEUE_GENERATION)
+                .takeIf { extras.containsKey(SakiPlaybackService.EXTRA_SHUFFLE_QUEUE_GENERATION) },
+        )
     }
 
     private suspend fun cancelPendingShuffleOrderInService(controller: MediaController): Boolean {
@@ -1465,6 +1527,14 @@ class DefaultPlaybackManager @Inject constructor(
             controller.shuffleModeEnabled = false
             return true
         }
+        return cancelShuffleOrderInService(controller, requestId)
+    }
+
+    private suspend fun cancelShuffleOrderInService(
+        controller: MediaController,
+        requestId: String?,
+    ): Boolean {
+        requestId ?: return false
         val cancelled = runCatching {
             controller.sendCustomCommand(
                 SessionCommand(SakiPlaybackService.ACTION_CANCEL_SHUFFLE_ORDER, Bundle.EMPTY),
@@ -1522,14 +1592,17 @@ class DefaultPlaybackManager @Inject constructor(
                 val generation = queueLoadGeneration
                 shuffleSeed = System.nanoTime()
                 shuffleAnchorIndex = activeController.currentMediaItemIndex
-                val applied = sendShuffleOrderToService(
+                val shuffleRequest = sendShuffleOrderToService(
                     activeController,
                     count,
                     shuffleSeed,
                     shuffleAnchorIndex,
                 )
-                if (generation != queueLoadGeneration) return@withController
-                if (!applied) {
+                if (generation != queueLoadGeneration) {
+                    cancelShuffleOrderInService(activeController, shuffleRequest.requestId)
+                    return@withController
+                }
+                if (!shuffleRequest.applied) {
                     syncExternalShuffleState(activeController)
                     syncState(activeController)
                     return@withController
@@ -2037,6 +2110,18 @@ internal fun planVirtualQueueRecovery(
 internal fun PlaybackQueueItem.playbackFormatLabel(): String? =
     suffix?.trim()?.takeIf(String::isNotEmpty)?.uppercase(Locale.ROOT)
         ?: contentType?.trim()?.takeIf(String::isNotEmpty)
+
+private data class ShuffleOrderRequestResult(
+    val requestId: String?,
+    val applied: Boolean,
+) {
+    companion object {
+        fun notApplied(): ShuffleOrderRequestResult = ShuffleOrderRequestResult(
+            requestId = null,
+            applied = false,
+        )
+    }
+}
 
 private fun List<MediaItem>.withPlaybackQueueGeneration(generation: Long): List<MediaItem> =
     map { mediaItem -> mediaItem.withPlaybackQueueGeneration(generation) }

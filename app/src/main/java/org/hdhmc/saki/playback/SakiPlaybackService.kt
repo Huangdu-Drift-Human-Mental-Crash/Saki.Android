@@ -365,12 +365,18 @@ private data class PendingShuffleOrder(
     val result: SettableFuture<SessionResult>,
 )
 
+private data class AppliedShuffleOrder(
+    val requestId: String,
+    val target: ShuffleQueueTarget,
+)
+
 @AndroidEntryPoint
 @UnstableApi
 class SakiPlaybackService : MediaSessionService() {
     companion object {
         const val ACTION_SET_SHUFFLE_ORDER = "saki.action.SET_SHUFFLE_ORDER"
         const val ACTION_CANCEL_SHUFFLE_ORDER = "saki.action.CANCEL_SHUFFLE_ORDER"
+        const val ACTION_VALIDATE_SHUFFLE_ORDER = "saki.action.VALIDATE_SHUFFLE_ORDER"
         const val ACTION_TOGGLE_REPEAT = "saki.action.TOGGLE_REPEAT"
         const val ACTION_TOGGLE_SHUFFLE = "saki.action.TOGGLE_SHUFFLE"
         const val EXTRA_SHUFFLE_SEED = "saki.extra.SHUFFLE_SEED"
@@ -386,7 +392,7 @@ class SakiPlaybackService : MediaSessionService() {
 
     private var pendingShuffleOrder: PendingShuffleOrder? = null
     private var pendingShuffleOrderTimeoutJob: Job? = null
-    private var lastAppliedShuffleRequestId: String? = null
+    private var appliedShuffleOrder: AppliedShuffleOrder? = null
     @Inject
     lateinit var okHttpClient: OkHttpClient
 
@@ -717,7 +723,10 @@ class SakiPlaybackService : MediaSessionService() {
         pendingShuffleOrderTimeoutJob?.cancel()
         pendingShuffleOrderTimeoutJob = null
         return runCatching {
-            lastAppliedShuffleRequestId = pending.requestId
+            appliedShuffleOrder = AppliedShuffleOrder(
+                requestId = pending.requestId,
+                target = pending.target,
+            )
             activePlayer.setShuffleOrder(
                 SakiShuffleOrder(
                     pending.target.itemCount,
@@ -727,13 +736,16 @@ class SakiPlaybackService : MediaSessionService() {
             )
             activePlayer.shuffleModeEnabled = true
             syncMediaButtonPreferences()
+            syncAutomaticTranscodeSessionExtras()
         }.fold(
             onSuccess = {
                 pending.result.set(SessionResult(SessionResult.RESULT_SUCCESS))
                 true
             },
             onFailure = { throwable ->
+                appliedShuffleOrder = null
                 activePlayer.shuffleModeEnabled = false
+                syncAutomaticTranscodeSessionExtras()
                 pending.result.setException(throwable)
                 false
             },
@@ -815,7 +827,8 @@ class SakiPlaybackService : MediaSessionService() {
                 // A notification-originated decision supersedes any manager request that is still
                 // waiting for a deferred queue. Complete that future before mutating ExoPlayer.
                 clearPendingShuffleOrder()
-                lastAppliedShuffleRequestId = null
+                appliedShuffleOrder = null
+                syncAutomaticTranscodeSessionExtras()
                 if (count <= 1) {
                     playbackPreferencesRepository.clearShuffleState()
                     activePlayer.shuffleModeEnabled = false
@@ -1901,6 +1914,7 @@ class SakiPlaybackService : MediaSessionService() {
                 val sessionCommands = sessionCommandsBuilder
                     .add(SessionCommand(ACTION_SET_SHUFFLE_ORDER, Bundle.EMPTY))
                     .add(SessionCommand(ACTION_CANCEL_SHUFFLE_ORDER, Bundle.EMPTY))
+                    .add(SessionCommand(ACTION_VALIDATE_SHUFFLE_ORDER, Bundle.EMPTY))
                     .build()
                 return baseResult
                     .setAvailableSessionCommands(sessionCommands)
@@ -1991,17 +2005,57 @@ class SakiPlaybackService : MediaSessionService() {
                 ACTION_CANCEL_SHUFFLE_ORDER -> {
                     val requestId = args.getString(EXTRA_SHUFFLE_REQUEST_ID).orEmpty()
                     val matchesPending = pendingShuffleOrder?.requestId == requestId
-                    val matchesApplied = lastAppliedShuffleRequestId == requestId
+                    val matchesApplied = appliedShuffleOrder?.requestId == requestId
                     if (requestId.isBlank() || (!matchesPending && !matchesApplied)) {
                         return SettableFuture.create<SessionResult>().apply {
                             set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
                         }
                     }
                     if (matchesPending) clearPendingShuffleOrder()
-                    if (matchesApplied) lastAppliedShuffleRequestId = null
-                    player?.shuffleModeEnabled = false
-                    syncMediaButtonPreferences()
+                    if (matchesApplied) {
+                        appliedShuffleOrder = null
+                        player?.shuffleModeEnabled = false
+                        syncMediaButtonPreferences()
+                        syncAutomaticTranscodeSessionExtras()
+                    }
                     return successSessionResult()
+                }
+                ACTION_VALIDATE_SHUFFLE_ORDER -> {
+                    val requestId = args.getString(EXTRA_SHUFFLE_REQUEST_ID).orEmpty()
+                    val activePlayer = player
+                    val currentApplied = appliedShuffleOrder
+                    val snapshot = activePlayer?.let { player ->
+                        (0 until player.mediaItemCount)
+                            .map(player::getMediaItemAt)
+                            .toShuffleQueueSnapshot()
+                    }
+                    val isCurrent = requestId.isNotBlank() &&
+                        currentApplied?.requestId == requestId &&
+                        activePlayer?.shuffleModeEnabled == true &&
+                        snapshot != null &&
+                        currentApplied.target.matches(snapshot)
+                    val extras = Bundle().apply {
+                        if (isCurrent) {
+                            putString(EXTRA_SHUFFLE_REQUEST_ID, requestId)
+                            putInt(EXTRA_SHUFFLE_COUNT, snapshot!!.itemCount)
+                            putString(EXTRA_SHUFFLE_QUEUE_IDENTITY, snapshot.identity)
+                            snapshot.generation?.let { generation ->
+                                putLong(EXTRA_SHUFFLE_QUEUE_GENERATION, generation)
+                            }
+                        }
+                    }
+                    return SettableFuture.create<SessionResult>().apply {
+                        set(
+                            SessionResult(
+                                if (isCurrent) {
+                                    SessionResult.RESULT_SUCCESS
+                                } else {
+                                    SessionResult.RESULT_ERROR_INVALID_STATE
+                                },
+                                extras,
+                            ),
+                        )
+                    }
                 }
                 ACTION_TOGGLE_REPEAT -> {
                     cycleNotificationRepeatMode()
@@ -2104,7 +2158,8 @@ class SakiPlaybackService : MediaSessionService() {
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
             if (!shuffleModeEnabled) {
-                lastAppliedShuffleRequestId = null
+                appliedShuffleOrder = null
+                syncAutomaticTranscodeSessionExtras()
             }
             syncMediaButtonPreferences()
         }
@@ -2357,16 +2412,14 @@ class SakiPlaybackService : MediaSessionService() {
         val activeItem = player?.currentMediaItem
         val placeholderUri = activeItem?.localConfiguration?.uri?.toString()
         val forcedTranscode = placeholderUri?.let(forcedTranscodes::get)
-        val extras = if (activeItem != null && forcedTranscode != null) {
-            Bundle().apply {
+        val extras = Bundle().apply {
+            if (activeItem != null && forcedTranscode != null) {
                 putString(EXTRA_AUTO_TRANSCODE_MEDIA_ID, activeItem.mediaId)
                 putString(EXTRA_AUTO_TRANSCODE_FORMAT, forcedTranscode.format.uppercase(java.util.Locale.ROOT))
                 forcedTranscode.quality.maxBitRate?.let { maxBitRate ->
                     putInt(EXTRA_AUTO_TRANSCODE_MAX_BIT_RATE, maxBitRate)
                 }
             }
-        } else {
-            Bundle.EMPTY
         }
         mediaSession?.setSessionExtras(extras)
     }
