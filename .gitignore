@@ -3,6 +3,8 @@ PROCESS.md
 
 *.iml
 .gradle
+# Repo-local JDK/Android toolchain created by scripts/setup-env.sh.
+/.dev-env/
 /local.properties
 /.idea/caches
 /.idea/libraries
