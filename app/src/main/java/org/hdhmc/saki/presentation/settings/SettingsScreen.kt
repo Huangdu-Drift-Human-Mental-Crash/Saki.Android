@@ -66,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -559,7 +560,7 @@ fun SettingsScreen(
                     LanguageChip(
                         label = stringResource(R.string.settings_language_chinese),
                         selected = currentLanguage == AppLanguage.CHINESE,
-                        coverage = translationCoverage("zh"),
+                        coverage = integerResource(R.integer.translation_coverage_zh),
                         onClick = { onUpdateLanguage(AppLanguage.CHINESE) },
                     )
                 }
@@ -1303,32 +1304,6 @@ private fun LanguageChip(
             }
         },
     )
-}
-
-@Composable
-private fun translationCoverage(locale: String): Int {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    return remember(locale) {
-        val res = context.resources
-        val enConfig = android.content.res.Configuration(res.configuration).apply {
-            setLocale(java.util.Locale.ENGLISH)
-        }
-        val enRes = context.createConfigurationContext(enConfig).resources
-        val localeConfig = android.content.res.Configuration(res.configuration).apply {
-            setLocale(java.util.Locale.forLanguageTag(locale))
-        }
-        val localizedRes = context.createConfigurationContext(localeConfig).resources
-
-        val fields = R.string::class.java.fields
-        var total = 0
-        var translated = 0
-        for (field in fields) {
-            val id = field.getInt(null)
-            if (enRes.getString(id) != localizedRes.getString(id)) translated++
-            total++
-        }
-        if (total > 0) (translated * 100) / total else 0
-    }
 }
 
 private fun formatStorageSize(bytes: Long): String {
