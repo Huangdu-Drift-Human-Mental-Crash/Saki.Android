@@ -1,5 +1,6 @@
 import java.util.Properties
 import org.gradle.api.tasks.compile.JavaCompile
+import org.hdhmc.saki.build.GenerateTranslationCoverageTask
 import org.hdhmc.saki.build.GitVersionValueSource
 import org.hdhmc.saki.build.PrintSakiVersionTask
 import org.hdhmc.saki.build.SakiVersionInfo
@@ -121,6 +122,27 @@ android {
                 "**/libdatastore_shared_counter.so",
             )
         }
+    }
+}
+
+// Translation coverage is derived from the resource files at build time so the Settings language
+// chips never have to reflect over R.string at runtime (which minified release builds strip).
+androidComponents {
+    onVariants { variant ->
+        val generateTranslationCoverage = tasks.register<GenerateTranslationCoverageTask>(
+            "generate${variant.name.replaceFirstChar { it.uppercaseChar() }}TranslationCoverage",
+        ) {
+            group = "build"
+            description = "Generates translation coverage integers from the locale string resources."
+            resDirectory.set(layout.projectDirectory.dir("src/main/res"))
+            outputDirectory.set(
+                layout.buildDirectory.dir("generated/sakiTranslationCoverage/${variant.name}"),
+            )
+        }
+        variant.sources.res?.addGeneratedSourceDirectory(
+            generateTranslationCoverage,
+            GenerateTranslationCoverageTask::outputDirectory,
+        )
     }
 }
 
